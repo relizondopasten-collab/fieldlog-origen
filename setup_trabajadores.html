@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Setup Trabajadores · FieldLog</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<style>
+  body{font-family:system-ui,sans-serif;background:#1A2E1F;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{background:#F8F5EF;border-radius:16px;padding:28px;max-width:520px;width:100%}
+  h2{font-size:20px;font-weight:700;color:#1A2E1F;margin-bottom:4px}
+  p{font-size:13px;color:#7A7A7A;margin-bottom:16px;line-height:1.5}
+  .predio-row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-radius:8px;margin-bottom:6px;background:#fff;border:1px solid #E9E3D7;font-size:13px}
+  .predio-name{font-weight:600}
+  .predio-meta{font-size:11px;color:#7A7A7A;margin-top:1px}
+  .status{font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600}
+  .s-pending{background:#FEF3C7;color:#92400E}
+  .s-ok{background:#DCFCE7;color:#166534}
+  .s-error{background:#FEE2E2;color:#D62828}
+  .s-loading{background:#EFF6FF;color:#1D4ED8}
+  .btn{display:block;width:100%;padding:13px;background:#2D6A4F;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;margin-top:16px;transition:opacity .2s}
+  .btn:hover{opacity:.85}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  #log{margin-top:14px;background:#1e1e2e;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#a6e3a1;min-height:60px;white-space:pre-wrap;display:none;max-height:200px;overflow-y:auto}
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>🌱 Setup Trabajadores — FieldLog</h2>
+  <p>Sube todos los trabajadores de El Tránsito y La Constancia a Firestore. Úsalo solo una vez estando conectado como administrador.</p>
+
+  <div class="predio-row">
+    <div><div class="predio-name">El Tránsito</div><div class="predio-meta">19 trabajadores · Marcelo Covarrubias</div></div>
+    <span class="status s-pending" id="st-transito">Pendiente</span>
+  </div>
+  <div class="predio-row">
+    <div><div class="predio-name">La Constancia — Sara</div><div class="predio-meta">22 trabajadores</div></div>
+    <span class="status s-pending" id="st-sara">Pendiente</span>
+  </div>
+  <div class="predio-row">
+    <div><div class="predio-name">La Constancia — Roxana</div><div class="predio-meta">19 trabajadores</div></div>
+    <span class="status s-pending" id="st-roxana">Pendiente</span>
+  </div>
+  <div class="predio-row">
+    <div><div class="predio-name">La Constancia — José</div><div class="predio-meta">18 trabajadores</div></div>
+    <span class="status s-pending" id="st-jose">Pendiente</span>
+  </div>
+
+  <button class="btn" id="btnSetup" onclick="runSetup()">Subir trabajadores a Firestore</button>
+  <div id="log"></div>
+</div>
+
+<script>
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyCQF_SFjNI-a-PUd0NpAc6ObN5MJEFOqfI",
+  authDomain:        "fieldlog-origen.firebaseapp.com",
+  projectId:         "fieldlog-origen",
+  storageBucket:     "fieldlog-origen.firebasestorage.app",
+  messagingSenderId: "406117748519",
+  appId:             "1:406117748519:web:2e1fcb0655b7c970a66302"
+};
+
+firebase.initializeApp(FIREBASE_CONFIG);
+const db   = firebase.firestore();
+const auth = firebase.auth();
+
+const WORKERS = {
+  transito: [
+    {id:'wt1', nombre:'Jhostin Murillo',   codigo:'11501-12000', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt2', nombre:'Rene Medina',       codigo:'11501-12000', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt3', nombre:'Wismick Fleurima',  codigo:'11501-12000', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt4', nombre:'Jesus Oliveros',    codigo:'11501-12000', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt5', nombre:'Dieumanu Sance',    codigo:'11001-11500', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt6', nombre:'Manuel Mendez R.',  codigo:'11501-12000', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt7', nombre:'Jesus Avaria',      codigo:'10501-11000', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt8', nombre:'Patricio Suarez',   codigo:'11501-12000', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt9', nombre:'Samuel Romero',     codigo:'11501-12000', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt10',nombre:'Alexis Martinez',   codigo:'9501-10000',  subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt11',nombre:'Fredy Videla',      codigo:'10001-10500', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt12',nombre:'Rafael Riquelme',   codigo:'10001-10500', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt13',nombre:'Antonio Morales',   codigo:'11001-11500', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt14',nombre:'Pedro Aguilera',    codigo:'9501-10000',  subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt15',nombre:'Javier Ramirez',    codigo:'9001-9500',   subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt16',nombre:'Manuel Araya',      codigo:'9001-9500',   subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt17',nombre:'Jose Inostroza',    codigo:'9001-9500',   subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt18',nombre:'Marco Alvarado',    codigo:'10001-15000', subjefe:'Marcelo Covarrubias', plantas:0},
+    {id:'wt19',nombre:'Luis Reyes',        codigo:'9001-9500',   subjefe:'Marcelo Covarrubias', plantas:0}
+  ],
+  constancia: [
+    // Sara
+    {id:'wc1', nombre:'Marina Olivares',   codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc2', nombre:'Nerlande Mechale',  codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc3', nombre:'Jaime Baeza',       codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc4', nombre:'Fabiola Ponce',     codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc5', nombre:'Victor Torres',     codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc6', nombre:'Oscar Ortiz',       codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc7', nombre:'Alex Jimenez',      codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc8', nombre:'Jose Tapia',        codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc9', nombre:'Alex del Fierro',   codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc10',nombre:'Yonier Reinoso',    codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc11',nombre:'Bedyanise Stanis',  codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc12',nombre:'Jenifer Vargas',    codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc13',nombre:'Carmen Morales',    codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc14',nombre:'Rosa Gutierrez',    codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc15',nombre:'Omar Melecio',      codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc16',nombre:'Guierline Pierre',  codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc17',nombre:'Anyel Morrisett',   codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc18',nombre:'Pedro Molina',      codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc19',nombre:'Jorge Jazme',       codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc20',nombre:'Mirta Tapia',       codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc21',nombre:'Gertine Domique',   codigo:'', subjefe:'Sara',   plantas:0},
+    {id:'wc22',nombre:'Simone Mondecir',   codigo:'', subjefe:'Sara',   plantas:0},
+    // Roxana
+    {id:'wr1', nombre:'Marcos Morales',    codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr2', nombre:'Margarita Rivera',  codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr3', nombre:'Mario Espinoza',    codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr4', nombre:'Manuel Orellana',   codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr5', nombre:'Luis Barraza',      codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr6', nombre:'Antonio Garrido',   codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr7', nombre:'Alejandra Moyano',  codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr8', nombre:'Jorge Tapia',       codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr9', nombre:'Ximena Rivera',     codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr10',nombre:'Luis Gutierrez',    codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr11',nombre:'Segundo Villaroel', codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr12',nombre:'Evelyn Gonzalez',   codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr13',nombre:'Nestor Caceres',    codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr14',nombre:'Angel Ibacache',    codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr15',nombre:'Luis Aguilera',     codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr16',nombre:'Patricia Burgos',   codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr17',nombre:'Daniel Cortes',     codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr18',nombre:'Patricia Iturrieta',codigo:'', subjefe:'Roxana', plantas:0},
+    {id:'wr19',nombre:'Debora Morales',    codigo:'', subjefe:'Roxana', plantas:0},
+    // José
+    {id:'wj1', nombre:'Luis Obrego',       codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj2', nombre:'Mario Gallegos',    codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj3', nombre:'Fabian Hernandez',  codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj4', nombre:'Moises Garate',     codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj5', nombre:'Alex Hidalgo',      codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj6', nombre:'Karin Ramos',       codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj7', nombre:'Raul Araya',        codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj8', nombre:'Patricio Gonzales', codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj9', nombre:'Manuel Jazme',      codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj10',nombre:'Luis Castillo',     codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj11',nombre:'Juan Figueroa',     codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj12',nombre:'Nivaldo Olivares',  codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj13',nombre:'Ruben Nuñez',       codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj14',nombre:'Manuel Romero',     codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj15',nombre:'Jorge Hidalgo',     codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj16',nombre:'Claudio Olivares',  codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj17',nombre:'Francisco Nuñez',   codigo:'', subjefe:'José',   plantas:0},
+    {id:'wj18',nombre:'Karina Ponce',      codigo:'', subjefe:'José',   plantas:0}
+  ],
+  paradero: []
+};
+
+const log = document.getElementById('log');
+function addLog(msg){ log.style.display='block'; log.textContent += msg + '\n'; log.scrollTop=log.scrollHeight; }
+
+async function runSetup(){
+  const btn = document.getElementById('btnSetup');
+  btn.disabled = true;
+  btn.textContent = 'Subiendo trabajadores…';
+  addLog('Iniciando…');
+
+  const user = auth.currentUser;
+  if(!user){ addLog('❌ No estás conectado. Abre la app principal e inicia sesión primero.'); btn.disabled=false; return; }
+  addLog('✓ Conectado como: ' + user.email);
+
+  for(const [predioId, workers] of Object.entries(WORKERS)){
+    if(!workers.length){ addLog('⚠️ ' + predioId + ': sin trabajadores, saltando'); continue; }
+
+    const stEl = document.getElementById('st-'+predioId);
+    const groups = [...new Set(workers.map(w=>w.subjefe))];
+
+    for(const subjefe of groups){
+      const stId = predioId==='constancia' ? 'st-'+subjefe.toLowerCase() : 'st-'+predioId;
+      const stElG = document.getElementById(stId);
+      if(stElG){ stElG.className='status s-loading'; stElG.textContent='Subiendo…'; }
+
+      const groupWorkers = workers.filter(w=>w.subjefe===subjefe);
+      addLog(`Subiendo ${groupWorkers.length} trabajadores de ${subjefe} (${predioId})…`);
+
+      try{
+        const batch = db.batch();
+        groupWorkers.forEach(w=>{
+          const ref = db.collection('workers').doc(predioId).collection('list').doc(w.id);
+          batch.set(ref, {nombre:w.nombre, codigo:w.codigo, subjefe:w.subjefe, plantas:w.plantas});
+        });
+        await batch.commit();
+        if(stElG){ stElG.className='status s-ok'; stElG.textContent='✓ Listo'; }
+        addLog('✓ ' + subjefe + ': ' + groupWorkers.length + ' trabajadores subidos');
+      } catch(e){
+        if(stElG){ stElG.className='status s-error'; stElG.textContent='Error'; }
+        addLog('❌ ' + subjefe + ': ' + e.message);
+      }
+    }
+  }
+
+  btn.textContent='✅ Trabajadores subidos';
+  btn.style.background='#166534';
+  addLog('\n✅ Completado. Puedes cerrar esta página y recargar la app.');
+}
+</script>
+</body>
+</html>
