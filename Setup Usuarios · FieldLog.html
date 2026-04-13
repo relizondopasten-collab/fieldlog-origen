@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Setup Usuarios · FieldLog</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<style>
+  body{font-family:system-ui,sans-serif;background:#1A2E1F;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{background:#F8F5EF;border-radius:16px;padding:28px;max-width:480px;width:100%}
+  h2{font-size:20px;font-weight:700;color:#1A2E1F;margin-bottom:4px}
+  p{font-size:13px;color:#7A7A7A;margin-bottom:20px}
+  .user-row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-radius:8px;margin-bottom:6px;background:#fff;border:1px solid #E9E3D7;font-size:13px}
+  .user-name{font-weight:600}
+  .user-meta{font-size:11px;color:#7A7A7A;margin-top:1px}
+  .status{font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600}
+  .s-pending{background:#FEF3C7;color:#92400E}
+  .s-ok{background:#DCFCE7;color:#166534}
+  .s-error{background:#FEE2E2;color:#D62828}
+  .btn{display:block;width:100%;padding:13px;background:#2D6A4F;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;margin-top:16px;transition:opacity .2s}
+  .btn:hover{opacity:.85}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  #log{margin-top:14px;background:#1e1e2e;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#a6e3a1;min-height:60px;white-space:pre-wrap;display:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>🌱 Setup Usuarios — FieldLog</h2>
+  <p>Este archivo crea los perfiles de los 5 subjefes en Firestore. Úsalo solo una vez estando conectado como administrador.</p>
+
+  <div id="userList"></div>
+
+  <button class="btn" id="btnSetup" onclick="runSetup()">Crear perfiles en Firestore</button>
+  <div id="log"></div>
+</div>
+
+<script>
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyCQF_SFjNI-a-PUd0NpAc6ObN5MJEFOqfI",
+  authDomain:        "fieldlog-origen.firebaseapp.com",
+  projectId:         "fieldlog-origen",
+  storageBucket:     "fieldlog-origen.firebasestorage.app",
+  messagingSenderId: "406117748519",
+  appId:             "1:406117748519:web:2e1fcb0655b7c970a66302"
+};
+
+firebase.initializeApp(FIREBASE_CONFIG);
+const db = firebase.firestore();
+const auth = firebase.auth();
+
+const USERS = [
+  { uid:'7ZambhkpOnRxPQxwKkgAqqpVeyv1', email:'marcelo@fieldlog.cl', nombre:'Marcelo Covarrubias', role:'subjefe', predioId:'transito',   subjefe:'Marcelo Covarrubias' },
+  { uid:'8GZmWFzIp3gJV38UWOVcckMQGxJ3', email:'sara@fieldlog.cl',    nombre:'Sara',                role:'subjefe', predioId:'constancia', subjefe:'Sara' },
+  { uid:'kBiY3SrBLdNgMPvRzhSU6wjpx2E2', email:'jose@fieldlog.cl',    nombre:'José',                role:'subjefe', predioId:'constancia', subjefe:'José' },
+  { uid:'EHD3t1y6B3QOYTD5lqEow1oU7Gt2', email:'roxana@fieldlog.cl',  nombre:'Roxana',              role:'subjefe', predioId:'constancia', subjefe:'Roxana' },
+  { uid:'3xjWl37SOvhglJ7WeKOAlebaSb33', email:'jorge@fieldlog.cl',   nombre:'Jorge Guajardo',      role:'subjefe', predioId:'paradero',   subjefe:'Jorge Guajardo' },
+];
+
+// Render list
+const list = document.getElementById('userList');
+USERS.forEach(u => {
+  list.innerHTML += `<div class="user-row" id="row-${u.uid}">
+    <div>
+      <div class="user-name">${u.nombre}</div>
+      <div class="user-meta">${u.email} · ${u.predioId}</div>
+    </div>
+    <span class="status s-pending" id="st-${u.uid}">Pendiente</span>
+  </div>`;
+});
+
+const log = document.getElementById('log');
+function addLog(msg){ log.style.display='block'; log.textContent += msg + '\n'; }
+
+async function runSetup(){
+  const btn = document.getElementById('btnSetup');
+  btn.disabled = true;
+  btn.textContent = 'Creando perfiles…';
+  addLog('Iniciando setup...');
+
+  // Check auth
+  const user = auth.currentUser;
+  if(!user){ addLog('❌ No estás conectado. Abre primero la app principal e inicia sesión.'); btn.disabled=false; return; }
+  addLog('✓ Conectado como: ' + user.email);
+
+  let ok=0, errors=0;
+  for(const u of USERS){
+    try{
+      await db.collection('users').doc(u.uid).set({
+        email:    u.email,
+        nombre:   u.nombre,
+        role:     u.role,
+        predioId: u.predioId,
+        subjefe:  u.subjefe,
+        ts:       Date.now()
+      });
+      document.getElementById('st-'+u.uid).className='status s-ok';
+      document.getElementById('st-'+u.uid).textContent='✓ Creado';
+      addLog('✓ ' + u.nombre);
+      ok++;
+    } catch(e){
+      document.getElementById('st-'+u.uid).className='status s-error';
+      document.getElementById('st-'+u.uid).textContent='Error';
+      addLog('❌ ' + u.nombre + ': ' + e.message);
+      errors++;
+    }
+  }
+
+  if(errors===0){
+    btn.textContent='✅ Todos los perfiles creados';
+    btn.style.background='#166534';
+    addLog('\n✅ Setup completado. Puedes cerrar esta página.');
+  } else {
+    btn.textContent='Hubo errores — revisa el log';
+    btn.disabled=false;
+  }
+}
+</script>
+</body>
+</html>
