@@ -1,0 +1,1359 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>FieldLog · Agrícola Origen</title>
+
+<!-- ══════════════════════════════════════════
+     PASO 1: Reemplaza estos valores con los de
+     tu proyecto Firebase (ver INSTRUCCIONES.md)
+══════════════════════════════════════════ -->
+<script>
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyCQF_SFjNI-a-PUd0NpAc6ObN5MJEFOqfI",
+  authDomain:        "fieldlog-origen.firebaseapp.com",
+  projectId:         "fieldlog-origen",
+  storageBucket:     "fieldlog-origen.firebasestorage.app",
+  messagingSenderId: "406117748519",
+  appId:             "1:406117748519:web:2e1fcb0655b7c970a66302"
+};
+</script>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=Inter:wght@400;500;600&display=swap');
+:root{
+  --green:#2D6A4F;--green-l:#40916C;--green-xl:#74C69D;--lime:#B7E4C7;
+  --cream:#F8F5EF;--sand:#E9E3D7;--dark:#1A2E1F;--text:#2A2A2A;--muted:#7A7A7A;
+  --red:#D62828;--white:#fff;--shadow:0 2px 12px rgba(0,0,0,.10);--r:14px;
+  --c-t:#1D4ED8;--bg-t:#EFF6FF;
+  --c-c:#6B21A8;--bg-c:#FDF4FF;
+  --c-p:#92400E;--bg-p:#FEF3C7;
+  --c-otono:#B45309;    --bg-otono:#FEF3C7;
+  --c-invierno:#1D4ED8; --bg-invierno:#EFF6FF;
+  --c-primor:#166534;   --bg-primor:#DCFCE7;
+  --c-trastomate:#6B21A8;--bg-trastomate:#FAF5FF;
+  --c-verano:#9F1239;   --bg-verano:#FFF1F2;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:'Inter',sans-serif;background:var(--cream);color:var(--text);max-width:480px;margin:0 auto;padding-bottom:90px}
+
+/* ── LOGIN ── */
+#loginScreen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px 24px;background:var(--dark)}
+.login-logo{font-family:'Syne',sans-serif;font-weight:800;font-size:32px;color:var(--lime);margin-bottom:4px}
+.login-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--green-xl);margin-bottom:36px;text-transform:uppercase;letter-spacing:.8px}
+.login-card{background:var(--cream);border-radius:20px;padding:24px;width:100%;max-width:360px}
+.login-title{font-family:'Syne',sans-serif;font-weight:700;font-size:18px;margin-bottom:18px;color:var(--dark)}
+.login-error{background:#FEE2E2;color:var(--red);font-size:12px;padding:8px 12px;border-radius:8px;margin-bottom:12px;display:none}
+#appScreen{display:none}
+
+/* ── USER PILL ── */
+.user-pill{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.08);border-radius:20px;padding:3px 10px 3px 4px}
+.user-avatar{width:24px;height:24px;border-radius:50%;background:var(--green);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.user-name{font-size:11px;color:var(--lime);font-weight:600;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.role-badge{font-family:'DM Mono',monospace;font-size:8px;padding:1px 5px;border-radius:8px;text-transform:uppercase;font-weight:700}
+.role-admin{background:#FEF3C7;color:#92400E}
+.role-subjefe{background:var(--lime);color:var(--green)}
+
+/* ── TOPBAR ── */
+.topbar{background:var(--dark);padding:13px 14px 0;position:sticky;top:0;z-index:100}
+.tb1{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;gap:8px}
+.app-title{font-family:'Syne',sans-serif;font-weight:800;font-size:17px;color:var(--lime);flex-shrink:0}
+.app-sub{font-family:'DM Mono',monospace;font-size:8px;color:var(--green-xl);margin-top:1px;text-transform:uppercase;letter-spacing:.5px}
+
+/* ── PREDIO TABS ── */
+.ptabs{display:flex;gap:5px;padding:0 0 9px;overflow-x:auto;scrollbar-width:none}
+.ptabs::-webkit-scrollbar{display:none}
+.ptab{flex-shrink:0;border:1.5px solid rgba(255,255,255,.14);border-radius:20px;padding:5px 12px;font-size:11px;font-weight:600;color:rgba(255,255,255,.4);cursor:pointer;transition:all .2s;white-space:nowrap;background:transparent}
+.ptab-t{background:var(--bg-t);color:var(--c-t);border-color:var(--c-t)}
+.ptab-c{background:var(--bg-c);color:var(--c-c);border-color:var(--c-c)}
+.ptab-p{background:var(--bg-p);color:var(--c-p);border-color:var(--c-p)}
+.ptab.disabled{opacity:.35;pointer-events:none}
+
+/* ── NAV ── */
+.nav{display:flex;padding:0 0 11px;gap:4px}
+.nb{flex:1;background:transparent;border:1.5px solid rgba(255,255,255,.12);color:rgba(255,255,255,.4);font-family:'Inter',sans-serif;font-size:9px;font-weight:600;padding:7px 1px;border-radius:8px;cursor:pointer;transition:all .2s;text-transform:uppercase;letter-spacing:.3px}
+.nb.active{background:var(--green);border-color:var(--green);color:#fff}
+
+/* ── SCREENS ── */
+.screen{display:none;padding:0 14px 8px}.screen.active{display:block}
+
+/* ── LOADING ── */
+.loading-overlay{position:fixed;inset:0;background:rgba(26,46,31,.85);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+.spinner{width:36px;height:36px;border:3px solid rgba(183,228,199,.2);border-top-color:var(--lime);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-family:'DM Mono',monospace;font-size:12px;color:var(--lime)}
+
+/* ── TEMP BADGE ── */
+.tbadge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+.tb-otono{background:var(--bg-otono);color:var(--c-otono)}
+.tb-invierno{background:var(--bg-invierno);color:var(--c-invierno)}
+.tb-primor{background:var(--bg-primor);color:var(--c-primor)}
+.tb-trastomate{background:var(--bg-trastomate);color:var(--c-trastomate)}
+.tb-verano{background:var(--bg-verano);color:var(--c-verano)}
+.tb-none{background:var(--sand);color:var(--muted)}
+
+/* ── CARDS ── */
+.card{background:var(--white);border-radius:var(--r);padding:14px;margin-bottom:10px;box-shadow:var(--shadow)}
+.card-title{font-family:'Syne',sans-serif;font-size:12px;font-weight:700;color:var(--dark);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;display:flex;align-items:center;gap:5px}
+
+/* ── CTX PILL ── */
+.ctx-pill{background:var(--white);border-radius:12px;padding:10px 13px;margin:9px 0 8px;box-shadow:var(--shadow)}
+.ctx-row1{display:flex;align-items:center;gap:7px}
+.ctx-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.ctx-name{font-weight:700;font-size:13px}
+.ctx-meta{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-left:auto}
+.stag{display:inline-flex;align-items:center;gap:4px;background:var(--lime);color:var(--green);font-size:10px;font-weight:600;padding:2px 8px;border-radius:20px}
+
+/* ── FORM ── */
+label{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px}
+select,input[type=number],input[type=text],input[type=date],input[type=email],input[type=password]{width:100%;background:var(--cream);border:1.5px solid var(--sand);border-radius:10px;padding:10px 11px;font-size:14px;font-family:'Inter',sans-serif;color:var(--text);appearance:none;-webkit-appearance:none;outline:none;transition:border-color .2s}
+select:focus,input:focus{border-color:var(--green)}
+.form-row{margin-bottom:10px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:9px}
+
+/* ── BUTTONS ── */
+.btn{display:block;width:100%;padding:12px;border:none;border-radius:12px;font-family:'Syne',sans-serif;font-weight:700;font-size:14px;cursor:pointer;transition:transform .15s,opacity .15s}
+.btn:active{transform:scale(.97);opacity:.85}
+.btn-primary{background:var(--green);color:#fff}
+.btn-secondary{background:var(--sand);color:var(--dark)}
+.btn-danger{background:#FEE2E2;color:var(--red)}
+.btn-warn{background:#FEF3C7;color:#92400E}
+.btn-sm{display:inline-block;width:auto;padding:5px 10px;font-size:11px;border-radius:8px}
+
+/* ── SEMANA ── */
+.sem-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:8px 0 9px}
+.dib{background:var(--sand);border:2px solid transparent;border-radius:10px;padding:6px 2px;text-align:center;cursor:pointer;transition:all .2s}
+.dib.active{background:var(--green);border-color:var(--green)}
+.dib.active .dn{color:#fff}.dib.active .dd{color:var(--lime)}
+.dib.has-data{border-color:var(--green-xl)}
+.dn{font-size:10px;font-weight:600;color:var(--muted)}
+.dd{font-family:'DM Mono',monospace;font-size:13px;color:var(--dark)}
+
+/* ── ENTRY ── */
+.ecard{background:var(--white);border-radius:12px;padding:11px 13px;margin-bottom:7px;box-shadow:var(--shadow);border-left:4px solid var(--green)}
+.ehdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px}
+.ename{font-weight:700;font-size:13px}.emeta{font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);margin-top:1px}
+.badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.badge{font-size:10px;font-family:'DM Mono',monospace;padding:2px 7px;border-radius:5px;font-weight:500}
+.bl{background:#EFF6FF;color:#1D4ED8}.bh{background:#FEF3C7;color:#92400E}.bm{background:#F0FDF4;color:var(--green)}
+.bt{background:var(--bg-t);color:var(--c-t)}.bc{background:var(--bg-c);color:var(--c-c)}.bp{background:var(--bg-p);color:var(--c-p)}
+.del-btn{background:none;border:none;color:var(--muted);font-size:15px;cursor:pointer;padding:0 2px}
+
+/* ── STATS ── */
+.stats-row{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:10px}
+.sbox{background:var(--white);border-radius:12px;padding:11px 7px;text-align:center;box-shadow:var(--shadow)}
+.sval{font-family:'Syne',sans-serif;font-size:20px;font-weight:800;color:var(--dark);line-height:1}
+.slbl{font-size:9px;color:var(--muted);text-transform:uppercase;margin-top:3px}
+.avbar{height:7px;background:var(--sand);border-radius:4px;overflow:hidden;margin-top:4px}
+.avfill{height:100%;background:linear-gradient(90deg,var(--green),var(--green-xl));border-radius:4px;transition:width .4s}
+
+/* ── CICLOS ── */
+.group-block{background:var(--white);border-radius:var(--r);margin-bottom:10px;box-shadow:var(--shadow);overflow:hidden}
+.gb-header{padding:11px 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--sand)}
+.gb-name{font-family:'Syne',sans-serif;font-weight:700;font-size:14px}
+.gb-wcount{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)}
+.gb-body{padding:12px 14px}
+.cycle-item{border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;margin-bottom:8px;transition:border-color .2s}
+.cycle-item.is-active{border-color:var(--green);background:#F0FDF4}
+.cycle-item.is-open{border-color:var(--green-xl)}
+.cycle-item.is-closed{opacity:.7}
+.ci-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.ci-dates{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:3px}
+.ci-status-open{display:inline-block;background:#DCFCE7;color:var(--c-primor);font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;text-transform:uppercase;margin-top:3px}
+.ci-status-closed{display:inline-block;background:var(--sand);color:var(--muted);font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;text-transform:uppercase;margin-top:3px}
+.ci-status-future{display:inline-block;background:#FEF3C7;color:#92400E;font-size:9px;font-weight:700;padding:1px 7px;border-radius:10px;text-transform:uppercase;margin-top:3px}
+.ci-actions{display:flex;gap:5px;flex-shrink:0;margin-top:2px}
+.ci-notes{font-size:11px;color:var(--muted);margin-top:5px}
+.add-cycle-row{margin-top:6px}
+.open-cycle-btn{width:100%;padding:9px;background:linear-gradient(135deg,var(--green),var(--green-l));color:#fff;border:none;border-radius:10px;font-family:'Syne',sans-serif;font-weight:700;font-size:13px;cursor:pointer;transition:transform .15s,opacity .15s;display:flex;align-items:center;justify-content:center;gap:5px}
+.open-cycle-btn:active{transform:scale(.97)}
+
+/* ── PROGRAMACIÓN ── */
+.prog-day-card{background:var(--white);border-radius:var(--r);margin-bottom:10px;box-shadow:var(--shadow);overflow:hidden}
+.prog-day-hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--sand)}
+.prog-day-name{font-family:'Syne',sans-serif;font-weight:700;font-size:14px}
+.prog-day-date{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)}
+.prog-day-body{padding:10px 14px}
+.prog-task{display:flex;align-items:flex-start;gap:8px;padding:7px 0;border-bottom:1px solid var(--sand)}
+.prog-task:last-child{border-bottom:none}
+.prog-task-num{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);min-width:16px;margin-top:2px}
+.prog-task-info{flex:1}
+.prog-task-labor{font-size:12px;font-weight:600;line-height:1.3}
+.prog-task-meta{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.prog-tag{font-size:10px;font-family:'DM Mono',monospace;padding:2px 7px;border-radius:5px;font-weight:500}
+.ptag-mod{background:#EDE9FE;color:#5B21B6}
+.ptag-meta{background:#F0FDF4;color:var(--green)}
+.ptag-real{background:#FEF3C7;color:#92400E}
+.prog-empty-day{font-size:12px;color:var(--muted);padding:8px 0;font-style:italic}
+.prog-vs{display:flex;align-items:center;gap:6px;margin-top:5px;padding:5px 8px;background:var(--cream);border-radius:7px}
+.prog-vs-label{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace}
+.prog-vs-bar-wrap{flex:1;height:6px;background:var(--sand);border-radius:3px;overflow:hidden}
+.prog-vs-bar{height:100%;border-radius:3px;transition:width .4s}
+.prog-vs-pct{font-family:'DM Mono',monospace;font-size:10px;font-weight:700;min-width:32px;text-align:right}
+.ptask-form{background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 11px;margin-bottom:7px}
+.ptask-form-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.ptask-form-num{font-family:'DM Mono',monospace;font-size:9px;font-weight:700;color:var(--green);text-transform:uppercase}
+
+/* ── LABOR ROWS ── */
+.labor-row{background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 11px;margin-bottom:7px}
+.labor-row-num{font-family:'DM Mono',monospace;font-size:9px;font-weight:700;color:var(--green);text-transform:uppercase;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between}
+.labor-row-num .rm-labor{background:none;border:none;color:var(--muted);font-size:14px;cursor:pointer;padding:0;line-height:1}
+.labor-sel{margin-bottom:7px}
+.labor-nums{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.labor-nums input{background:var(--white)}
+
+/* ── MODAL ── */
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:400;align-items:flex-end}
+.overlay.open{display:flex}
+.modal{background:var(--cream);border-radius:20px 20px 0 0;padding:18px 18px 34px;width:100%;max-width:480px;margin:0 auto;max-height:88vh;overflow-y:auto}
+.modal-handle{width:38px;height:4px;background:var(--sand);border-radius:2px;margin:0 auto 14px}
+.modal-title{font-family:'Syne',sans-serif;font-size:17px;font-weight:700;margin-bottom:14px}
+.modal-sub{font-size:12px;color:var(--muted);margin:-8px 0 14px;line-height:1.5}
+
+/* ── CONFIG / ADMIN ── */
+.emp-hdr{text-align:center;padding:16px;background:var(--dark);border-radius:var(--r);margin-bottom:10px}
+.emp-name{font-family:'Syne',sans-serif;font-size:19px;font-weight:800;color:var(--lime)}
+.emp-sub{font-family:'DM Mono',monospace;font-size:9px;color:var(--green-xl);margin-top:3px}
+.wrow{display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--sand)}
+.wrow:last-child{border-bottom:none}
+.wn{font-weight:600;font-size:13px}.wm{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px}
+.sec-div{font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;padding:7px 0 4px;border-top:1px solid var(--sand);margin-top:5px}
+.pred-label{display:flex;align-items:center;gap:7px;margin:12px 0 6px}
+.pred-label-dot{width:9px;height:9px;border-radius:50%}
+.pred-label-name{font-family:'Syne',sans-serif;font-weight:700;font-size:14px}
+
+.empty{text-align:center;padding:26px 14px;color:var(--muted)}
+.empty-icon{font-size:32px;margin-bottom:7px}
+.toast{position:fixed;bottom:92px;left:50%;transform:translateX(-50%) translateY(16px);background:var(--dark);color:var(--lime);font-family:'DM Mono',monospace;font-size:12px;padding:10px 20px;border-radius:20px;opacity:0;transition:all .3s;z-index:600;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── USERS ADMIN ── */
+.user-row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--sand)}
+.user-row:last-child{border-bottom:none}
+.ur-info{}
+.ur-name{font-weight:600;font-size:13px}
+.ur-meta{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px}
+</style>
+</head>
+<body>
+
+<!-- ══ LOADING ══ -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text" id="loadingText">Conectando…</div>
+</div>
+
+<!-- ══ LOGIN ══ -->
+<div id="loginScreen">
+  <div class="login-logo">FieldLog 🌱</div>
+  <div class="login-sub">Agrícola Origen · Valparaíso</div>
+  <div class="login-card">
+    <div class="login-title">Iniciar sesión</div>
+    <div class="login-error" id="loginError"></div>
+    <div class="form-row">
+      <label>Email</label>
+      <input type="email" id="loginEmail" placeholder="usuario@agricolaOrigen.cl" autocomplete="email">
+    </div>
+    <div class="form-row">
+      <label>Contraseña</label>
+      <input type="password" id="loginPass" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" onclick="doLogin()">Entrar</button>
+  </div>
+</div>
+
+<!-- ══ APP ══ -->
+<div id="appScreen">
+  <div class="topbar">
+    <div class="tb1">
+      <div>
+        <div class="app-title">FieldLog 🌱</div>
+        <div class="app-sub">Agrícola Origen</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div class="user-pill">
+          <div class="user-avatar" id="userAvatar">?</div>
+          <div class="user-name" id="userName">—</div>
+        </div>
+        <button onclick="doLogout()" style="background:none;border:none;color:rgba(255,255,255,.4);font-size:18px;cursor:pointer;padding:0 2px" title="Cerrar sesión">⏻</button>
+      </div>
+    </div>
+    <div class="ptabs" id="ptabs">
+      <div class="ptab" data-id="transito"   onclick="selPredio('transito')">El Tránsito</div>
+      <div class="ptab" data-id="constancia" onclick="selPredio('constancia')">La Constancia</div>
+      <div class="ptab" data-id="paradero"   onclick="selPredio('paradero')">Paradero 12</div>
+    </div>
+    <div class="nav">
+      <button class="nb active" onclick="showScr('registro',this)">Registrar</button>
+      <button class="nb"        onclick="showScr('prog',this)">Prog.</button>
+      <button class="nb"        onclick="showScr('avance',this)">Avance</button>
+      <button class="nb"        onclick="showScr('ciclos',this)">Ciclos</button>
+      <button class="nb"        onclick="showScr('config',this)">Config</button>
+    </div>
+  </div>
+
+  <!-- REGISTRO -->
+  <div id="screen-registro" class="screen active">
+    <div id="ctx0"></div>
+    <div class="sem-grid" id="semGrid"></div>
+    <div class="card">
+      <div class="card-title">✍️ Nueva Entrada</div>
+      <div class="form-row"><label>Subjefe / Encargado</label><select id="selSub" onchange="filtW()"><option value="">Todos</option></select></div>
+      <div class="form-row"><label>Trabajador</label><select id="selW"><option value="">— Seleccionar —</option></select></div>
+      <div style="margin-bottom:4px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <label style="margin:0">Labores del día</label>
+          <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)" id="laborCount">1 / 4</span>
+        </div>
+        <div id="laborRows"></div>
+        <button id="addLaborBtn" class="btn btn-secondary" style="margin-top:6px;padding:8px;font-size:12px" onclick="addLaborRow()">＋ Agregar labor</button>
+      </div>
+      <div class="form-row" style="margin-top:8px"><label>Observación</label><input type="text" id="iO" placeholder="Notas adicionales…"></div>
+      <button class="btn btn-primary" onclick="guardar()">＋ Guardar Entrada</button>
+    </div>
+    <div id="hoy"></div>
+  </div>
+
+  <!-- PROGRAMACIÓN -->
+  <div id="screen-prog" class="screen">
+    <div id="ctx-prog" style="margin-top:10px"></div>
+    <div class="card" style="margin-top:0;padding:12px 14px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <button onclick="progNavSem(-1)" style="background:var(--sand);border:none;border-radius:8px;padding:6px 10px;font-size:16px;cursor:pointer">‹</button>
+        <div style="flex:1;text-align:center">
+          <div id="progSemLabel" style="font-family:'Syne',sans-serif;font-weight:700;font-size:14px"></div>
+          <div id="progSemRange" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:1px"></div>
+        </div>
+        <button onclick="progNavSem(+1)" style="background:var(--sand);border:none;border-radius:8px;padding:6px 10px;font-size:16px;cursor:pointer">›</button>
+      </div>
+      <div class="form-row" style="margin:0"><label>Subjefe</label><select id="progSubjefe" onchange="renderProg()"><option value="">— Seleccionar —</option></select></div>
+    </div>
+    <div id="progContent"></div>
+    <div id="progNewBtn"></div>
+  </div>
+
+  <!-- AVANCE -->
+  <div id="screen-avance" class="screen">
+    <div id="ctx2" style="margin-top:10px"></div>
+    <div class="stats-row" id="statsRow"></div>
+    <div class="card"><div class="card-title">📊 Avance semanal por trabajador</div><div id="avW"></div></div>
+    <div class="card"><div class="card-title">🗓️ Resumen semana</div><div id="avSem"></div></div>
+    <div class="card"><div class="card-title">📋 Top labores del día</div><div id="avTop"></div></div>
+  </div>
+
+  <!-- CICLOS -->
+  <div id="screen-ciclos" class="screen">
+    <div style="height:10px"></div>
+    <div class="card" style="padding:12px 14px 10px">
+      <div class="card-title">🌱 Épocas de cultivo</div>
+      <p style="font-size:12px;color:var(--muted);line-height:1.5">Abre un ciclo al comenzar una temporada, ciérralo cuando termina. Entre ciclos puede haber días sin cultivo.</p>
+    </div>
+    <div id="ciclosContent"></div>
+  </div>
+
+  <!-- CONFIG -->
+  <div id="screen-config" class="screen">
+    <div style="height:10px"></div>
+    <div class="emp-hdr">
+      <div class="emp-name">Agrícola Origen</div>
+      <div class="emp-sub">Sistema de Registro · Tomate Invernadero</div>
+    </div>
+    <!-- resumen predios -->
+    <div id="prediosOv"></div>
+    <!-- trabajadores del predio activo -->
+    <div class="card">
+      <div class="card-title">👤 Trabajadores — <span id="cfgPLbl" style="text-transform:none;font-style:italic;font-weight:400"></span></div>
+      <div id="wList"></div>
+      <div class="sec-div">Agregar trabajador</div>
+      <div class="form-row"><label>Nombre completo</label><input type="text" id="nN" placeholder="Ej: Juan Pérez"></div>
+      <div class="form-grid">
+        <div><label>Código rango</label><input type="text" id="nC" placeholder="9001-9500"></div>
+        <div><label>Subjefe</label><select id="nS"></select></div>
+      </div>
+      <div class="form-row"><label>N° plantas</label><input type="number" id="nP" placeholder="1500" min="0"></div>
+      <button class="btn btn-primary" id="addWBtn" onclick="addW()">Agregar trabajador</button>
+    </div>
+    <!-- usuarios del sistema (solo admin) -->
+    <div id="usersAdminSection" style="display:none">
+      <div class="card">
+        <div class="card-title">🔐 Usuarios del sistema</div>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5">Crea un acceso por cada subjefe. Usa el email que ellos tendrán. La contraseña inicial la compartes tú.</p>
+        <div id="usersList"></div>
+        <div class="sec-div">Crear usuario</div>
+        <div class="form-row"><label>Nombre visible</label><input type="text" id="nuEmail_name" placeholder="Ej: Sara"></div>
+        <div class="form-row"><label>Email</label><input type="email" id="nuEmail" placeholder="sara@origen.cl"></div>
+        <div class="form-row"><label>Contraseña inicial</label><input type="password" id="nuPass" placeholder="mínimo 6 caracteres"></div>
+        <div class="form-grid">
+          <div><label>Rol</label>
+            <select id="nuRole">
+              <option value="subjefe">Subjefe</option>
+              <option value="admin">Admin / Gerencia</option>
+            </select>
+          </div>
+          <div><label>Predio</label>
+            <select id="nuPredio">
+              <option value="transito">El Tránsito</option>
+              <option value="constancia">La Constancia</option>
+              <option value="paradero">Paradero 12</option>
+              <option value="todos">Todos (admin)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row"><label>Subjefe asignado</label>
+          <select id="nuSubjefe">
+            <option value="">— (solo para rol subjefe) —</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="createUser()">Crear usuario</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">⚠️ Datos</div>
+      <button class="btn btn-danger" id="clearDataBtn" onclick="if(confirm('¿Borrar registros del predio activo?'))clearData()" style="margin-bottom:7px">Borrar registros del predio activo</button>
+      <p style="font-size:11px;color:var(--muted)">Trabajadores y ciclos no se borran.</p>
+    </div>
+  </div>
+</div><!-- end appScreen -->
+
+<!-- MODAL -->
+<div class="overlay" id="overlay" onclick="closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-handle"></div>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════════
+// STATIC DATA
+// ══════════════════════════════════════════════
+const PREDIOS={
+  transito:  {nombre:'El Tránsito',   jefe:'Marcelo Covarrubias', subjefes:['Marcelo Covarrubias']},
+  constancia:{nombre:'La Constancia', jefe:'Marcelo Covarrubias', subjefes:['Sara','José','Roxana']},
+  paradero:  {nombre:'Paradero 12',   jefe:'Jorge Guajardo',      subjefes:['Jorge Guajardo']}
+};
+const PRED_ORDER=['transito','constancia','paradero'];
+const DIAS=['Lunes','Martes','Miérc.','Jueves','Viernes'];
+const TNAMES={otono:'Otoño',invierno:'Invierno',primor:'Primor',trastomate:'Trastomate',verano:'Verano'};
+const TICONS={otono:'🍂',invierno:'❄️',primor:'🌱',trastomate:'🔄',verano:'☀️'};
+const TORDER=['otono','invierno','primor','trastomate','verano'];
+const LABORES=[
+  {id:1,d:"Cortar plantas en cuello"},{id:2,d:"Descolgar la planta"},{id:3,d:"Sacar plantas a pasillo central"},
+  {id:4,d:"Remoción de residuo de cultivo"},{id:5,d:"Sacar el acolchado"},{id:6,d:"Levantar cintas de riego"},
+  {id:7,d:"Levantar cabezales conducción riego"},{id:8,d:"Levantar tutor de vara (cercha)"},
+  {id:9,d:"Limpieza tras rastraje"},{id:10,d:"Limpieza tras escarificador"},{id:11,d:"Pasado de encamador"},
+  {id:12,d:"Rovotator, armar mesa y encabezado"},{id:13,d:"Apoyo fumigación, acolchado y cinta"},
+  {id:14,d:"Bajar cabezales conducción de riego"},{id:15,d:"Conexión cintas de riego a conectores"},
+  {id:16,d:"Marcaje sobre el acolchado"},{id:17,d:"Perforado de acolchado con PVC 63"},
+  {id:18,d:"Sacar círculo polietileno del perforado"},{id:19,d:"Colocar cinta de riego al centro mesa"},
+  {id:20,d:"Aplicación desinfección ambiental"},{id:21,d:"Riego de preplantación"},
+  {id:22,d:"Instalación cintas de riego pasillo"},{id:23,d:"Hacer hoyos de plantación (molde)"},
+  {id:24,d:"Establecimiento de cultivo (plantación)"},{id:25,d:"Vacaciones"},
+  {id:26,d:"Ordenar alambre a 60 cm"},{id:27,d:"Raspar pasillo"},{id:28,d:"Emparejar pasillos"},
+  {id:29,d:"Colocar tutor de vara (cercha)"},{id:30,d:"Amarrar hilo al alambre / argolla"},
+  {id:31,d:"Abrir cintas 30-40 cm"},{id:32,d:"Tumbar plantas"},{id:33,d:"Definir ejes definitivos (2-3)"},
+  {id:34,d:"Amarra"},{id:35,d:"Primer desbrote"},{id:36,d:"Primera envoltura y desbrote"},
+  {id:37,d:"Deshoje basal (1-3 hojas bajo 1° racimo)"},{id:38,d:"Envoltura y desbrote"},
+  {id:39,d:"Despeje de 1° racimo"},{id:40,d:"Despeje de 2° racimo"},{id:41,d:"Despeje de 3° racimo"},
+  {id:42,d:"Despeje de 4° racimo"},{id:43,d:"Despeje de 5° racimo"},{id:44,d:"Despeje de 6° racimo"},
+  {id:45,d:"Despeje de 7° racimo"},{id:46,d:"Arreglo de racimo (5 mejores frutos)"},
+  {id:47,d:"Despunte final"},{id:48,d:"Cosecha según color exigido"},
+  {id:49,d:"Limpieza tejido muerto / botrytis"},{id:50,d:"Limpieza de pasillo (malezas)"},
+  {id:51,d:"Ventilación"},{id:52,d:"Vibrado al alambre"},{id:53,d:"Aplicación hormona en flores"},
+  {id:54,d:"Colocar hilo blanco extra"},{id:55,d:"Deshoje total bajo 2° racimo"},
+  {id:56,d:"Deshoje bajo 3° racimo (verano)"},{id:57,d:"Chip de quillay en mesa plantación"},
+  {id:58,d:"Fertilizantes en mesa (base)"},{id:59,d:"Asperjar ácido peracético (botrytis)"}
+];
+
+// ══════════════════════════════════════════════
+// FIREBASE INIT
+// ══════════════════════════════════════════════
+firebase.initializeApp(FIREBASE_CONFIG);
+const auth = firebase.auth();
+const db   = firebase.firestore();
+
+// ── Firestore collection helpers ──────────────
+// /workers/{predioId}/list/{workerId}
+// /registros/{predioId}/entries/{entryId}
+// /ciclos/{predioId}/subjefes/{subjefe}/cycles/{cycleId}
+// /programacion/{predioId}/subjefes/{subjefe}/semanas/{mondayIso}
+// /users/{uid}  { email, nombre, role:'admin'|'subjefe', predioId, subjefe }
+
+const colWorkers  = pid => db.collection('workers').doc(pid).collection('list');
+const colRegistros= pid => db.collection('registros').doc(pid).collection('entries');
+const colCiclos   = (pid,sub) => db.collection('ciclos').doc(pid).collection('subjefes').doc(sub).collection('cycles');
+const colProg     = (pid,sub) => db.collection('programacion').doc(pid).collection('subjefes').doc(sub).collection('semanas');
+const colUsers    = () => db.collection('users');
+
+// ══════════════════════════════════════════════
+// APP STATE
+// ══════════════════════════════════════════════
+const today    = new Date();
+const todayIso = today.toISOString().slice(0,10);
+let activePred = 'transito';
+let selDate    = todayIso;
+let progWeekOffset = 0;
+
+// In-memory caches (refreshed on predio change / live listeners)
+let wMap       = {transito:[],constancia:[],paradero:[]};
+let rCache     = [];   // registros of active predio
+let ciclosCache= {};   // {subjefe: [cycles]}
+let progCache  = {};   // {mondayIso: progDoc}
+let usersCache = [];   // all system users
+
+// Listeners to unsubscribe on predio change
+let unsubRegistros = null;
+let unsubCiclos    = {};
+
+// Current user profile
+let currentUser    = null;  // Firebase Auth user
+let currentProfile = null;  // Firestore /users/{uid}
+
+// ══════════════════════════════════════════════
+// UTILITIES
+// ══════════════════════════════════════════════
+const fD   = iso=>{const[y,m,d]=iso.split('-');return`${d}/${m}/${y}`};
+const fDMY = iso=>{if(!iso)return'—';const[y,m,d]=iso.split('-');return`${d}/${m}/${y.slice(2)}`};
+const pD   = ()=>PREDIOS[activePred];
+const pWs  = ()=>wMap[activePred]||[];
+const toast= msg=>{const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800)};
+const loading=(show,txt='Cargando…')=>{
+  document.getElementById('loadingOverlay').style.display=show?'flex':'none';
+  document.getElementById('loadingText').textContent=txt;
+};
+
+function isAdmin(){return currentProfile&&currentProfile.role==='admin'}
+function canEditPredio(pid){
+  if(isAdmin())return true;
+  return currentProfile&&currentProfile.predioId===pid;
+}
+function userSubjefe(){return currentProfile&&currentProfile.subjefe||''}
+
+function weekDates(){
+  const d=new Date(today),dow=d.getDay(),mon=new Date(d);
+  mon.setDate(d.getDate()-(dow===0?6:dow-1));
+  return Array.from({length:5},(_,i)=>{const dd=new Date(mon);dd.setDate(mon.getDate()+i);return dd.toISOString().slice(0,10)});
+}
+
+// ══════════════════════════════════════════════
+// AUTH
+// ══════════════════════════════════════════════
+async function doLogin(){
+  const email=document.getElementById('loginEmail').value.trim();
+  const pass =document.getElementById('loginPass').value;
+  const errEl=document.getElementById('loginError');
+  errEl.style.display='none';
+  if(!email||!pass){errEl.textContent='Ingresa email y contraseña';errEl.style.display='block';return}
+  loading(true,'Iniciando sesión…');
+  try{
+    await auth.signInWithEmailAndPassword(email,pass);
+  }catch(e){
+    loading(false);
+    errEl.textContent=e.code==='auth/wrong-password'||e.code==='auth/user-not-found'
+      ?'Email o contraseña incorrectos':'Error: '+e.message;
+    errEl.style.display='block';
+  }
+}
+
+function doLogout(){
+  if(!confirm('¿Cerrar sesión?'))return;
+  auth.signOut();
+}
+
+// Listen to auth state
+auth.onAuthStateChanged(async user=>{
+  if(!user){
+    // show login
+    loading(false);
+    document.getElementById('loginScreen').style.display='flex';
+    document.getElementById('appScreen').style.display='none';
+    currentUser=null;currentProfile=null;
+    return;
+  }
+  currentUser=user;
+  loading(true,'Cargando perfil…');
+  try{
+    const snap=await colUsers().doc(user.uid).get();
+    if(!snap.exists){
+      // First time: create admin profile automatically
+      currentProfile={email:user.email,nombre:user.email.split('@')[0],role:'admin',predioId:'todos',subjefe:''};
+      await colUsers().doc(user.uid).set(currentProfile);
+    } else {
+      currentProfile=snap.data();
+    }
+    bootApp();
+  }catch(e){
+    loading(false);
+    toast('Error al cargar perfil: '+e.message);
+  }
+});
+
+function bootApp(){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('appScreen').style.display='block';
+
+  // Set user pill
+  const n=currentProfile.nombre||currentProfile.email;
+  document.getElementById('userName').textContent=n;
+  document.getElementById('userAvatar').textContent=n[0].toUpperCase();
+
+  // Restrict predio tabs for subjefes
+  applyRoleUI();
+
+  // Load data for default predio
+  const startPredio = isAdmin()?'transito':(currentProfile.predioId||'transito');
+  selPredio(startPredio);
+}
+
+function applyRoleUI(){
+  // Predio tabs: subjefes only see their predio
+  document.querySelectorAll('.ptab').forEach(tab=>{
+    if(!isAdmin()&&tab.dataset.id!==currentProfile.predioId){
+      tab.classList.add('disabled');
+    }
+  });
+  // Config: show users section only for admin
+  document.getElementById('usersAdminSection').style.display=isAdmin()?'block':'none';
+  document.getElementById('clearDataBtn').style.display=isAdmin()?'block':'none';
+  // Add worker button: only admin
+  document.getElementById('addWBtn').style.display=isAdmin()?'block':'none';
+}
+
+// ══════════════════════════════════════════════
+// PREDIO SELECT + DATA LOAD
+// ══════════════════════════════════════════════
+function selPredio(id){
+  if(!isAdmin()&&currentProfile.predioId!==id)return;
+  activePred=id;
+  document.querySelectorAll('.ptab').forEach(t=>{
+    t.className='ptab'+(isAdmin()||currentProfile.predioId===t.dataset.id?'':' disabled');
+    if(t.dataset.id===id)t.classList.add('ptab-'+{transito:'t',constancia:'c',paradero:'p'}[id]);
+  });
+  loadPredioData(id);
+}
+
+async function loadPredioData(pid){
+  loading(true,'Cargando datos…');
+  // Cancel previous listeners
+  if(unsubRegistros){unsubRegistros();unsubRegistros=null;}
+  Object.values(unsubCiclos).forEach(u=>u&&u());
+  unsubCiclos={};
+
+  try{
+    // Load workers once
+    const wsSnap=await colWorkers(pid).get();
+    wMap[pid]=wsSnap.docs.map(d=>({id:d.id,...d.data()}));
+
+    // Live listener for registros of current week (and nearby)
+    unsubRegistros=colRegistros(pid)
+      .orderBy('ts','desc')
+      .limit(500)
+      .onSnapshot(snap=>{
+        rCache=snap.docs.map(d=>({id:d.id,...d.data()}));
+        buildSem();renderHoy();
+        if(document.getElementById('screen-avance').classList.contains('active'))renderAvance();
+        if(document.getElementById('screen-prog').classList.contains('active'))renderProg();
+      });
+
+    // Live listener for ciclos per subjefe
+    ciclosCache={};
+    for(const sub of pD().subjefes){
+      unsubCiclos[sub]=colCiclos(pid,sub)
+        .orderBy('inicio','asc')
+        .onSnapshot(snap=>{
+          ciclosCache[sub]=snap.docs.map(d=>({id:d.id,...d.data()}));
+          renderCtx();
+          if(document.getElementById('screen-ciclos').classList.contains('active'))renderCiclos();
+        });
+    }
+
+    loading(false);
+    populateSels();
+    renderCtx();
+    buildSem();
+  }catch(e){
+    loading(false);
+    toast('Error cargando datos: '+e.message);
+  }
+}
+
+// ══════════════════════════════════════════════
+// CICLO HELPERS
+// ══════════════════════════════════════════════
+function getCicloEn(predioId,subjefe,fecha=todayIso){
+  const cs=ciclosCache[subjefe]||[];
+  return cs.find(c=>c.inicio<=fecha&&(c.fin===null||c.fin>=fecha))||null;
+}
+function getCicloAbierto(predioId,subjefe){
+  return (ciclosCache[subjefe]||[]).find(c=>c.fin===null)||null;
+}
+
+// ══════════════════════════════════════════════
+// CONTEXT PILL
+// ══════════════════════════════════════════════
+function ctxHTML(){
+  const p=pD(),pc={transito:'t',constancia:'c',paradero:'p'}[activePred];
+  const rows=p.subjefes.map(s=>{
+    const c=getCicloEn(activePred,s,selDate);
+    const badge=c
+      ?`<span class="tbadge tb-${c.temporada}" style="font-size:10px;padding:2px 8px">${TICONS[c.temporada]} ${TNAMES[c.temporada]}${c.fin===null?' ●':''}</span>`
+      :`<span class="tbadge tb-none" style="font-size:10px;padding:2px 8px">Sin ciclo</span>`;
+    return `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:5px">
+      <span class="stag">👤 ${s}</span>${badge}
+    </div>`;
+  }).join('');
+  return `<div class="ctx-pill">
+    <div class="ctx-row1">
+      <div class="ctx-dot" style="background:var(--c-${pc})"></div>
+      <div class="ctx-name">${p.nombre}</div>
+      <div class="ctx-meta">${fD(selDate)}</div>
+    </div>${rows}
+  </div>`;
+}
+function renderCtx(){['ctx0','ctx2','ctx-prog'].forEach(id=>{const el=document.getElementById(id);if(el)el.innerHTML=ctxHTML()})}
+
+// ══════════════════════════════════════════════
+// POPULATE SELECTS
+// ══════════════════════════════════════════════
+function populateSels(){
+  const p=pD();
+  // For subjefes: preselect their group
+  const defSub=isAdmin()?'':userSubjefe();
+  ['selSub','fS'].forEach(sid=>{
+    const sel=document.getElementById(sid);if(!sel)return;
+    sel.innerHTML=`<option value="">${isAdmin()?'Todos':defSub}</option>`+
+      (isAdmin()?p.subjefes.map(s=>`<option value="${s}">${s}</option>`).join(''):'');
+    if(!isAdmin())sel.value=defSub;
+  });
+  const ns=document.getElementById('nS');
+  if(ns)ns.innerHTML=p.subjefes.map(s=>`<option>${s}</option>`).join('');
+  ['fL'].forEach(sid=>{const sel=document.getElementById(sid);if(!sel)return;sel.innerHTML=`<option value="">Todas</option>`+LABORES.map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')});
+  filtW();
+  initLaborRows();
+}
+
+function filtW(){
+  const sub=document.getElementById('selSub').value||(isAdmin()?'':userSubjefe());
+  const sel=document.getElementById('selW');const cur=sel.value;
+  const list=sub?pWs().filter(w=>w.subjefe===sub):pWs();
+  sel.innerHTML=`<option value="">— Seleccionar —</option>`+list.map(w=>`<option value="${w.id}">${w.nombre}</option>`).join('');
+  sel.value=cur;
+}
+
+// ══════════════════════════════════════════════
+// LABOR ROWS
+// ══════════════════════════════════════════════
+const MAX_LAB=4;
+function laborOptsHTML(){return`<option value="">— Seleccionar —</option>`+LABORES.map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')}
+function initLaborRows(){const c=document.getElementById('laborRows');if(!c)return;c.innerHTML='';addLaborRow();}
+function addLaborRow(){
+  const cont=document.getElementById('laborRows'),cur=cont.querySelectorAll('.labor-row').length;
+  if(cur>=MAX_LAB){toast('Máximo 4 labores por entrada');return}
+  const idx=cur+1,row=document.createElement('div');row.className='labor-row';row.dataset.idx=idx;
+  row.innerHTML=`<div class="labor-row-num"><span>Labor ${idx}</span>${idx>1?`<button class="rm-labor" onclick="rmLaborRow(this)">✕</button>`:''}</div>
+    <div class="labor-sel"><select class="lr-labor">${laborOptsHTML()}</select></div>
+    <div class="labor-nums">
+      <div><label>Horas</label><input type="number" class="lr-horas" placeholder="7.5" min="0" max="14" step="0.5"></div>
+      <div><label>N° mesas</label><input type="number" class="lr-mesas" placeholder="32" min="0"></div>
+    </div>`;
+  cont.appendChild(row);updateLaborUI();
+}
+function rmLaborRow(btn){
+  btn.closest('.labor-row').remove();
+  document.querySelectorAll('.labor-row').forEach((r,i)=>{r.dataset.idx=i+1;r.querySelector('.labor-row-num span').textContent=`Labor ${i+1}`});
+  updateLaborUI();
+}
+function updateLaborUI(){
+  const cont=document.getElementById('laborRows'),count=cont.querySelectorAll('.labor-row').length;
+  const counter=document.getElementById('laborCount');if(counter)counter.textContent=`${count} / ${MAX_LAB}`;
+  const addBtn=document.getElementById('addLaborBtn');if(addBtn)addBtn.style.display=count>=MAX_LAB?'none':'block';
+}
+
+// ══════════════════════════════════════════════
+// SEMANA GRID
+// ══════════════════════════════════════════════
+function buildSem(){
+  const g=document.getElementById('semGrid');if(!g)return;g.innerHTML='';
+  weekDates().forEach((iso,i)=>{
+    const hasD=rCache.some(r=>r.fecha===iso),isA=iso===selDate;
+    const b=document.createElement('div');
+    b.className=`dib${isA?' active':''}${hasD&&!isA?' has-data':''}`;
+    b.innerHTML=`<div class="dn">${DIAS[i]}</div><div class="dd">${iso.slice(8)}</div>`;
+    b.onclick=()=>{selDate=iso;buildSem();renderHoy();renderCtx()};
+    g.appendChild(b);
+  });
+}
+
+// ══════════════════════════════════════════════
+// HOY
+// ══════════════════════════════════════════════
+function renderHoy(){
+  const div=document.getElementById('hoy');if(!div)return;
+  // filter by date; if subjefe, also by their group
+  let entries=rCache.filter(r=>r.fecha===selDate);
+  if(!isAdmin()){const sub=userSubjefe();entries=entries.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
+  if(!entries.length){div.innerHTML=`<div class="empty"><div class="empty-icon">📝</div><div>Sin entradas para este día</div></div>`;return}
+  div.innerHTML=entries.map(e=>eHTML(e)).join('');
+}
+
+function eHTML(e,pred=activePred){
+  const w=pWs().find(x=>x.id===e.workerId);
+  const pc={transito:'t',constancia:'c',paradero:'p'}[pred];
+  const ciclo=w?getCicloEn(pred,w.subjefe,e.fecha):null;
+  const labores=e.labores||[{laborId:e.laborId,horas:e.horas||0,mesas:e.mesas||0}];
+  const totalH=labores.reduce((s,l)=>s+(l.horas||0),0);
+  const totalM=labores.reduce((s,l)=>s+(l.mesas||0),0);
+  const canDel=isAdmin()||(w&&w.subjefe===userSubjefe());
+  const laborLines=labores.map((lr,i)=>{
+    const l=LABORES.find(x=>x.id===lr.laborId);
+    return `<div style="display:flex;align-items:flex-start;gap:6px;padding:5px 0;${i>0?'border-top:1px solid var(--sand)':''}">
+      <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);min-width:18px;margin-top:1px">${i+1}.</span>
+      <div style="flex:1">
+        <div style="font-size:12px;font-weight:600;line-height:1.3">${l?`<span style="color:var(--muted);font-family:'DM Mono',monospace">${lr.laborId}.</span> ${l.d}`:'—'}</div>
+        <div style="display:flex;gap:5px;margin-top:3px">
+          ${lr.horas?`<span class="badge bh">⏱ ${lr.horas}h</span>`:''}
+          ${lr.mesas?`<span class="badge bm">🪴 ${lr.mesas} mesas</span>`:''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="ecard" style="border-left-color:var(--c-${pc})">
+    <div class="ehdr">
+      <div>
+        <div class="ename">${w?w.nombre:'—'}</div>
+        <div class="emeta">${w?`👤 ${w.subjefe} · `:''}${fD(e.fecha)}</div>
+      </div>
+      ${canDel?`<button class="del-btn" onclick="delEntry('${e.id}')">✕</button>`:''}
+    </div>
+    <div class="badges" style="margin-bottom:7px">
+      <span class="badge b${pc}">${PREDIOS[pred].nombre}</span>
+      ${ciclo?`<span class="tbadge tb-${ciclo.temporada}" style="font-size:9px;padding:2px 7px">${TICONS[ciclo.temporada]} ${TNAMES[ciclo.temporada]}</span>`:''}
+      ${labores.length>1?`<span class="badge" style="background:var(--sand);color:var(--dark)">${labores.length} labores</span>`:''}
+      ${totalH?`<span class="badge bh">⏱ ${totalH}h</span>`:''}
+      ${totalM?`<span class="badge bm">🪴 ${totalM} mesas</span>`:''}
+    </div>
+    <div style="border-top:1px solid var(--sand);padding-top:6px">${laborLines}</div>
+    ${e.obs?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:5px;border-top:1px solid var(--sand)">📌 ${e.obs}</div>`:''}
+  </div>`;
+}
+
+// ══════════════════════════════════════════════
+// GUARDAR / ELIMINAR REGISTRO
+// ══════════════════════════════════════════════
+async function guardar(){
+  const wId=document.getElementById('selW').value;
+  const obs=document.getElementById('iO').value.trim();
+  if(!wId){toast('⚠️ Selecciona un trabajador');return}
+  const rows=document.querySelectorAll('#laborRows .labor-row');
+  const labores=[];let hasError=false;
+  rows.forEach(row=>{
+    const lId=parseInt(row.querySelector('.lr-labor').value)||0;
+    const horas=parseFloat(row.querySelector('.lr-horas').value)||0;
+    const mesas=parseInt(row.querySelector('.lr-mesas').value)||0;
+    if(!lId){row.querySelector('.lr-labor').style.borderColor='var(--red)';hasError=true;return}
+    row.querySelector('.lr-labor').style.borderColor='';
+    labores.push({laborId:lId,horas,mesas});
+  });
+  if(hasError){toast('⚠️ Selecciona labor en cada fila');return}
+  if(!labores.length){toast('⚠️ Agrega al menos una labor');return}
+  loading(true,'Guardando…');
+  try{
+    await colRegistros(activePred).add({fecha:selDate,workerId:wId,labores,obs,ts:Date.now(),creadoPor:currentUser.uid});
+    document.getElementById('iO').value='';
+    initLaborRows();
+    toast('✅ Entrada guardada');
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+
+async function delEntry(id){
+  if(!confirm('¿Eliminar esta entrada?'))return;
+  loading(true,'Eliminando…');
+  try{await colRegistros(activePred).doc(id).delete();toast('🗑 Eliminada')}
+  catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+
+// ══════════════════════════════════════════════
+// AVANCE
+// ══════════════════════════════════════════════
+function renderAvance(){
+  renderCtx();
+  const entryH=e=>(e.labores||[{horas:e.horas||0}]).reduce((s,l)=>s+(l.horas||0),0);
+  const entryM=e=>(e.labores||[{mesas:e.mesas||0}]).reduce((s,l)=>s+(l.mesas||0),0);
+  let todayE=rCache.filter(r=>r.fecha===selDate);
+  if(!isAdmin()){const sub=userSubjefe();todayE=todayE.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
+  const tH=todayE.reduce((s,r)=>s+entryH(r),0),tM=todayE.reduce((s,r)=>s+entryM(r),0);
+  document.getElementById('statsRow').innerHTML=`
+    <div class="sbox"><div class="sval">${rCache.length}</div><div class="slbl">Total reg.</div></div>
+    <div class="sbox"><div class="sval">${tH.toFixed(1)}</div><div class="slbl">Horas hoy</div></div>
+    <div class="sbox"><div class="sval">${tM}</div><div class="slbl">Mesas hoy</div></div>`;
+  const wd=weekDates();
+  let wRegs=rCache.filter(r=>wd.includes(r.fecha));
+  const wMesas=e=>(e.labores||[{mesas:e.mesas||0}]).reduce((s,l)=>s+(l.mesas||0),0);
+  const visWs=isAdmin()?pWs():pWs().filter(w=>w.subjefe===userSubjefe());
+  const maxM=Math.max(1,...visWs.map(w=>wd.reduce((s,fd)=>s+wRegs.filter(r=>r.workerId===w.id&&r.fecha===fd).reduce((ss,e)=>ss+wMesas(e),0),0)));
+  document.getElementById('avW').innerHTML=visWs.length?visWs.map(w=>{
+    const tot=wd.reduce((s,fd)=>s+wRegs.filter(r=>r.workerId===w.id&&r.fecha===fd).reduce((ss,e)=>ss+wMesas(e),0),0);
+    return `<div style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span style="font-size:12px;font-weight:600">${w.nombre.split(' ').slice(0,2).join(' ')}</span>
+        <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted)">${tot} mesas</span>
+      </div>
+      <div class="avbar"><div class="avfill" style="width:${Math.round(tot/maxM*100)}%"></div></div>
+    </div>`;
+  }).join(''):`<div class="empty"><div>Sin trabajadores</div></div>`;
+  document.getElementById('avSem').innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr style="border-bottom:2px solid var(--sand)">
+      <th style="text-align:left;padding:5px 3px;font-size:9px;color:var(--muted);text-transform:uppercase">Día</th>
+      <th style="text-align:right;padding:5px 3px;font-size:9px;color:var(--muted)">Reg.</th>
+      <th style="text-align:right;padding:5px 3px;font-size:9px;color:var(--muted)">Horas</th>
+      <th style="text-align:right;padding:5px 3px;font-size:9px;color:var(--muted)">Mesas</th>
+    </tr></thead>
+    <tbody>${wd.map((iso,i)=>{
+      let dr=rCache.filter(r=>r.fecha===iso);
+      if(!isAdmin()){const sub=userSubjefe();dr=dr.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
+      const h=dr.reduce((s,r)=>s+entryH(r),0),m=dr.reduce((s,r)=>s+entryM(r),0),isT=iso===selDate;
+      return `<tr style="${isT?'background:var(--lime);':''}border-bottom:1px solid var(--sand)">
+        <td style="padding:6px 3px;font-weight:${isT?700:400}">${DIAS[i]} ${iso.slice(8)}</td>
+        <td style="text-align:right;padding:6px 3px">${dr.length}</td>
+        <td style="text-align:right;padding:6px 3px;font-family:'DM Mono',monospace">${h.toFixed(1)}</td>
+        <td style="text-align:right;padding:6px 3px;font-family:'DM Mono',monospace">${m}</td>
+      </tr>`;}).join('')}</tbody></table>`;
+  const lc={};todayE.forEach(e=>{const labs=e.labores||[{laborId:e.laborId}];labs.forEach(lr=>{const l=LABORES.find(x=>x.id===lr.laborId);const k=l?`${l.id}. ${l.d}`:`#${lr.laborId}`;lc[k]=(lc[k]||0)+1})});
+  const sorted=Object.entries(lc).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  document.getElementById('avTop').innerHTML=sorted.length?sorted.map(([k,v])=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--sand)"><span style="font-size:12px;max-width:80%">${k}</span><span style="font-family:'DM Mono',monospace;font-size:13px;font-weight:700;color:var(--green)">${v}×</span></div>`).join(''):`<div class="empty"><div style="padding:12px 0">Sin entradas hoy</div></div>`;
+}
+
+// ══════════════════════════════════════════════
+// CICLOS
+// ══════════════════════════════════════════════
+function renderCiclos(){
+  const div=document.getElementById('ciclosContent');div.innerHTML='';
+  const showAll=isAdmin();
+  const subjefes=showAll?pD().subjefes:pD().subjefes.filter(s=>s===userSubjefe()||isAdmin());
+  PRED_ORDER.forEach(pid=>{
+    if(!isAdmin()&&pid!==activePred)return;
+    const p=PREDIOS[pid],pc={transito:'t',constancia:'c',paradero:'p'}[pid];
+    const pl=document.createElement('div');pl.className='pred-label';
+    pl.innerHTML=`<div class="pred-label-dot" style="background:var(--c-${pc})"></div><span class="pred-label-name" style="color:var(--c-${pc})">${p.nombre}</span>`;
+    div.appendChild(pl);
+    const subs=isAdmin()?p.subjefes:p.subjefes.filter(s=>s===userSubjefe());
+    subs.forEach(sub=>{
+      const cycles=(ciclosCache[sub]||[]).slice().sort((a,b)=>b.inicio.localeCompare(a.inicio));
+      const openCycle=cycles.find(c=>c.fin===null);
+      const gb=document.createElement('div');gb.className='group-block';
+      const cycleNow=getCicloEn(pid,sub);
+      gb.innerHTML=`<div class="gb-header">
+        <div><div class="gb-name">👤 ${sub}</div><div class="gb-wcount">${(wMap[pid]||[]).filter(w=>w.subjefe===sub).length} trabajadores</div></div>
+        ${cycleNow?`<span class="tbadge tb-${cycleNow.temporada}">${TICONS[cycleNow.temporada]} ${TNAMES[cycleNow.temporada]}${cycleNow.fin===null?' ●':''}</span>`:`<span class="tbadge tb-none">Sin ciclo</span>`}
+      </div>`;
+      const body=document.createElement('div');body.className='gb-body';
+      if(cycles.length){
+        cycles.forEach(c=>{
+          const isOpen=c.fin===null,isCurrent=getCicloEn(pid,sub)===c,isFuture=c.inicio>todayIso;
+          let sc=isOpen?'is-open':'is-closed';if(isCurrent)sc='is-active';
+          const ci=document.createElement('div');ci.className=`cycle-item ${sc}`;
+          ci.innerHTML=`<div class="ci-top">
+            <div>
+              <span class="tbadge tb-${c.temporada}" style="font-size:10px;padding:2px 9px">${TICONS[c.temporada]} ${TNAMES[c.temporada]}</span>
+              <div class="ci-dates">Inicio: ${fDMY(c.inicio)} · ${isOpen?'<strong style="color:var(--c-primor)">En curso</strong>':`Cierre: ${fDMY(c.fin)}`}</div>
+              ${isFuture?`<span class="ci-status-future">Futuro</span>`:isOpen?`<span class="ci-status-open">● Abierto</span>`:`<span class="ci-status-closed">Cerrado</span>`}
+            </div>
+            <div class="ci-actions">
+              ${isOpen?`<button class="btn btn-warn btn-sm" onclick="modalCerrarCiclo('${pid}','${sub}','${c.id}')">🔒 Cerrar</button>`:''}
+              <button class="btn btn-secondary btn-sm" onclick="modalEditarCiclo('${pid}','${sub}','${c.id}')">✏️</button>
+              ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="borrarCiclo('${pid}','${sub}','${c.id}')">✕</button>`:''}
+            </div>
+          </div>
+          ${c.notas?`<div class="ci-notes">📌 ${c.notas}</div>`:''}`;
+          body.appendChild(ci);
+        });
+      } else {
+        body.innerHTML=`<p style="font-size:12px;color:var(--muted);padding:4px 0 8px">Sin ciclos registrados.</p>`;
+      }
+      if(!openCycle){
+        const ar=document.createElement('div');ar.className='add-cycle-row';
+        ar.innerHTML=`<button class="open-cycle-btn" onclick="modalAbrirCiclo('${pid}','${sub}')">🌱 Abrir nuevo ciclo</button>`;
+        body.appendChild(ar);
+      } else {
+        const ar=document.createElement('div');ar.style.cssText='font-size:11px;color:var(--muted);padding:6px 0';
+        ar.textContent='Cierra el ciclo actual antes de abrir uno nuevo.';body.appendChild(ar);
+      }
+      gb.appendChild(body);div.appendChild(gb);
+    });
+  });
+}
+
+async function modalAbrirCiclo(predioId,subjefe){
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">🌱 Abrir ciclo — ${subjefe}</div>
+    <div class="modal-sub">Registra la fecha real de inicio. Puedes cerrarlo cuando termine el cultivo.</div>
+    <div class="form-row"><label>Temporada</label><select id="mTemp">${TORDER.map(k=>`<option value="${k}">${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
+    <div class="form-row"><label>Fecha de inicio</label><input type="date" id="mIni" value="${todayIso}"></div>
+    <div class="form-row"><label>Notas</label><input type="text" id="mNot" placeholder="Ej: Plantación 3ª semana diciembre"></div>
+    <button class="btn btn-primary" onclick="guardarApertura('${predioId}','${subjefe}')">Abrir ciclo</button>`;
+  document.getElementById('overlay').classList.add('open');
+}
+async function guardarApertura(predioId,subjefe){
+  const temp=document.getElementById('mTemp').value,ini=document.getElementById('mIni').value,notas=document.getElementById('mNot').value.trim();
+  if(!ini){toast('⚠️ Ingresa fecha de inicio');return}
+  loading(true,'Guardando ciclo…');
+  try{
+    await colCiclos(predioId,subjefe).add({temporada:temp,inicio:ini,fin:null,notas,creadoPor:currentUser.uid,ts:Date.now()});
+    closeModal();toast('✅ Ciclo abierto');
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+
+async function modalCerrarCiclo(predioId,subjefe,cicloId){
+  const c=(ciclosCache[subjefe]||[]).find(x=>x.id===cicloId);if(!c)return;
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">🔒 Cerrar ciclo — ${subjefe}</div>
+    <div style="margin-bottom:14px"><span class="tbadge tb-${c.temporada}">${TICONS[c.temporada]} ${TNAMES[c.temporada]}</span>
+    <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-top:6px">Inició el ${fDMY(c.inicio)}</div></div>
+    <div class="form-row"><label>Fecha de cierre</label><input type="date" id="mFin" value="${todayIso}" min="${c.inicio}"></div>
+    <div class="form-row"><label>Notas de cierre</label><input type="text" id="mNot2" placeholder="Ej: Terminó 2ª semana diciembre"></div>
+    <button class="btn btn-warn" onclick="guardarCierre('${predioId}','${subjefe}','${cicloId}')">Registrar cierre</button>`;
+  document.getElementById('overlay').classList.add('open');
+}
+async function guardarCierre(predioId,subjefe,cicloId){
+  const fin=document.getElementById('mFin').value,nota=document.getElementById('mNot2').value.trim();
+  if(!fin){toast('⚠️ Ingresa fecha de cierre');return}
+  const c=(ciclosCache[subjefe]||[]).find(x=>x.id===cicloId);
+  loading(true,'Cerrando ciclo…');
+  try{
+    const upd={fin};if(nota)upd.notas=(c.notas?c.notas+' · ':'')+nota;
+    await colCiclos(predioId,subjefe).doc(cicloId).update(upd);
+    closeModal();toast('🔒 Ciclo cerrado');
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+async function modalEditarCiclo(predioId,subjefe,cicloId){
+  const c=(ciclosCache[subjefe]||[]).find(x=>x.id===cicloId);if(!c)return;
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">✏️ Editar ciclo — ${subjefe}</div>
+    <div class="form-row"><label>Temporada</label><select id="mTemp">${TORDER.map(k=>`<option value="${k}"${c.temporada===k?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
+    <div class="form-row"><label>Fecha inicio</label><input type="date" id="mIni" value="${c.inicio}"></div>
+    <div class="form-row"><label>Fecha cierre <span style="font-weight:400;text-transform:none">(vacío = en curso)</span></label><input type="date" id="mFin" value="${c.fin||''}"></div>
+    <div class="form-row"><label>Notas</label><input type="text" id="mNot" value="${c.notas||''}"></div>
+    <button class="btn btn-primary" onclick="guardarEdicionCiclo('${predioId}','${subjefe}','${cicloId}')">Guardar</button>`;
+  document.getElementById('overlay').classList.add('open');
+}
+async function guardarEdicionCiclo(predioId,subjefe,cicloId){
+  const temp=document.getElementById('mTemp').value,ini=document.getElementById('mIni').value,fin=document.getElementById('mFin').value||null,notas=document.getElementById('mNot').value.trim();
+  if(!ini){toast('⚠️ Fecha de inicio obligatoria');return}
+  if(fin&&fin<ini){toast('⚠️ El cierre debe ser posterior al inicio');return}
+  loading(true,'Actualizando…');
+  try{
+    await colCiclos(predioId,subjefe).doc(cicloId).update({temporada:temp,inicio:ini,fin,notas});
+    closeModal();toast('✅ Ciclo actualizado');
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+async function borrarCiclo(predioId,subjefe,cicloId){
+  if(!confirm('¿Eliminar ciclo?'))return;
+  loading(true,'Eliminando…');
+  try{await colCiclos(predioId,subjefe).doc(cicloId).delete();toast('🗑 Ciclo eliminado')}
+  catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+
+// ══════════════════════════════════════════════
+// PROGRAMACIÓN SEMANAL
+// ══════════════════════════════════════════════
+function getProgMonday(offset=0){
+  const d=new Date(today),dow=d.getDay();
+  d.setDate(d.getDate()-(dow===0?6:dow-1)+offset*7);
+  return d.toISOString().slice(0,10);
+}
+function getProgDays(mondayIso){
+  const base=new Date(mondayIso);
+  return [1,2,3,4,7].map(o=>{const d=new Date(base);d.setDate(base.getDate()+o);return d.toISOString().slice(0,10)});
+}
+const PROG_DAY_NAMES={1:'Martes',2:'Miércoles',3:'Jueves',4:'Viernes',7:'Lunes (sig.)'};
+function progDayName(mondayIso,dayIso){
+  const diff=Math.round((new Date(dayIso)-new Date(mondayIso))/(86400000));
+  return PROG_DAY_NAMES[diff]||dayIso;
+}
+function getWeekNum(iso){const d=new Date(iso),sy=new Date(d.getFullYear(),0,1);return Math.ceil(((d-sy)/86400000+sy.getDay()+1)/7)}
+function progNavSem(delta){progWeekOffset+=delta;renderProg();}
+
+function populateProgSubjefe(){
+  const sel=document.getElementById('progSubjefe');if(!sel)return;
+  const cur=sel.value;
+  if(!isAdmin()){sel.innerHTML=`<option value="${userSubjefe()}">${userSubjefe()}</option>`;sel.value=userSubjefe();return;}
+  sel.innerHTML=`<option value="">— Seleccionar —</option>`+pD().subjefes.map(s=>`<option value="${s}">${s}</option>`).join('');
+  if(!cur&&pD().subjefes.length===1)sel.value=pD().subjefes[0];else sel.value=cur;
+}
+
+async function renderProg(){
+  const mondayIso=getProgMonday(progWeekOffset);
+  const progDays=getProgDays(mondayIso);
+  document.getElementById('progSemLabel').textContent=`Semana ${getWeekNum(mondayIso)} — programada el lunes`;
+  document.getElementById('progSemRange').textContent=`${fDMY(mondayIso)} → ${fDMY(progDays[4])}`;
+  const subjefe=document.getElementById('progSubjefe').value;
+  const contentDiv=document.getElementById('progContent');
+  const newBtnDiv=document.getElementById('progNewBtn');
+  if(!subjefe){contentDiv.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><div>Selecciona un subjefe</div></div>`;newBtnDiv.innerHTML='';return;}
+  // load prog doc
+  loading(true,'Cargando programación…');
+  let prog=null;
+  try{
+    const snap=await colProg(activePred,subjefe).doc(mondayIso).get();
+    if(snap.exists)prog=snap.data();
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+  if(!prog){
+    contentDiv.innerHTML=`<div class="empty"><div class="empty-icon">📋</div><div style="margin-bottom:12px">Sin programación para esta semana</div></div>`;
+    newBtnDiv.innerHTML=`<button class="btn btn-primary" onclick="openModalNuevaProg('${subjefe}','${mondayIso}')">📋 Crear programación de semana</button>`;
+    return;
+  }
+  newBtnDiv.innerHTML=`<button class="btn btn-secondary" style="margin-top:4px" onclick="openModalNuevaProg('${subjefe}','${mondayIso}')">✏️ Editar programación</button>`;
+  contentDiv.innerHTML='';
+  progDays.forEach(dayIso=>{
+    const tasks=(prog.dias||{})[dayIso]||[];
+    const dayName=progDayName(mondayIso,dayIso);
+    const isToday=dayIso===todayIso;
+    let realEntries=rCache.filter(r=>r.fecha===dayIso&&pWs().some(w=>w.id===r.workerId&&w.subjefe===subjefe));
+    const card=document.createElement('div');card.className='prog-day-card';
+    if(isToday)card.style.boxShadow='0 0 0 2px var(--green),0 2px 12px rgba(0,0,0,.10)';
+    let tasksHTML=tasks.length?tasks.map((t,i)=>{
+      const l=LABORES.find(x=>x.id===t.laborId);
+      const realMesas=realEntries.reduce((s,e)=>{const ls=e.labores||[{laborId:e.laborId,mesas:e.mesas||0}];return s+ls.filter(lr=>lr.laborId===t.laborId).reduce((ss,lr)=>ss+(lr.mesas||0),0)},0);
+      const pct=t.metaMesas>0?Math.min(100,Math.round(realMesas/t.metaMesas*100)):null;
+      const bc=pct===null?'var(--green)':pct>=100?'var(--c-primor)':pct>=60?'#F4A261':'var(--red)';
+      return `<div class="prog-task">
+        <div class="prog-task-num">${i+1}.</div>
+        <div class="prog-task-info">
+          <div class="prog-task-labor">${l?`<span style="color:var(--muted);font-family:'DM Mono',monospace">${t.laborId}.</span> ${l.d}`:'—'}</div>
+          <div class="prog-task-meta">
+            <span class="prog-tag ptag-mod">📦 Módulo ${t.modulo||'—'}</span>
+            ${t.metaMesas?`<span class="prog-tag ptag-meta">🎯 ${t.metaMesas} mesas</span>`:''}
+            ${realMesas?`<span class="prog-tag ptag-real">✅ ${realMesas} real</span>`:''}
+          </div>
+          ${t.metaMesas&&pct!==null?`<div class="prog-vs"><span class="prog-vs-label">Avance</span><div class="prog-vs-bar-wrap"><div class="prog-vs-bar" style="width:${pct}%;background:${bc}"></div></div><span class="prog-vs-pct" style="color:${bc}">${pct}%</span></div>`:''}
+          ${t.notas?`<div style="font-size:11px;color:var(--muted);margin-top:4px">📌 ${t.notas}</div>`:''}
+        </div>
+      </div>`;
+    }).join(''):`<div class="prog-empty-day">Sin tareas programadas</div>`;
+    card.innerHTML=`<div class="prog-day-hdr">
+      <div><div class="prog-day-name">${dayName}${isToday?' <span style="font-size:9px;background:var(--green);color:#fff;padding:1px 6px;border-radius:10px;vertical-align:middle">Hoy</span>':''}</div>
+      <div class="prog-day-date">${fDMY(dayIso)}</div></div>
+      ${tasks.length?`<span class="badge" style="background:var(--sand);color:var(--dark)">${tasks.length} tarea${tasks.length>1?'s':''}</span>`:''}
+    </div><div class="prog-day-body">${tasksHTML}</div>`;
+    contentDiv.appendChild(card);
+  });
+}
+
+function openModalNuevaProg(subjefe,mondayIso){
+  const progDays=getProgDays(mondayIso);
+  const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
+  window._progEdit={predioId:activePred,subjefe,mondayIso,dias:{}};
+  progDays.forEach(iso=>{window._progEdit.dias[iso]=[];});
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">📋 Programación — ${subjefe}</div>
+    <div class="modal-sub">Semana del ${fDMY(mondayIso)}</div>
+    <div id="progModalDias"></div>
+    <button class="btn btn-primary" onclick="saveProgModal()">Guardar programación</button>`;
+  renderProgModalDias(progDays,dayNames);
+  // load existing if any
+  colProg(activePred,subjefe).doc(mondayIso).get().then(snap=>{
+    if(snap.exists){
+      const data=snap.data();
+      progDays.forEach(iso=>{window._progEdit.dias[iso]=(data.dias||{})[iso]||[];});
+      renderProgModalDias(progDays,dayNames);
+    }
+  });
+  document.getElementById('overlay').classList.add('open');
+}
+function renderProgModalDias(progDays,dayNames){
+  const cont=document.getElementById('progModalDias');if(!cont)return;
+  cont.innerHTML=progDays.map((dayIso,di)=>{
+    const tasks=window._progEdit.dias[dayIso]||[];
+    return `<div style="margin-bottom:14px">
+      <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:13px;color:var(--dark);margin-bottom:6px;display:flex;align-items:center;gap:6px">
+        ${dayNames[di]} <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-weight:400">${fDMY(dayIso)}</span>
+      </div>
+      <div id="ptasks-${dayIso}">${tasks.map((t,ti)=>progTaskFormHTML(dayIso,ti,t)).join('')}</div>
+      <button class="btn btn-secondary" style="padding:7px;font-size:11px;margin-top:4px" onclick="addProgTask('${dayIso}')">＋ Tarea</button>
+    </div><div style="height:1px;background:var(--sand);margin:4px 0 14px"></div>`;
+  }).join('');
+}
+function progTaskFormHTML(dayIso,ti,t={}){
+  return `<div class="ptask-form" id="ptf-${dayIso}-${ti}">
+    <div class="ptask-form-hdr"><span class="ptask-form-num">Tarea ${ti+1}</span><button class="del-btn" onclick="rmProgTask('${dayIso}',${ti})">✕</button></div>
+    <div class="form-row"><label>Labor</label><select onchange="updPT('${dayIso}',${ti},'laborId',parseInt(this.value))"><option value="">— Seleccionar —</option>${LABORES.map(l=>`<option value="${l.id}"${t.laborId===l.id?' selected':''}>${l.id}. ${l.d}</option>`).join('')}</select></div>
+    <div class="form-grid">
+      <div><label>Módulo</label><input type="text" placeholder="MOD 7" value="${t.modulo||''}" onchange="updPT('${dayIso}',${ti},'modulo',this.value)"></div>
+      <div><label>Meta mesas</label><input type="number" placeholder="120" min="0" value="${t.metaMesas||''}" onchange="updPT('${dayIso}',${ti},'metaMesas',parseInt(this.value)||0)"></div>
+    </div>
+    <div><label>Notas</label><input type="text" placeholder="Indicaciones…" value="${t.notas||''}" onchange="updPT('${dayIso}',${ti},'notas',this.value)"></div>
+  </div>`;
+}
+function addProgTask(dayIso){if(!window._progEdit.dias[dayIso])window._progEdit.dias[dayIso]=[];window._progEdit.dias[dayIso].push({laborId:null,modulo:'',metaMesas:0,notas:''});const c=document.getElementById(`ptasks-${dayIso}`);if(c)c.innerHTML=window._progEdit.dias[dayIso].map((t,ti)=>progTaskFormHTML(dayIso,ti,t)).join('');}
+function rmProgTask(dayIso,ti){window._progEdit.dias[dayIso].splice(ti,1);const c=document.getElementById(`ptasks-${dayIso}`);if(c)c.innerHTML=window._progEdit.dias[dayIso].map((t,i)=>progTaskFormHTML(dayIso,i,t)).join('');}
+function updPT(dayIso,ti,field,value){if(window._progEdit.dias[dayIso][ti])window._progEdit.dias[dayIso][ti][field]=value;}
+async function saveProgModal(){
+  const {predioId,subjefe,mondayIso,dias}=window._progEdit;
+  loading(true,'Guardando programación…');
+  try{
+    await colProg(predioId,subjefe).doc(mondayIso).set({semana:mondayIso,dias,ts:Date.now(),creadoPor:currentUser.uid});
+    closeModal();renderProg();toast('✅ Programación guardada');
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+
+// ══════════════════════════════════════════════
+// CONFIG + WORKERS
+// ══════════════════════════════════════════════
+async function renderConfig(){
+  document.getElementById('cfgPLbl').textContent=pD().nombre;
+  document.getElementById('nS').innerHTML=pD().subjefes.map(s=>`<option>${s}</option>`).join('');
+  // predios overview
+  document.getElementById('prediosOv').innerHTML=PRED_ORDER.map(pid=>{
+    const p=PREDIOS[pid],pc={transito:'t',constancia:'c',paradero:'p'}[pid];
+    const ws=wMap[pid]||[],rs=rCache.length;
+    return `<div class="group-block" style="margin-bottom:9px">
+      <div class="gb-header">
+        <div><div style="font-family:'Syne',sans-serif;font-weight:700;font-size:14px;color:var(--c-${pc})">${p.nombre}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:1px">Jefe: ${p.jefe}</div></div>
+        <div style="text-align:right">
+          <div style="font-family:'DM Mono',monospace;font-size:12px;font-weight:600">${ws.length} trab.</div>
+        </div>
+      </div>
+      <div style="padding:9px 14px;background:var(--white)">
+        ${p.subjefes.map(s=>{const c=getCicloEn(pid,s);return`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="stag">👤 ${s}</span>${c?`<span class="tbadge tb-${c.temporada}" style="font-size:9px;padding:2px 7px">${TICONS[c.temporada]} ${TNAMES[c.temporada]}${c.fin===null?' ●':''}</span>`:''}</div>`;}).join('')}
+      </div>
+    </div>`;
+  }).join('');
+  // workers
+  document.getElementById('wList').innerHTML=(wMap[activePred]||[]).length
+    ?(wMap[activePred]).map(w=>`<div class="wrow">
+        <div><div class="wn">${w.nombre}</div><div class="wm">${w.codigo||'—'} · ${w.subjefe}${w.plantas?` · ${w.plantas}pl`:''}</div></div>
+        ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="delW('${w.id}')">✕</button>`:''}
+      </div>`).join('')
+    :`<div class="empty"><div style="padding:8px 0;font-size:12px">Sin trabajadores</div></div>`;
+  // users (admin only)
+  if(isAdmin()){
+    loadUsers();
+    // populate nuSubjefe
+    const allSubs=[...new Set(PRED_ORDER.flatMap(p=>PREDIOS[p].subjefes))];
+    document.getElementById('nuSubjefe').innerHTML=`<option value="">— (no aplica) —</option>`+allSubs.map(s=>`<option>${s}</option>`).join('');
+  }
+}
+
+async function addW(){
+  if(!isAdmin()){toast('Solo el administrador puede agregar trabajadores');return}
+  const n=document.getElementById('nN').value.trim(),c=document.getElementById('nC').value.trim(),s=document.getElementById('nS').value,p=parseInt(document.getElementById('nP').value)||0;
+  if(!n){toast('⚠️ Ingresa un nombre');return}
+  loading(true,'Guardando…');
+  try{
+    const ref=await colWorkers(activePred).add({nombre:n,codigo:c,subjefe:s,plantas:p});
+    wMap[activePred].push({id:ref.id,nombre:n,codigo:c,subjefe:s,plantas:p});
+    ['nN','nC','nP'].forEach(id=>document.getElementById(id).value='');
+    populateSels();renderConfig();toast('✅ Trabajador agregado');
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+async function delW(id){
+  if(!isAdmin()){toast('Solo admin puede eliminar');return}
+  if(!confirm('¿Eliminar trabajador?'))return;
+  loading(true,'Eliminando…');
+  try{
+    await colWorkers(activePred).doc(id).delete();
+    wMap[activePred]=wMap[activePred].filter(w=>w.id!==id);
+    populateSels();renderConfig();toast('🗑 Trabajador eliminado');
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+async function clearData(){
+  if(!isAdmin()){toast('Solo admin puede borrar');return}
+  loading(true,'Borrando registros…');
+  try{
+    const snap=await colRegistros(activePred).get();
+    const batch=db.batch();
+    snap.docs.forEach(d=>batch.delete(d.ref));
+    await batch.commit();
+    toast('🗑 Registros borrados');
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+
+// ══════════════════════════════════════════════
+// USER MANAGEMENT (admin only)
+// ══════════════════════════════════════════════
+async function loadUsers(){
+  try{
+    const snap=await colUsers().get();
+    usersCache=snap.docs.map(d=>({uid:d.id,...d.data()}));
+    const div=document.getElementById('usersList');
+    if(!div)return;
+    div.innerHTML=usersCache.map(u=>`<div class="user-row">
+      <div class="ur-info">
+        <div class="ur-name">${u.nombre||u.email}</div>
+        <div class="ur-meta">${u.email} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}">${u.role}</span> · ${u.predioId||'—'} ${u.subjefe?'· '+u.subjefe:''}</div>
+      </div>
+    </div>`).join('')||'<div style="font-size:12px;color:var(--muted)">Sin usuarios aún</div>';
+  }catch(e){console.error(e)}
+}
+
+async function createUser(){
+  if(!isAdmin()){toast('Solo admin puede crear usuarios');return}
+  const nombre=document.getElementById('nuEmail_name').value.trim();
+  const email=document.getElementById('nuEmail').value.trim();
+  const pass=document.getElementById('nuPass').value;
+  const role=document.getElementById('nuRole').value;
+  const predioId=document.getElementById('nuPredio').value;
+  const subjefe=document.getElementById('nuSubjefe').value;
+  if(!email||!pass||pass.length<6){toast('⚠️ Email y contraseña (mín. 6 caracteres) requeridos');return}
+  loading(true,'Creando usuario…');
+  try{
+    // Create auth user via Firebase Admin would be ideal, but from client we
+    // use a secondary app instance to avoid losing the admin session.
+    const secondApp=firebase.initializeApp(FIREBASE_CONFIG,'secondary_'+Date.now());
+    const cred=await secondApp.auth().createUserWithEmailAndPassword(email,pass);
+    const uid=cred.user.uid;
+    await secondApp.auth().signOut();
+    secondApp.delete();
+    // save profile
+    await colUsers().doc(uid).set({email,nombre:nombre||email.split('@')[0],role,predioId,subjefe,ts:Date.now()});
+    ['nuEmail_name','nuEmail','nuPass'].forEach(id=>document.getElementById(id).value='');
+    loadUsers();
+    toast('✅ Usuario creado: '+email);
+  }catch(e){
+    toast('Error: '+(e.code==='auth/email-already-in-use'?'Email ya registrado':e.message));
+  }
+  loading(false);
+}
+
+// ══════════════════════════════════════════════
+// MODAL
+// ══════════════════════════════════════════════
+function closeModal(){document.getElementById('overlay').classList.remove('open')}
+
+// ══════════════════════════════════════════════
+// SCREEN SWITCHER
+// ══════════════════════════════════════════════
+function showScr(name,btn){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
+  document.getElementById('screen-'+name).classList.add('active');
+  if(btn)btn.classList.add('active');
+  renderCtx();
+  if(name==='avance')  renderAvance();
+  if(name==='ciclos')  renderCiclos();
+  if(name==='config')  renderConfig();
+  if(name==='prog')    {populateProgSubjefe();renderProg();}
+}
+</script>
+</body>
+</html>
