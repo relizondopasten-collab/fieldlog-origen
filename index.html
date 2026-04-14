@@ -305,7 +305,11 @@ select:focus,input:focus{border-color:var(--green)}
     <div class="card">
       <div class="card-title">✍️ Nueva Entrada</div>
       <div class="form-row"><label>Subjefe / Encargado</label><select id="selSub" onchange="filtW()"><option value="">Todos</option></select></div>
-      <div class="form-row"><label>Trabajador</label><select id="selW"><option value="">— Seleccionar —</option></select></div>
+      <div class="form-row"><label>Trabajador</label><select id="selW" onchange="checkAusente()"><option value="">— Seleccionar —</option></select></div>
+      <div id="ausenteSection" style="display:none;background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;margin-bottom:9px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><input type="checkbox" id="chkAusente" onchange="toggleReemplazo()" style="width:16px;height:16px;accent-color:var(--red);cursor:pointer"><label for="chkAusente" style="font-size:12px;font-weight:600;color:var(--red);text-transform:uppercase;letter-spacing:.3px;margin:0;cursor:pointer">Trabajador ausente</label></div>
+        <div id="reemplazoDiv" style="display:none"><label>Reemplazante</label><select id="selReemplazo"><option value="">— Seleccionar reemplazante —</option></select></div>
+      </div>
       <div style="margin-bottom:4px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
           <label style="margin:0">Labores del día</label>
@@ -437,7 +441,7 @@ select:focus,input:focus{border-color:var(--green)}
 // ══════════════════════════════════════════════
 const PREDIOS={
   transito:  {nombre:'El Tránsito',   jefe:'Marcelo Covarrubias', subjefes:['Marcelo Covarrubias']},
-  constancia:{nombre:'La Constancia', jefe:'Marcelo Covarrubias', subjefes:['Sara','José','Roxana']},
+  constancia:{nombre:'La Constancia', jefe:'Marcelo Covarrubias', subjefes:['Sara','José','José Invierno','Roxana']},
   paradero:  {nombre:'Paradero 12',   jefe:'Jorge Guajardo',      subjefes:['Jorge Guajardo']}
 };
 const PRED_ORDER=['transito','constancia','paradero'];
@@ -470,7 +474,7 @@ const LABORES=[
   {id:51,d:"Ventilación"},{id:52,d:"Vibrado al alambre"},{id:53,d:"Aplicación hormona en flores"},
   {id:54,d:"Colocar hilo blanco extra"},{id:55,d:"Deshoje total bajo 2° racimo"},
   {id:56,d:"Deshoje bajo 3° racimo (verano)"},{id:57,d:"Chip de quillay en mesa plantación"},
-  {id:58,d:"Fertilizantes en mesa (base)"},{id:59,d:"Asperjar ácido peracético (botrytis)"}
+  {id:58,d:"Fertilizantes en mesa (base)"},{id:59,d:"Asperjar ácido peracético (botrytis)"},{id:60,d:"Recoger tomates del pasillo"}
 ];
 
 // ══════════════════════════════════════════════
@@ -746,6 +750,27 @@ function filtW(){
   const list=sub?pWs().filter(w=>w.subjefe===sub):pWs();
   sel.innerHTML=`<option value="">— Seleccionar —</option>`+list.map(w=>`<option value="${w.id}">${w.nombre}</option>`).join('');
   sel.value=cur;
+  // populate reemplazo with ALL workers from ALL predios + Otro
+  const selR=document.getElementById('selReemplazo');
+  if(selR){
+    selR.innerHTML=`<option value="">— Seleccionar reemplazante —</option>`+
+      Object.entries(wCache).flatMap(([pid,ws])=>
+        ws.filter(w=>w.id!==cur).map(w=>`<option value="${pid}|${w.id}">${w.nombre} (${PREDIOS[pid].nombre})</option>`)
+      ).join('')+
+      `<option value="otro|otro">Otro (externo)</option>`;
+  }
+}
+
+function checkAusente(){
+  const wId=document.getElementById('selW').value;
+  document.getElementById('ausenteSection').style.display=wId?'block':'none';
+  if(!wId){document.getElementById('chkAusente').checked=false;document.getElementById('reemplazoDiv').style.display='none';}
+  filtW();
+}
+
+function toggleReemplazo(){
+  const checked=document.getElementById('chkAusente').checked;
+  document.getElementById('reemplazoDiv').style.display=checked?'block':'none';
 }
 
 // ══════════════════════════════════════════════
@@ -812,6 +837,17 @@ function eHTML(e,pred=activePred){
   const totalH=labores.reduce((s,l)=>s+(l.horas||0),0);
   const totalM=labores.reduce((s,l)=>s+(l.mesas||0),0);
   const canDel=isAdmin()||(w&&w.subjefe===userSubjefe());
+
+  let reemplazoHTML='';
+  if(e.ausente){
+    const esOtro=e.reemplazoWorkerId==='otro';
+    const rw=(!esOtro&&e.reemplazoWorkerId)?(wCache[e.reemplazoPredioId]||[]).find(x=>x.id===e.reemplazoWorkerId):null;
+    reemplazoHTML=`<div style="background:#FEE2E2;border-radius:7px;padding:5px 9px;margin-top:5px;font-size:11px;color:var(--red);display:flex;align-items:center;gap:5px">
+      <span>⚠️ Ausente</span>
+      ${esOtro?`<span style="color:var(--text)">· Reemplazado por <strong>Otro (externo)</strong></span>`:rw?`<span style="color:var(--text)">· Reemplazado por <strong>${rw.nombre}</strong>${e.reemplazoPredioId!==pred?` (${PREDIOS[e.reemplazoPredioId].nombre})`:''}</span>`:''}
+    </div>`;
+  }
+
   const laborLines=labores.map((lr,i)=>{
     const l=LABORES.find(x=>x.id===lr.laborId);
     return `<div style="display:flex;align-items:flex-start;gap:6px;padding:5px 0;${i>0?'border-top:1px solid var(--sand)':''}">
@@ -825,14 +861,26 @@ function eHTML(e,pred=activePred){
       </div>
     </div>`;
   }).join('');
-  return `<div class="ecard" style="border-left-color:var(--c-${pc})">
+  return `<div class="ecard" style="border-left-color:var(--c-${pc})${e.ausente?';border-left-color:var(--red)':''}">
     <div class="ehdr">
       <div>
-        <div class="ename">${w?w.nombre:'—'}</div>
+        <div class="ename" style="${e.ausente?'color:var(--muted);text-decoration:line-through':''}">${w?w.nombre:'—'}</div>
         <div class="emeta">${w?`👤 ${w.subjefe} · `:''}${fD(e.fecha)}</div>
       </div>
       ${canDel?`<button class="del-btn" onclick="delEntry('${e.id}')">✕</button>`:''}
     </div>
+    ${reemplazoHTML}
+    <div class="badges" style="margin:7px 0">
+      <span class="badge b${pc}">${PREDIOS[pred].nombre}</span>
+      ${ciclo?`<span class="tbadge tb-${ciclo.temporada}" style="font-size:9px;padding:2px 7px">${TICONS[ciclo.temporada]} ${TNAMES[ciclo.temporada]}</span>`:''}
+      ${labores.length>1?`<span class="badge" style="background:var(--sand);color:var(--dark)">${labores.length} labores</span>`:''}
+      ${totalH?`<span class="badge bh">⏱ ${totalH}h total</span>`:''}
+      ${totalM?`<span class="badge bm">🪴 ${totalM} mesas</span>`:''}
+    </div>
+    <div style="border-top:1px solid var(--sand);padding-top:6px">${laborLines}</div>
+    ${e.obs?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:5px;border-top:1px solid var(--sand)">📌 ${e.obs}</div>`:''}
+  </div>`;
+}
     <div class="badges" style="margin-bottom:7px">
       <span class="badge b${pc}">${PREDIOS[pred].nombre}</span>
       ${ciclo?`<span class="tbadge tb-${ciclo.temporada}" style="font-size:9px;padding:2px 7px">${TICONS[ciclo.temporada]} ${TNAMES[ciclo.temporada]}</span>`:''}
@@ -851,7 +899,10 @@ function eHTML(e,pred=activePred){
 async function guardar(){
   const wId=document.getElementById('selW').value;
   const obs=document.getElementById('iO').value.trim();
+  const ausente=document.getElementById('chkAusente').checked;
+  const reemplazoVal=document.getElementById('selReemplazo').value;
   if(!wId){toast('⚠️ Selecciona un trabajador');return}
+  if(ausente&&!reemplazoVal){toast('⚠️ Selecciona un reemplazante');return}
   const rows=document.querySelectorAll('#laborRows .labor-row');
   const labores=[];let hasError=false;
   rows.forEach(row=>{
@@ -864,10 +915,17 @@ async function guardar(){
   });
   if(hasError){toast('⚠️ Selecciona labor en cada fila');return}
   if(!labores.length){toast('⚠️ Agrega al menos una labor');return}
+  let reemplazoPredioId=null,reemplazoWorkerId=null;
+  if(ausente&&reemplazoVal){[reemplazoPredioId,reemplazoWorkerId]=reemplazoVal.split('|')}
   loading(true,'Guardando…');
   try{
-    await colRegistros(activePred).add({fecha:selDate,workerId:wId,labores,obs,ts:Date.now(),creadoPor:currentUser.uid});
+    await colRegistros(activePred).add({fecha:selDate,workerId:wId,labores,obs,
+      ausente:ausente||false,reemplazoPredioId,reemplazoWorkerId,
+      ts:Date.now(),creadoPor:currentUser.uid});
     document.getElementById('iO').value='';
+    document.getElementById('chkAusente').checked=false;
+    document.getElementById('reemplazoDiv').style.display='none';
+    document.getElementById('ausenteSection').style.display='none';
     initLaborRows();
     toast('✅ Entrada guardada');
   }catch(e){toast('Error: '+e.message)}
@@ -966,6 +1024,7 @@ function renderCiclos(){
             <div>
               <span class="tbadge tb-${c.temporada}" style="font-size:10px;padding:2px 9px">${TICONS[c.temporada]} ${TNAMES[c.temporada]}</span>
               <div class="ci-dates">Inicio: ${fDMY(c.inicio)} · ${isOpen?'<strong style="color:var(--c-primor)">En curso</strong>':`Cierre: ${fDMY(c.fin)}`}</div>
+              ${c.superficieM2?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px">📐 ${c.superficieM2.toLocaleString()} m²</div>`:''}
               ${isFuture?`<span class="ci-status-future">Futuro</span>`:isOpen?`<span class="ci-status-open">● Abierto</span>`:`<span class="ci-status-closed">Cerrado</span>`}
             </div>
             <div class="ci-actions">
@@ -999,16 +1058,18 @@ async function modalAbrirCiclo(predioId,subjefe){
     <div class="modal-sub">Registra la fecha real de inicio. Puedes cerrarlo cuando termine el cultivo.</div>
     <div class="form-row"><label>Temporada</label><select id="mTemp">${TORDER.map(k=>`<option value="${k}">${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
     <div class="form-row"><label>Fecha de inicio</label><input type="date" id="mIni" value="${todayIso}"></div>
+    <div class="form-row"><label>Superficie (m²)</label><input type="number" id="mM2" placeholder="Ej: 5000" min="0"></div>
     <div class="form-row"><label>Notas</label><input type="text" id="mNot" placeholder="Ej: Plantación 3ª semana diciembre"></div>
     <button class="btn btn-primary" onclick="guardarApertura('${predioId}','${subjefe}')">Abrir ciclo</button>`;
   document.getElementById('overlay').classList.add('open');
 }
 async function guardarApertura(predioId,subjefe){
   const temp=document.getElementById('mTemp').value,ini=document.getElementById('mIni').value,notas=document.getElementById('mNot').value.trim();
+  const m2=parseInt(document.getElementById('mM2').value)||0;
   if(!ini){toast('⚠️ Ingresa fecha de inicio');return}
   loading(true,'Guardando ciclo…');
   try{
-    await colCiclos(predioId,subjefe).add({temporada:temp,inicio:ini,fin:null,notas,creadoPor:currentUser.uid,ts:Date.now()});
+    await colCiclos(predioId,subjefe).add({temporada:temp,inicio:ini,fin:null,notas,superficieM2:m2,creadoPor:currentUser.uid,ts:Date.now()});
     closeModal();toast('✅ Ciclo abierto');
   }catch(e){toast('Error: '+e.message)}
   loading(false);
@@ -1044,17 +1105,19 @@ async function modalEditarCiclo(predioId,subjefe,cicloId){
     <div class="form-row"><label>Temporada</label><select id="mTemp">${TORDER.map(k=>`<option value="${k}"${c.temporada===k?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
     <div class="form-row"><label>Fecha inicio</label><input type="date" id="mIni" value="${c.inicio}"></div>
     <div class="form-row"><label>Fecha cierre <span style="font-weight:400;text-transform:none">(vacío = en curso)</span></label><input type="date" id="mFin" value="${c.fin||''}"></div>
+    <div class="form-row"><label>Superficie (m²)</label><input type="number" id="mM2" placeholder="Ej: 5000" min="0" value="${c.superficieM2||''}"></div>
     <div class="form-row"><label>Notas</label><input type="text" id="mNot" value="${c.notas||''}"></div>
     <button class="btn btn-primary" onclick="guardarEdicionCiclo('${predioId}','${subjefe}','${cicloId}')">Guardar</button>`;
   document.getElementById('overlay').classList.add('open');
 }
 async function guardarEdicionCiclo(predioId,subjefe,cicloId){
   const temp=document.getElementById('mTemp').value,ini=document.getElementById('mIni').value,fin=document.getElementById('mFin').value||null,notas=document.getElementById('mNot').value.trim();
+  const m2=parseInt(document.getElementById('mM2').value)||0;
   if(!ini){toast('⚠️ Fecha de inicio obligatoria');return}
   if(fin&&fin<ini){toast('⚠️ El cierre debe ser posterior al inicio');return}
   loading(true,'Actualizando…');
   try{
-    await colCiclos(predioId,subjefe).doc(cicloId).update({temporada:temp,inicio:ini,fin,notas});
+    await colCiclos(predioId,subjefe).doc(cicloId).update({temporada:temp,inicio:ini,fin,notas,superficieM2:m2});
     closeModal();toast('✅ Ciclo actualizado');
   }catch(e){toast('Error: '+e.message)}
   loading(false);
