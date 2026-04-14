@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -754,7 +755,7 @@ function filtW(){
   const selR=document.getElementById('selReemplazo');
   if(selR){
     selR.innerHTML=`<option value="">— Seleccionar reemplazante —</option>`+
-      Object.entries(wCache).flatMap(([pid,ws])=>
+      Object.entries(wMap).flatMap(([pid,ws])=>
         ws.filter(w=>w.id!==cur).map(w=>`<option value="${pid}|${w.id}">${w.nombre} (${PREDIOS[pid].nombre})</option>`)
       ).join('')+
       `<option value="otro|otro">Otro (externo)</option>`;
@@ -841,7 +842,7 @@ function eHTML(e,pred=activePred){
   let reemplazoHTML='';
   if(e.ausente){
     const esOtro=e.reemplazoWorkerId==='otro';
-    const rw=(!esOtro&&e.reemplazoWorkerId)?(wCache[e.reemplazoPredioId]||[]).find(x=>x.id===e.reemplazoWorkerId):null;
+    const rw=(!esOtro&&e.reemplazoWorkerId)?(wMap[e.reemplazoPredioId]||[]).find(x=>x.id===e.reemplazoWorkerId):null;
     reemplazoHTML=`<div style="background:#FEE2E2;border-radius:7px;padding:5px 9px;margin-top:5px;font-size:11px;color:var(--red);display:flex;align-items:center;gap:5px">
       <span>⚠️ Ausente</span>
       ${esOtro?`<span style="color:var(--text)">· Reemplazado por <strong>Otro (externo)</strong></span>`:rw?`<span style="color:var(--text)">· Reemplazado por <strong>${rw.nombre}</strong>${e.reemplazoPredioId!==pred?` (${PREDIOS[e.reemplazoPredioId].nombre})`:''}</span>`:''}
@@ -875,17 +876,6 @@ function eHTML(e,pred=activePred){
       ${ciclo?`<span class="tbadge tb-${ciclo.temporada}" style="font-size:9px;padding:2px 7px">${TICONS[ciclo.temporada]} ${TNAMES[ciclo.temporada]}</span>`:''}
       ${labores.length>1?`<span class="badge" style="background:var(--sand);color:var(--dark)">${labores.length} labores</span>`:''}
       ${totalH?`<span class="badge bh">⏱ ${totalH}h total</span>`:''}
-      ${totalM?`<span class="badge bm">🪴 ${totalM} mesas</span>`:''}
-    </div>
-    <div style="border-top:1px solid var(--sand);padding-top:6px">${laborLines}</div>
-    ${e.obs?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:5px;border-top:1px solid var(--sand)">📌 ${e.obs}</div>`:''}
-  </div>`;
-}
-    <div class="badges" style="margin-bottom:7px">
-      <span class="badge b${pc}">${PREDIOS[pred].nombre}</span>
-      ${ciclo?`<span class="tbadge tb-${ciclo.temporada}" style="font-size:9px;padding:2px 7px">${TICONS[ciclo.temporada]} ${TNAMES[ciclo.temporada]}</span>`:''}
-      ${labores.length>1?`<span class="badge" style="background:var(--sand);color:var(--dark)">${labores.length} labores</span>`:''}
-      ${totalH?`<span class="badge bh">⏱ ${totalH}h</span>`:''}
       ${totalM?`<span class="badge bm">🪴 ${totalM} mesas</span>`:''}
     </div>
     <div style="border-top:1px solid var(--sand);padding-top:6px">${laborLines}</div>
