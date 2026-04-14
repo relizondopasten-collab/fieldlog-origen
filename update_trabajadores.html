@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Update Trabajadores · FieldLog</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<style>
+  body{font-family:system-ui,sans-serif;background:#1A2E1F;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{background:#F8F5EF;border-radius:16px;padding:28px;max-width:500px;width:100%}
+  h2{font-size:20px;font-weight:700;color:#1A2E1F;margin-bottom:4px}
+  p{font-size:13px;color:#7A7A7A;margin-bottom:16px;line-height:1.5}
+  .row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-radius:8px;margin-bottom:6px;background:#fff;border:1px solid #E9E3D7;font-size:13px}
+  .row-name{font-weight:600}.row-meta{font-size:11px;color:#7A7A7A;margin-top:1px}
+  .status{font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600}
+  .s-pending{background:#FEF3C7;color:#92400E}
+  .s-ok{background:#DCFCE7;color:#166634}
+  .s-error{background:#FEE2E2;color:#D62828}
+  .s-loading{background:#EFF6FF;color:#1D4ED8}
+  .btn{display:block;width:100%;padding:13px;background:#2D6A4F;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;margin-top:16px}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  #log{margin-top:14px;background:#1e1e2e;border-radius:8px;padding:12px;font-family:monospace;font-size:11px;color:#a6e3a1;white-space:pre-wrap;display:none;max-height:220px;overflow-y:auto}
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>🌱 Actualizar trabajadores — FieldLog</h2>
+  <p>Agrega los trabajadores de José Invierno, actualiza la lista de Sara y elimina a Pedro Molina. Abre la app principal en otra pestaña e inicia sesión antes de continuar.</p>
+
+  <div class="row">
+    <div><div class="row-name">José Invierno — La Constancia</div><div class="row-meta">13 trabajadores nuevos</div></div>
+    <span class="status s-pending" id="st-jose-inv">Pendiente</span>
+  </div>
+  <div class="row">
+    <div><div class="row-name">Sara — agregar 6 trabajadores</div><div class="row-meta">Nancy, Domingo, Cintia, Julia, Fanny, Luis</div></div>
+    <span class="status s-pending" id="st-sara-add">Pendiente</span>
+  </div>
+  <div class="row">
+    <div><div class="row-name">Sara — eliminar Pedro Molina</div><div class="row-meta">wc18</div></div>
+    <span class="status s-pending" id="st-sara-del">Pendiente</span>
+  </div>
+
+  <button class="btn" id="btn" onclick="run()">Aplicar cambios en Firestore</button>
+  <div id="log"></div>
+</div>
+
+<script>
+const FIREBASE_CONFIG = {
+  apiKey:            "AIzaSyCQF_SFjNI-a-PUd0NpAc6ObN5MJEFOqfI",
+  authDomain:        "fieldlog-origen.firebaseapp.com",
+  projectId:         "fieldlog-origen",
+  storageBucket:     "fieldlog-origen.firebasestorage.app",
+  messagingSenderId: "406117748519",
+  appId:             "1:406117748519:web:2e1fcb0655b7c970a66302"
+};
+firebase.initializeApp(FIREBASE_CONFIG);
+const db=firebase.firestore(), auth=firebase.auth();
+const log=document.getElementById('log');
+const addLog=msg=>{log.style.display='block';log.textContent+=msg+'\n';log.scrollTop=log.scrollHeight};
+
+const JOSE_INV=[
+  {id:'wi1', nombre:'Osvaldo Valencia',  subjefe:'José Invierno'},
+  {id:'wi2', nombre:'Ruben Morales',     subjefe:'José Invierno'},
+  {id:'wi3', nombre:'Juana Morales',     subjefe:'José Invierno'},
+  {id:'wi4', nombre:'Maria Tapia',       subjefe:'José Invierno'},
+  {id:'wi5', nombre:'Luis Febre',        subjefe:'José Invierno'},
+  {id:'wi6', nombre:'Eva Velasco',       subjefe:'José Invierno'},
+  {id:'wi7', nombre:'Yorgeli Acuña',     subjefe:'José Invierno'},
+  {id:'wi8', nombre:'Mickenson Dorcely', subjefe:'José Invierno'},
+  {id:'wi9', nombre:'Genesis Aponte',    subjefe:'José Invierno'},
+  {id:'wi10',nombre:'Jose Gatica',       subjefe:'José Invierno'},
+  {id:'wi11',nombre:'Jesus Muñoz',       subjefe:'José Invierno'},
+  {id:'wi12',nombre:'Mickenson Tuvilus', subjefe:'José Invierno'},
+  {id:'wi13',nombre:'Ricardo Veliz',     subjefe:'José Invierno'},
+];
+
+const SARA_ADD=[
+  {id:'wc23',nombre:'Nancy Gutierrez',   subjefe:'Sara'},
+  {id:'wc24',nombre:'Domingo Contreras', subjefe:'Sara'},
+  {id:'wc25',nombre:'Cintia Caceres',    subjefe:'Sara'},
+  {id:'wc26',nombre:'Julia Calle',       subjefe:'Sara'},
+  {id:'wc27',nombre:'Fanny Araujo',      subjefe:'Sara'},
+  {id:'wc28',nombre:'Luis Rivero',       subjefe:'Sara'},
+];
+
+async function run(){
+  const btn=document.getElementById('btn');
+  btn.disabled=true; btn.textContent='Aplicando…';
+  const user=auth.currentUser;
+  if(!user){addLog('❌ No estás conectado. Abre la app e inicia sesión.');btn.disabled=false;return;}
+  addLog('✓ Conectado como: '+user.email);
+
+  const col=db.collection('workers').doc('constancia').collection('list');
+
+  // 1. José Invierno
+  try{
+    document.getElementById('st-jose-inv').className='status s-loading';
+    document.getElementById('st-jose-inv').textContent='Subiendo…';
+    const batch=db.batch();
+    JOSE_INV.forEach(w=>batch.set(col.doc(w.id),{nombre:w.nombre,codigo:'',subjefe:w.subjefe,plantas:0}));
+    await batch.commit();
+    document.getElementById('st-jose-inv').className='status s-ok';
+    document.getElementById('st-jose-inv').textContent='✓ Listo';
+    addLog('✓ José Invierno: 13 trabajadores subidos');
+  }catch(e){
+    document.getElementById('st-jose-inv').className='status s-error';
+    document.getElementById('st-jose-inv').textContent='Error';
+    addLog('❌ José Invierno: '+e.message);
+  }
+
+  // 2. Sara — agregar
+  try{
+    document.getElementById('st-sara-add').className='status s-loading';
+    document.getElementById('st-sara-add').textContent='Subiendo…';
+    const batch=db.batch();
+    SARA_ADD.forEach(w=>batch.set(col.doc(w.id),{nombre:w.nombre,codigo:'',subjefe:w.subjefe,plantas:0}));
+    await batch.commit();
+    document.getElementById('st-sara-add').className='status s-ok';
+    document.getElementById('st-sara-add').textContent='✓ Listo';
+    addLog('✓ Sara: 6 trabajadores agregados');
+  }catch(e){
+    document.getElementById('st-sara-add').className='status s-error';
+    document.getElementById('st-sara-add').textContent='Error';
+    addLog('❌ Sara agregar: '+e.message);
+  }
+
+  // 3. Sara — eliminar Pedro Molina
+  try{
+    document.getElementById('st-sara-del').className='status s-loading';
+    document.getElementById('st-sara-del').textContent='Eliminando…';
+    await col.doc('wc18').delete();
+    document.getElementById('st-sara-del').className='status s-ok';
+    document.getElementById('st-sara-del').textContent='✓ Listo';
+    addLog('✓ Pedro Molina eliminado');
+  }catch(e){
+    document.getElementById('st-sara-del').className='status s-error';
+    document.getElementById('st-sara-del').textContent='Error';
+    addLog('❌ Eliminar Pedro Molina: '+e.message);
+  }
+
+  btn.textContent='✅ Completado';
+  btn.style.background='#166534';
+  addLog('\n✅ Listo. Recarga la app para ver los cambios.');
+}
+</script>
+</body>
+</html>
