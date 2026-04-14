@@ -539,11 +539,11 @@ function filtW(){
   // populate reemplazo with ALL workers from ALL predios
   const selR=document.getElementById('selReemplazo');
   if(selR){
-    const all=Object.entries(wMap).flatMap(([pid,ws])=>ws.map(w=>({...w,_pid:pid})));
     selR.innerHTML=`<option value="">— Seleccionar reemplazante —</option>`+
       Object.entries(wMap).flatMap(([pid,ws])=>
         ws.filter(w=>w.id!==cur).map(w=>`<option value="${pid}|${w.id}">${w.nombre} (${PREDIOS[pid].nombre})</option>`)
-      ).join('');
+      ).join('')+
+      `<option value="otro|otro">Otro (externo)</option>`;
   }
 }
 
@@ -619,10 +619,11 @@ function eHTML(e,pred=activePred){
   // reemplazo
   let reemplazoHTML='';
   if(e.ausente){
-    const rw=e.reemplazoWorkerId?(wMap[e.reemplazoPredioId]||[]).find(x=>x.id===e.reemplazoWorkerId):null;
+    const esOtro=e.reemplazoWorkerId==='otro';
+    const rw=(!esOtro&&e.reemplazoWorkerId)?(wMap[e.reemplazoPredioId]||[]).find(x=>x.id===e.reemplazoWorkerId):null;
     reemplazoHTML=`<div style="background:#FEE2E2;border-radius:7px;padding:5px 9px;margin-top:5px;font-size:11px;color:var(--red);display:flex;align-items:center;gap:5px">
       <span>⚠️ Ausente</span>
-      ${rw?`<span style="color:var(--text)">· Reemplazado por <strong>${rw.nombre}</strong>${e.reemplazoPredioId!==pred?` (${PREDIOS[e.reemplazoPredioId].nombre})`:''}</span>`:''}
+      ${esOtro?`<span style="color:var(--text)">· Reemplazado por <strong>Otro (externo)</strong></span>`:rw?`<span style="color:var(--text)">· Reemplazado por <strong>${rw.nombre}</strong>${e.reemplazoPredioId!==pred?` (${PREDIOS[e.reemplazoPredioId].nombre})`:''}</span>`:''}
     </div>`;
   }
 
