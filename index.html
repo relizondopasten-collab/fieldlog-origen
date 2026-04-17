@@ -893,7 +893,8 @@ async function guardar(){
   const ausente=document.getElementById('chkAusente').checked;
   const reemplazoVal=document.getElementById('selReemplazo').value;
   if(!wId){toast('⚠️ Selecciona un trabajador');return}
-  if(ausente&&!reemplazoVal){toast('⚠️ Selecciona un reemplazante');return}
+  const licencia=document.getElementById('chkLicencia').checked;
+  if(ausente&&!reemplazoVal&&!licencia){toast('⚠️ Selecciona un reemplazante o marca licencia médica');return}
   const rows=document.querySelectorAll('#laborRows .labor-row');
   const labores=[];let hasError=false;
   rows.forEach(row=>{
@@ -904,8 +905,10 @@ async function guardar(){
     row.querySelector('.lr-labor').style.borderColor='';
     labores.push({laborId:lId,horas,mesas});
   });
-  if(hasError){toast('⚠️ Selecciona labor en cada fila');return}
-  if(!labores.length){toast('⚠️ Agrega al menos una labor');return}
+  const sinReemplazo=reemplazoVal==='sin|reemplazo'||reemplazoVal==='sin|sin';
+  const skipLabores=licencia||(ausente&&sinReemplazo)||(ausente&&!reemplazoVal);
+  if(!skipLabores&&hasError){toast('⚠️ Selecciona labor en cada fila');return}
+  if(!skipLabores&&!labores.length){toast('⚠️ Agrega al menos una labor');return}
   let reemplazoPredioId=null,reemplazoWorkerId=null;
   if(ausente&&reemplazoVal){[reemplazoPredioId,reemplazoWorkerId]=reemplazoVal.split('|')}
   loading(true,'Guardando…');
