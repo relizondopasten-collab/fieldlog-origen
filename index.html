@@ -475,7 +475,7 @@ const LABORES=[
   {id:51,d:"Ventilación"},{id:52,d:"Vibrado al alambre"},{id:53,d:"Aplicación hormona en flores"},
   {id:54,d:"Colocar hilo blanco extra"},{id:55,d:"Deshoje total bajo 2° racimo"},
   {id:56,d:"Deshoje bajo 3° racimo (verano)"},{id:57,d:"Chip de quillay en mesa plantación"},
-  {id:58,d:"Fertilizantes en mesa (base)"},{id:59,d:"Asperjar ácido peracético (botrytis)"},{id:60,d:"Recoger tomates del pasillo"},{id:61,d:"Desbrote"},{id:62,d:"Sacar hojas de pasillo"},{id:63,d:"Limpieza de pasillo (hojas podadas)"}
+  {id:58,d:"Fertilizantes en mesa (base)"},{id:59,d:"Asperjar ácido peracético (botrytis)"},{id:60,d:"Recoger tomates del pasillo"},{id:61,d:"Desbrote"},{id:63,d:"Limpieza de pasillo (hojas podadas)"}
 ];
 
 // ══════════════════════════════════════════════
@@ -758,7 +758,8 @@ function filtW(){
       Object.entries(wMap).flatMap(([pid,ws])=>
         ws.filter(w=>w.id!==cur).map(w=>`<option value="${pid}|${w.id}">${w.nombre} (${PREDIOS[pid].nombre})</option>`)
       ).join('')+
-      `<option value="otro|otro">Otro (externo)</option>`;
+      `<option value="otro|otro">Otro (externo)</option>`+
+      `<option value="sin|reemplazo">Sin reemplazo disponible</option>`;
   }
 }
 
@@ -841,11 +842,11 @@ function eHTML(e,pred=activePred){
 
   let reemplazoHTML='';
   if(e.ausente){
-    const esOtro=e.reemplazoWorkerId==='otro';
+    const esSin=e.reemplazoWorkerId==='reemplazo';const esOtro=e.reemplazoWorkerId==='otro';
     const rw=(!esOtro&&e.reemplazoWorkerId)?(wMap[e.reemplazoPredioId]||[]).find(x=>x.id===e.reemplazoWorkerId):null;
     reemplazoHTML=`<div style="background:#FEE2E2;border-radius:7px;padding:5px 9px;margin-top:5px;font-size:11px;color:var(--red);display:flex;align-items:center;gap:5px">
       <span>⚠️ Ausente</span>${e.licencia?'<span style="background:#EDE9FE;color:#7C3AED;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;margin-left:4px">🏥 Licencia médica</span>':''}
-      ${esOtro?`<span style="color:var(--text)">· Reemplazado por <strong>Otro (externo)</strong></span>`:rw?`<span style="color:var(--text)">· Reemplazado por <strong>${rw.nombre}</strong>${e.reemplazoPredioId!==pred?` (${PREDIOS[e.reemplazoPredioId].nombre})`:''}</span>`:''}
+      ${esSin?'<span style="color:var(--text)">· Sin reemplazo disponible</span>':esOtro?`<span style="color:var(--text)">· Reemplazado por <strong>Otro (externo)</strong></span>`:rw?`<span style="color:var(--text)">· Reemplazado por <strong>${rw.nombre}</strong>${e.reemplazoPredioId!==pred?` (${PREDIOS[e.reemplazoPredioId].nombre})`:''}</span>`:''}
     </div>`;
   }
 
