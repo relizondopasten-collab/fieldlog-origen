@@ -304,7 +304,8 @@ select:focus,input:focus{border-color:var(--green)}
     <div class="sem-grid" id="semGrid"></div>
     <div class="card">
       <div class="card-title">✍️ Nueva Entrada</div>
-      <div class="form-row"><label>Subjefe / Encargado</label><select id="selSub" onchange="filtW()"><option value="">Todos</option></select></div>
+      <div class="form-row"><label>Subjefe / Encargado</label><select id="selSub" onchange="onSubChange()"><option value="">Todos</option></select></div>
+      <div class="form-row" id="selCultivoRow" style="display:none"><label>Cultivo</label><select id="selCultivo" onchange="filtW()"><option value="">— Seleccionar cultivo —</option></select></div>
       <div class="form-row"><label>Trabajador</label><select id="selW" onchange="checkAusente()"><option value="">— Seleccionar —</option></select></div>
       <div id="ausenteSection" style="display:none;background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;margin-bottom:9px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><input type="checkbox" id="chkAusente" onchange="toggleReemplazo()" style="width:16px;height:16px;accent-color:var(--red);cursor:pointer"><label for="chkAusente" style="font-size:12px;font-weight:600;color:var(--red);text-transform:uppercase;letter-spacing:.3px;margin:0;cursor:pointer">Trabajador ausente</label></div>
@@ -381,7 +382,10 @@ select:focus,input:focus{border-color:var(--green)}
         <div><label>Código rango</label><input type="text" id="nC" placeholder="9001-9500"></div>
         <div><label>Subjefe</label><select id="nS"></select></div>
       </div>
-      <div class="form-row"><label>N° plantas</label><input type="number" id="nP" placeholder="1500" min="0"></div>
+      <div class="form-grid">
+        <div><label>Cultivo</label><select id="nCul"></select></div>
+        <div><label>N° plantas</label><input type="number" id="nP" placeholder="1500" min="0"></div>
+      </div>
       <button class="btn btn-primary" id="addWBtn" onclick="addW()">Agregar trabajador</button>
     </div>
     <!-- usuarios del sistema (solo admin) -->
@@ -441,10 +445,12 @@ select:focus,input:focus{border-color:var(--green)}
 // STATIC DATA
 // ══════════════════════════════════════════════
 const PREDIOS={
-  transito:  {nombre:'El Tránsito',   jefe:'Marcelo Covarrubias', subjefes:['Marcelo Covarrubias']},
-  constancia:{nombre:'La Constancia', jefe:'Marcelo Covarrubias', subjefes:['Sara','José','José Invierno','Roxana']},
-  paradero:  {nombre:'Paradero 12',   jefe:'Jorge Guajardo',      subjefes:['Jorge Guajardo','Mario Durand']}
+  transito:  {nombre:'El Tránsito',   jefe:'Marcelo Covarrubias', subjefes:['Marcelo Covarrubias'], cultivos:['tomate']},
+  constancia:{nombre:'La Constancia', jefe:'Marcelo Covarrubias', subjefes:['Sara','José','José Invierno','Roxana'], cultivos:['tomate','especialidades']},
+  paradero:  {nombre:'Paradero 12',   jefe:'Jorge Guajardo',      subjefes:['Jorge Guajardo','Mario Durand'], cultivos:['tomate','pimenton']}
 };
+const CNAMES={tomate:'Tomate',especialidades:'Especialidades',pimenton:'Pimentón'};
+const CICONS={tomate:'🍅',especialidades:'🌶️',pimenton:'🫑'};
 const PRED_ORDER=['transito','constancia','paradero'];
 const DIAS=['Lunes','Martes','Miérc.','Jueves','Viernes'];
 const TNAMES={otono:'Otoño',invierno:'Invierno',primor:'Primor',trastomate:'Trastomate',verano:'Verano'};
@@ -740,15 +746,48 @@ function populateSels(){
   });
   const ns=document.getElementById('nS');
   if(ns)ns.innerHTML=p.subjefes.map(s=>`<option>${s}</option>`).join('');
+  const nCul=document.getElementById('nCul');
+  if(nCul)nCul.innerHTML=(p.cultivos||['tomate']).map(c=>`<option value="${c}">${CICONS[c]||''} ${CNAMES[c]||c}</option>`).join('');
   ['fL'].forEach(sid=>{const sel=document.getElementById(sid);if(!sel)return;sel.innerHTML=`<option value="">Todas</option>`+LABORES.map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')});
-  filtW();
+  onSubChange();
   initLaborRows();
+}
+
+function onSubChange(){
+  // Cuando cambia el subjefe, recalcular cultivos disponibles para este subjefe
+  const sub=document.getElementById('selSub').value||(isAdmin()?'':userSubjefe());
+  const selC=document.getElementById('selCultivo');
+  const rowC=document.getElementById('selCultivoRow');
+  if(!sub){
+    // Sin subjefe seleccionado: ocultar selector de cultivo
+    rowC.style.display='none';
+    selC.value='';
+    filtW();
+    return;
+  }
+  // Obtener cultivos únicos de los trabajadores de este subjefe
+  const cultivosSub=[...new Set(pWs().filter(w=>w.subjefe===sub).map(w=>w.cultivo).filter(Boolean))].sort();
+  if(cultivosSub.length<=1){
+    // Solo un cultivo (o ninguno): ocultar selector y auto-seleccionar
+    rowC.style.display='none';
+    selC.value=cultivosSub[0]||'';
+  } else {
+    // Múltiples cultivos: mostrar selector
+    const cur=selC.value;
+    selC.innerHTML=`<option value="">— Seleccionar cultivo —</option>`+
+      cultivosSub.map(c=>`<option value="${c}">${CICONS[c]||''} ${CNAMES[c]||c}</option>`).join('');
+    selC.value=cultivosSub.includes(cur)?cur:'';
+    rowC.style.display='block';
+  }
+  filtW();
 }
 
 function filtW(){
   const sub=document.getElementById('selSub').value||(isAdmin()?'':userSubjefe());
+  const cultivo=document.getElementById('selCultivo')?document.getElementById('selCultivo').value:'';
   const sel=document.getElementById('selW');const cur=sel.value;
-  const list=sub?pWs().filter(w=>w.subjefe===sub):pWs();
+  let list=sub?pWs().filter(w=>w.subjefe===sub):pWs();
+  if(cultivo)list=list.filter(w=>w.cultivo===cultivo);
   sel.innerHTML=`<option value="">— Seleccionar —</option>`+list.map(w=>`<option value="${w.id}">${w.nombre}</option>`).join('');
   sel.value=cur;
   // populate reemplazo with ALL workers from ALL predios + Otro
@@ -913,7 +952,9 @@ async function guardar(){
   if(ausente&&reemplazoVal){[reemplazoPredioId,reemplazoWorkerId]=reemplazoVal.split('|')}
   loading(true,'Guardando…');
   try{
-    await colRegistros(activePred).add({fecha:selDate,workerId:wId,labores,obs,
+    const workerData=pWs().find(w=>w.id===wId);
+    const cultivoReg=(workerData&&workerData.cultivo)||document.getElementById('selCultivo').value||'';
+    await colRegistros(activePred).add({fecha:selDate,workerId:wId,labores,obs,cultivo:cultivoReg,
       ausente:ausente||false,licencia:document.getElementById('chkLicencia').checked||false,reemplazoPredioId,reemplazoWorkerId,
       ts:Date.now(),creadoPor:currentUser.uid});
     document.getElementById('iO').value='';
@@ -1295,7 +1336,7 @@ async function renderConfig(){
   // workers
   document.getElementById('wList').innerHTML=(wMap[activePred]||[]).length
     ?(wMap[activePred]).map(w=>`<div class="wrow">
-        <div><div class="wn">${w.nombre}</div><div class="wm">${w.codigo||'—'} · ${w.subjefe}${w.plantas?` · ${w.plantas}pl`:''}</div></div>
+        <div><div class="wn">${w.nombre}</div><div class="wm">${w.codigo||'—'} · ${w.subjefe}${w.cultivo?` · ${CICONS[w.cultivo]||''} ${CNAMES[w.cultivo]||w.cultivo}`:''}${w.plantas?` · ${w.plantas}pl`:''}</div></div>
         ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="delW('${w.id}')">✕</button>`:''}
       </div>`).join('')
     :`<div class="empty"><div style="padding:8px 0;font-size:12px">Sin trabajadores</div></div>`;
@@ -1311,11 +1352,12 @@ async function renderConfig(){
 async function addW(){
   if(!isAdmin()){toast('Solo el administrador puede agregar trabajadores');return}
   const n=document.getElementById('nN').value.trim(),c=document.getElementById('nC').value.trim(),s=document.getElementById('nS').value,p=parseInt(document.getElementById('nP').value)||0;
+  const cul=document.getElementById('nCul')?document.getElementById('nCul').value:'tomate';
   if(!n){toast('⚠️ Ingresa un nombre');return}
   loading(true,'Guardando…');
   try{
-    const ref=await colWorkers(activePred).add({nombre:n,codigo:c,subjefe:s,plantas:p});
-    wMap[activePred].push({id:ref.id,nombre:n,codigo:c,subjefe:s,plantas:p});
+    const ref=await colWorkers(activePred).add({nombre:n,codigo:c,subjefe:s,plantas:p,cultivo:cul});
+    wMap[activePred].push({id:ref.id,nombre:n,codigo:c,subjefe:s,plantas:p,cultivo:cul});
     ['nN','nC','nP'].forEach(id=>document.getElementById(id).value='');
     populateSels();renderConfig();toast('✅ Trabajador agregado');
   }catch(e){toast('Error: '+e.message)}
