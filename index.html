@@ -484,6 +484,14 @@ const LABORES=[
   {id:58,d:"Fertilizantes en mesa (base)"},{id:59,d:"Asperjar ácido peracético (botrytis)"},{id:60,d:"Recoger tomates del pasillo"},{id:61,d:"Desbrote"},{id:63,d:"Limpieza de pasillo (hojas podadas)"}
 ];
 
+// Umbrales de validación para detectar errores de tipeo
+const LIMITES={
+  mesasPorLabor:50,     // mesas razonables en una sola labor
+  mesasTotalDia:100,    // mesas razonables en total en un día para un trabajador
+  horasPorLabor:10,     // horas en una sola labor
+  horasTotalDia:10      // horas totales en el día para un trabajador
+};
+
 // ══════════════════════════════════════════════
 // FIREBASE INIT
 // ══════════════════════════════════════════════
@@ -827,10 +835,27 @@ function addLaborRow(){
   row.innerHTML=`<div class="labor-row-num"><span>Labor ${idx}</span>${idx>1?`<button class="rm-labor" onclick="rmLaborRow(this)">✕</button>`:''}</div>
     <div class="labor-sel"><select class="lr-labor">${laborOptsHTML()}</select></div>
     <div class="labor-nums">
-      <div><label>Horas</label><input type="number" class="lr-horas" placeholder="7.5" min="0" max="14" step="0.5"></div>
-      <div><label>N° mesas</label><input type="number" class="lr-mesas" placeholder="32" min="0"></div>
-    </div>`;
+      <div><label>Horas</label><input type="number" class="lr-horas" placeholder="7.5" min="0" max="14" step="0.5" oninput="checkLaborRow(this)"></div>
+      <div><label>N° mesas</label><input type="number" class="lr-mesas" placeholder="32" min="0" oninput="checkLaborRow(this)"></div>
+    </div>
+    <div class="lr-warn" style="display:none;font-size:11px;color:#B45309;background:#FEF3C7;border-radius:6px;padding:4px 8px;margin-top:4px"></div>`;
   cont.appendChild(row);updateLaborUI();
+}
+
+// Validación inline: resalta en ámbar si hay valores sospechosos
+function checkLaborRow(inp){
+  const row=inp.closest('.labor-row');if(!row)return;
+  const horas=parseFloat(row.querySelector('.lr-horas').value)||0;
+  const mesas=parseInt(row.querySelector('.lr-mesas').value)||0;
+  const warn=row.querySelector('.lr-warn');
+  const hInp=row.querySelector('.lr-horas'),mInp=row.querySelector('.lr-mesas');
+  const warnings=[];
+  if(horas>LIMITES.horasPorLabor){warnings.push(`${horas}h en una labor es inusual`);hInp.style.borderColor='#F59E0B';hInp.style.background='#FEF3C7';}
+  else {hInp.style.borderColor='';hInp.style.background='';}
+  if(mesas>LIMITES.mesasPorLabor){warnings.push(`${mesas} mesas en una labor es inusual`);mInp.style.borderColor='#F59E0B';mInp.style.background='#FEF3C7';}
+  else {mInp.style.borderColor='';mInp.style.background='';}
+  if(warnings.length){warn.textContent='⚠️ '+warnings.join(' · ');warn.style.display='block';}
+  else {warn.style.display='none';}
 }
 function rmLaborRow(btn){
   btn.closest('.labor-row').remove();
@@ -948,6 +973,32 @@ async function guardar(){
   const skipLabores=licencia||(ausente&&sinReemplazo)||(ausente&&!reemplazoVal);
   if(!skipLabores&&hasError){toast('⚠️ Selecciona labor en cada fila');return}
   if(!skipLabores&&!labores.length){toast('⚠️ Agrega al menos una labor');return}
+
+  // Validación preventiva: detectar valores sospechosos antes de guardar
+  if(!skipLabores){
+    const avisos=[];
+    const totalH=labores.reduce((s,l)=>s+(l.horas||0),0);
+    const totalM=labores.reduce((s,l)=>s+(l.mesas||0),0);
+    labores.forEach((l,i)=>{
+      if(l.horas>LIMITES.horasPorLabor)avisos.push(`Labor ${i+1}: ${l.horas}h (inusual)`);
+      if(l.mesas>LIMITES.mesasPorLabor)avisos.push(`Labor ${i+1}: ${l.mesas} mesas (inusual)`);
+    });
+    if(totalH>LIMITES.horasTotalDia)avisos.push(`Total del día: ${totalH}h (supera ${LIMITES.horasTotalDia}h)`);
+    if(totalM>LIMITES.mesasTotalDia)avisos.push(`Total del día: ${totalM} mesas (supera ${LIMITES.mesasTotalDia})`);
+
+    // También revisar si ya hay otros registros hoy del mismo trabajador que sumen mucho
+    const previosHoy=rCache.filter(r=>r.fecha===selDate&&r.workerId===wId);
+    const mesasPrevias=previosHoy.reduce((s,e)=>s+((e.labores||[{mesas:e.mesas||0}]).reduce((ss,l)=>ss+(l.mesas||0),0)),0);
+    const horasPrevias=previosHoy.reduce((s,e)=>s+((e.labores||[{horas:e.horas||0}]).reduce((ss,l)=>ss+(l.horas||0),0)),0);
+    if(mesasPrevias+totalM>LIMITES.mesasTotalDia&&previosHoy.length)avisos.push(`Acumulado del día (con registros previos): ${mesasPrevias+totalM} mesas`);
+    if(horasPrevias+totalH>LIMITES.horasTotalDia&&previosHoy.length)avisos.push(`Acumulado del día (con registros previos): ${(horasPrevias+totalH).toFixed(1)}h`);
+
+    if(avisos.length){
+      const msg='⚠️ Valores inusuales detectados:\n\n• '+avisos.join('\n• ')+'\n\n¿Son correctos? Presiona Aceptar para guardar igual, o Cancelar para revisar.';
+      if(!confirm(msg))return;
+    }
+  }
+
   let reemplazoPredioId=null,reemplazoWorkerId=null;
   if(ausente&&reemplazoVal){[reemplazoPredioId,reemplazoWorkerId]=reemplazoVal.split('|')}
   loading(true,'Guardando…');
