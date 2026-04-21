@@ -294,6 +294,7 @@ select:focus,input:focus{border-color:var(--green)}
       <button class="nb"        onclick="showScr('prog',this)">Prog.</button>
       <button class="nb"        onclick="showScr('avance',this)">Avance</button>
       <button class="nb"        onclick="showScr('ciclos',this)">Ciclos</button>
+      <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
       <button class="nb"        onclick="showScr('config',this)">Config</button>
     </div>
   </div>
@@ -361,6 +362,33 @@ select:focus,input:focus{border-color:var(--green)}
       <p style="font-size:12px;color:var(--muted);line-height:1.5">Abre un ciclo al comenzar una temporada, ciérralo cuando termina. Entre ciclos puede haber días sin cultivo.</p>
     </div>
     <div id="ciclosContent"></div>
+  </div>
+
+  <!-- INFORMES -->
+  <div id="screen-informes" class="screen">
+    <div style="height:10px"></div>
+    <div class="card">
+      <div class="card-title">📊 Informes de Avance</div>
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">Genera y descarga informes de labores en formato CSV. Los archivos se pueden abrir en Excel o Google Sheets.</p>
+
+      <div class="form-grid">
+        <div><label>Desde</label><input type="date" id="infDesde"></div>
+        <div><label>Hasta</label><input type="date" id="infHasta"></div>
+      </div>
+
+      <div class="form-row"><label>Predio</label><select id="infPredio" onchange="onInfPredioChange()"></select></div>
+      <div class="form-row" id="infCultivoRow" style="display:none"><label>Cultivo</label><select id="infCultivo"><option value="">Todos</option></select></div>
+      <div class="form-row"><label>Subjefe</label><select id="infSubjefe"><option value="">Todos</option></select></div>
+
+      <div class="sec-div">Descargar informe</div>
+
+      <button class="btn btn-primary" style="margin-bottom:8px" onclick="descargarInforme('trabajador')">📋 Resumen por Trabajador</button>
+      <button class="btn btn-primary" style="margin-bottom:8px" onclick="descargarInforme('labor')">🔧 Resumen por Labor</button>
+      <button class="btn btn-primary" style="margin-bottom:8px" onclick="descargarInforme('detalle')">📄 Detalle Completo</button>
+      <button class="btn btn-primary" onclick="descargarInforme('progvsreal')">🎯 Programado vs Real</button>
+
+      <div id="infStats" style="margin-top:10px;display:none;background:var(--cream);border-radius:7px;padding:9px 11px;font-size:12px;color:var(--muted);line-height:1.6"></div>
+    </div>
   </div>
 
   <!-- CONFIG -->
@@ -519,6 +547,7 @@ const today    = new Date();
 const todayIso = today.toISOString().slice(0,10);
 let activePred = 'transito';
 let selDate    = todayIso;
+let semOffset  = 0;  // 0=semana actual, -1=semana anterior, -2=dos semanas atrás
 let progWeekOffset = 0;
 
 // In-memory caches (refreshed on predio change / live listeners)
@@ -556,9 +585,20 @@ function canEditPredio(pid){
 }
 function userSubjefe(){return currentProfile&&currentProfile.subjefe||''}
 
+// Subjefes autorizados a ver informes (además de admin y jefe)
+const SUBJEFES_CON_INFORMES=['Mario Durand','Jorge Guajardo','Claudio Flores'];
+
+function canViewInformes(){
+  if(!currentProfile)return false;
+  if(currentProfile.role==='admin')return true;
+  if(currentProfile.role==='jefe')return true;
+  if(currentProfile.role==='subjefe'&&SUBJEFES_CON_INFORMES.includes(currentProfile.subjefe))return true;
+  return false;
+}
+
 function weekDates(){
   const d=new Date(today),dow=d.getDay(),mon=new Date(d);
-  mon.setDate(d.getDate()-(dow===0?6:dow-1));
+  mon.setDate(d.getDate()-(dow===0?6:dow-1)+(semOffset*7));
   return Array.from({length:5},(_,i)=>{const dd=new Date(mon);dd.setDate(mon.getDate()+i);return dd.toISOString().slice(0,10)});
 }
 
@@ -644,6 +684,9 @@ function applyRoleUI(){
   document.getElementById('clearDataBtn').style.display=isAdmin()?'block':'none';
   // Add worker button: only admin
   document.getElementById('addWBtn').style.display=isAdmin()?'block':'none';
+  // Informes button: admin, jefe, or autorizado
+  const bi=document.getElementById('btnInformes');
+  if(bi)bi.style.display=canViewInformes()?'':'none';
 }
 
 // ══════════════════════════════════════════════
@@ -833,13 +876,59 @@ function addLaborRow(){
   if(cur>=MAX_LAB){toast('Máximo 4 labores por entrada');return}
   const idx=cur+1,row=document.createElement('div');row.className='labor-row';row.dataset.idx=idx;
   row.innerHTML=`<div class="labor-row-num"><span>Labor ${idx}</span>${idx>1?`<button class="rm-labor" onclick="rmLaborRow(this)">✕</button>`:''}</div>
-    <div class="labor-sel"><select class="lr-labor">${laborOptsHTML()}</select></div>
+    <div style="display:flex;gap:6px;align-items:flex-end;margin-bottom:6px">
+      <div style="flex:0 0 70px"><label style="font-size:10px">Código</label><input type="number" class="lr-code" placeholder="#" min="1" max="99" style="text-align:center;font-family:'DM Mono',monospace;font-weight:600" oninput="onCodeTyped(this)"></div>
+      <div style="flex:1"><label style="font-size:10px">Labor (o selecciona de la lista)</label><select class="lr-labor" onchange="onLaborPicked(this)">${laborOptsHTML()}</select></div>
+    </div>
     <div class="labor-nums">
       <div><label>Horas</label><input type="number" class="lr-horas" placeholder="7.5" min="0" max="14" step="0.5" oninput="checkLaborRow(this)"></div>
       <div><label>N° mesas</label><input type="number" class="lr-mesas" placeholder="32" min="0" oninput="checkLaborRow(this)"></div>
     </div>
     <div class="lr-warn" style="display:none;font-size:11px;color:#B45309;background:#FEF3C7;border-radius:6px;padding:4px 8px;margin-top:4px"></div>`;
   cont.appendChild(row);updateLaborUI();
+}
+
+// Cuando tipean un código, auto-seleccionar en el dropdown
+function onCodeTyped(inp){
+  const row=inp.closest('.labor-row');if(!row)return;
+  const code=parseInt(inp.value)||0;
+  const sel=row.querySelector('.lr-labor');
+  const labor=LABORES.find(l=>l.id===code);
+  if(labor){
+    sel.value=String(code);
+    inp.style.borderColor='var(--green)';
+    inp.style.background='#ECFDF5';
+    // Mostrar nombre abajo como feedback
+    let hint=row.querySelector('.lr-hint');
+    if(!hint){hint=document.createElement('div');hint.className='lr-hint';hint.style.cssText='font-size:11px;color:var(--green);margin-top:-2px;margin-bottom:4px;font-weight:500';row.querySelector('.lr-code').parentElement.parentElement.after(hint);}
+    hint.textContent='✓ '+labor.d;
+    hint.style.display='block';
+  } else if(code>0){
+    sel.value='';
+    inp.style.borderColor='var(--red)';
+    inp.style.background='#FEF2F2';
+    const hint=row.querySelector('.lr-hint');if(hint)hint.style.display='none';
+  } else {
+    sel.value='';
+    inp.style.borderColor='';
+    inp.style.background='';
+    const hint=row.querySelector('.lr-hint');if(hint)hint.style.display='none';
+  }
+}
+
+// Cuando seleccionan del dropdown, actualizar el código
+function onLaborPicked(sel){
+  const row=sel.closest('.labor-row');if(!row)return;
+  const code=row.querySelector('.lr-code');
+  code.value=sel.value||'';
+  if(sel.value){
+    code.style.borderColor='var(--green)';
+    code.style.background='#ECFDF5';
+  } else {
+    code.style.borderColor='';
+    code.style.background='';
+  }
+  const hint=row.querySelector('.lr-hint');if(hint)hint.style.display='none';
 }
 
 // Validación inline: resalta en ámbar si hay valores sospechosos
@@ -873,14 +962,42 @@ function updateLaborUI(){
 // ══════════════════════════════════════════════
 function buildSem(){
   const g=document.getElementById('semGrid');if(!g)return;g.innerHTML='';
-  weekDates().forEach((iso,i)=>{
+  const wd=weekDates();
+  // Header con flechas y etiqueta de semana
+  const hdr=document.createElement('div');
+  hdr.style.cssText='display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:6px';
+  const lblTxt=semOffset===0?'Esta semana':(semOffset===-1?'Semana pasada':`${Math.abs(semOffset)} semanas atrás`);
+  const rango=`${wd[0].slice(8)}/${wd[0].slice(5,7)} — ${wd[4].slice(8)}/${wd[4].slice(5,7)}`;
+  hdr.innerHTML=`
+    <button onclick="navSem(-1)" style="padding:4px 10px;border:1px solid var(--sand);border-radius:6px;background:var(--white);cursor:pointer;font-size:13px">‹</button>
+    <div style="flex:1;text-align:center;font-size:11px"><div style="font-weight:600">${lblTxt}</div><div style="color:var(--muted);font-family:'DM Mono',monospace">${rango}</div></div>
+    <button onclick="navSem(1)" ${semOffset>=0?'disabled style="padding:4px 10px;border:1px solid var(--sand);border-radius:6px;background:#F3F4F6;cursor:not-allowed;color:#9CA3AF;font-size:13px"':'style="padding:4px 10px;border:1px solid var(--sand);border-radius:6px;background:var(--white);cursor:pointer;font-size:13px"'}>›</button>
+  `;
+  g.appendChild(hdr);
+  // Grid de días
+  const dg=document.createElement('div');
+  dg.style.cssText='display:grid;grid-template-columns:repeat(5,1fr);gap:6px';
+  wd.forEach((iso,i)=>{
     const hasD=rCache.some(r=>r.fecha===iso),isA=iso===selDate;
     const b=document.createElement('div');
     b.className=`dib${isA?' active':''}${hasD&&!isA?' has-data':''}`;
     b.innerHTML=`<div class="dn">${DIAS[i]}</div><div class="dd">${iso.slice(8)}</div>`;
     b.onclick=()=>{selDate=iso;buildSem();renderHoy();renderCtx()};
-    g.appendChild(b);
+    dg.appendChild(b);
   });
+  g.appendChild(dg);
+}
+
+function navSem(delta){
+  const nuevo=semOffset+delta;
+  // Máximo 3 semanas atrás, no permitir ir al futuro
+  if(nuevo>0)return;
+  if(nuevo<-3){toast('Solo puedes ver hasta 3 semanas atrás');return}
+  semOffset=nuevo;
+  const wd=weekDates();
+  // Seleccionar por defecto el lunes de la semana al navegar
+  selDate=wd[0];
+  buildSem();renderHoy();renderCtx();
 }
 
 // ══════════════════════════════════════════════
@@ -1491,6 +1608,308 @@ async function createUser(){
 function closeModal(){document.getElementById('overlay').classList.remove('open')}
 
 // ══════════════════════════════════════════════
+// INFORMES
+// ══════════════════════════════════════════════
+function initInformes(){
+  // Inicializar fechas: desde=lunes de esta semana, hasta=hoy
+  const wd=weekDates();
+  document.getElementById('infDesde').value=wd[0];
+  document.getElementById('infHasta').value=todayIso;
+
+  // Predios disponibles según rol
+  const selP=document.getElementById('infPredio');
+  let preds=[];
+  if(currentProfile.role==='admin'&&currentProfile.predioId==='todos'){
+    preds=PRED_ORDER.slice();
+  } else {
+    preds=[currentProfile.predioId||activePred];
+  }
+  selP.innerHTML=preds.map(p=>`<option value="${p}">${PREDIOS[p].nombre}</option>`).join('');
+  if(preds.length>1)selP.innerHTML=`<option value="">Todos</option>`+selP.innerHTML;
+  onInfPredioChange();
+}
+
+function onInfPredioChange(){
+  const pid=document.getElementById('infPredio').value;
+  const rowC=document.getElementById('infCultivoRow');
+  const selC=document.getElementById('infCultivo');
+  const selS=document.getElementById('infSubjefe');
+  // Cultivo solo si el predio tiene más de uno
+  if(pid&&PREDIOS[pid]&&PREDIOS[pid].cultivos.length>1){
+    selC.innerHTML=`<option value="">Todos</option>`+PREDIOS[pid].cultivos.map(c=>`<option value="${c}">${CICONS[c]||''} ${CNAMES[c]||c}</option>`).join('');
+    rowC.style.display='block';
+  } else {
+    rowC.style.display='none';
+    selC.value='';
+  }
+  // Subjefes
+  let subs=[];
+  if(pid){
+    subs=PREDIOS[pid].subjefes.slice();
+  } else {
+    subs=[...new Set(PRED_ORDER.flatMap(p=>PREDIOS[p].subjefes))];
+  }
+  // Si es subjefe, solo él mismo
+  if(currentProfile.role==='subjefe'){
+    subs=[currentProfile.subjefe];
+    selS.innerHTML=`<option value="${currentProfile.subjefe}">${currentProfile.subjefe}</option>`;
+    selS.disabled=true;
+  } else {
+    selS.innerHTML=`<option value="">Todos</option>`+subs.map(s=>`<option value="${s}">${s}</option>`).join('');
+    selS.disabled=false;
+  }
+}
+
+// Descargar archivo CSV helper
+function downloadCSV(filename, headers, rows){
+  const csv=[
+    headers.join(','),
+    ...rows.map(r=>headers.map(h=>{
+      const v=r[h]===undefined||r[h]===null?'':String(r[h]);
+      return v.includes(',')||v.includes('"')||v.includes('\n')?'"'+v.replace(/"/g,'""')+'"':v;
+    }).join(','))
+  ].join('\n');
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=filename;a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Cargar registros según filtros (respeta las reglas de Firestore)
+async function cargarRegistrosInforme(){
+  const desde=document.getElementById('infDesde').value;
+  const hasta=document.getElementById('infHasta').value;
+  const predioSel=document.getElementById('infPredio').value;
+  const cultivoSel=document.getElementById('infCultivo').value;
+  const subjefeSel=document.getElementById('infSubjefe').value;
+  if(!desde||!hasta){toast('⚠️ Selecciona fechas desde y hasta');return null}
+  if(desde>hasta){toast('⚠️ La fecha desde debe ser menor o igual a hasta');return null}
+
+  const preds=predioSel?[predioSel]:PRED_ORDER.slice();
+  const workers={}, registros=[];
+
+  loading(true,'Cargando datos…');
+  try{
+    // Cargar workers
+    for(const pid of preds){
+      try{
+        const snap=await colWorkers(pid).get();
+        workers[pid]={};
+        snap.forEach(d=>workers[pid][d.id]=d.data());
+      }catch(e){/* sin acceso a ese predio, ignorar */}
+    }
+    // Cargar registros del rango de fechas
+    for(const pid of preds){
+      try{
+        const snap=await colRegistros(pid).where('fecha','>=',desde).where('fecha','<=',hasta).get();
+        snap.forEach(d=>{
+          const r=d.data();
+          const w=(workers[pid]||{})[r.workerId]||{};
+          // Filtros
+          if(subjefeSel&&w.subjefe!==subjefeSel)return;
+          const regCultivo=r.cultivo||w.cultivo||'';
+          if(cultivoSel&&regCultivo!==cultivoSel)return;
+          registros.push({...r, _id:d.id, _predio:pid, _worker:w, _cultivo:regCultivo});
+        });
+      }catch(e){/* sin acceso a registros de ese predio */}
+    }
+    loading(false);
+    return {registros, workers, preds, desde, hasta, predioSel, cultivoSel, subjefeSel};
+  }catch(e){
+    loading(false);
+    toast('Error: '+e.message);
+    return null;
+  }
+}
+
+async function descargarInforme(tipo){
+  const data=await cargarRegistrosInforme();
+  if(!data)return;
+  const {registros, desde, hasta}=data;
+  if(!registros.length){toast('⚠️ No hay registros en el período seleccionado');return}
+
+  // Sufijo para el nombre del archivo
+  const suf=`${desde}_${hasta}`;
+
+  if(tipo==='detalle'){
+    const rows=[];
+    registros.forEach(r=>{
+      const w=r._worker||{};
+      const labores=r.labores||[{laborId:r.laborId,horas:r.horas||0,mesas:r.mesas||0}];
+      labores.forEach(lab=>{
+        const labDef=LABORES.find(l=>l.id===lab.laborId);
+        rows.push({
+          predio: PREDIOS[r._predio].nombre,
+          fecha: r.fecha,
+          trabajador: w.nombre||r.workerId,
+          subjefe: w.subjefe||'',
+          cultivo: r._cultivo,
+          codigo_labor: lab.laborId,
+          labor: labDef?labDef.d:'',
+          horas: lab.horas||0,
+          mesas: lab.mesas||0,
+          ausente: r.ausente?'SI':'',
+          licencia: r.licencia?'SI':'',
+          observacion: (r.obs||'').replace(/[\r\n]+/g,' ')
+        });
+      });
+    });
+    downloadCSV(`fieldlog_detalle_${suf}.csv`,
+      ['predio','fecha','trabajador','subjefe','cultivo','codigo_labor','labor','horas','mesas','ausente','licencia','observacion'],
+      rows);
+    toast(`✅ Descargado: ${rows.length} filas`);
+    return;
+  }
+
+  if(tipo==='trabajador'){
+    // Agrupar por trabajador
+    const map={};
+    registros.forEach(r=>{
+      const w=r._worker||{};
+      const key=`${r._predio}|${r.workerId}`;
+      if(!map[key]){
+        map[key]={
+          predio:PREDIOS[r._predio].nombre,
+          trabajador:w.nombre||r.workerId,
+          subjefe:w.subjefe||'',
+          cultivo:r._cultivo,
+          dias:new Set(), horas:0, mesas:0, labores:0, ausencias:0, licencias:0
+        };
+      }
+      const m=map[key];
+      m.dias.add(r.fecha);
+      const labs=r.labores||[{horas:r.horas||0,mesas:r.mesas||0}];
+      labs.forEach(l=>{m.horas+=l.horas||0;m.mesas+=l.mesas||0;m.labores++;});
+      if(r.ausente)m.ausencias++;
+      if(r.licencia)m.licencias++;
+    });
+    const rows=Object.values(map).map(m=>({
+      predio:m.predio, trabajador:m.trabajador, subjefe:m.subjefe, cultivo:m.cultivo,
+      dias_trabajados:m.dias.size,
+      total_horas:m.horas.toFixed(1),
+      total_mesas:m.mesas,
+      labores_registradas:m.labores,
+      ausencias:m.ausencias,
+      licencias:m.licencias
+    })).sort((a,b)=>a.trabajador.localeCompare(b.trabajador));
+    downloadCSV(`fieldlog_trabajador_${suf}.csv`,
+      ['predio','trabajador','subjefe','cultivo','dias_trabajados','total_horas','total_mesas','labores_registradas','ausencias','licencias'],
+      rows);
+    toast(`✅ Descargado: ${rows.length} trabajadores`);
+    return;
+  }
+
+  if(tipo==='labor'){
+    // Agrupar por labor
+    const map={};
+    registros.forEach(r=>{
+      const labs=r.labores||[{laborId:r.laborId,horas:r.horas||0,mesas:r.mesas||0}];
+      labs.forEach(l=>{
+        const id=l.laborId;if(!id)return;
+        const key=`${r._predio}|${id}`;
+        if(!map[key]){
+          const labDef=LABORES.find(x=>x.id===id);
+          map[key]={
+            predio:PREDIOS[r._predio].nombre,
+            codigo:id,
+            labor:labDef?labDef.d:'',
+            trabajadores:new Set(), horas:0, mesas:0, ocurrencias:0
+          };
+        }
+        const m=map[key];
+        m.trabajadores.add(r.workerId);
+        m.horas+=l.horas||0;
+        m.mesas+=l.mesas||0;
+        m.ocurrencias++;
+      });
+    });
+    const rows=Object.values(map).map(m=>({
+      predio:m.predio,
+      codigo:m.codigo,
+      labor:m.labor,
+      trabajadores_distintos:m.trabajadores.size,
+      total_horas:m.horas.toFixed(1),
+      total_mesas:m.mesas,
+      registros:m.ocurrencias
+    })).sort((a,b)=>a.codigo-b.codigo);
+    downloadCSV(`fieldlog_labor_${suf}.csv`,
+      ['predio','codigo','labor','trabajadores_distintos','total_horas','total_mesas','registros'],
+      rows);
+    toast(`✅ Descargado: ${rows.length} labores`);
+    return;
+  }
+
+  if(tipo==='progvsreal'){
+    // Comparar programación vs registros reales
+    const {predioSel, subjefeSel}=data;
+    const predsAUsar=predioSel?[predioSel]:PRED_ORDER.slice();
+    const rows=[];
+    loading(true,'Comparando programado vs real…');
+    try{
+      for(const pid of predsAUsar){
+        const subs=subjefeSel?[subjefeSel]:PREDIOS[pid].subjefes;
+        for(const sub of subs){
+          try{
+            // Obtener todas las programaciones del rango
+            const snap=await colProg(pid,sub).get();
+            snap.forEach(doc=>{
+              const monday=doc.id;  // YYYY-MM-DD del lunes
+              if(monday<desde||monday>hasta)return; // fuera de rango aprox
+              const prog=doc.data();
+              const dias=prog.dias||{};
+              Object.entries(dias).forEach(([dia,tareas])=>{
+                if(dia<desde||dia>hasta)return;
+                (tareas||[]).forEach(t=>{
+                  const labDef=LABORES.find(l=>l.id===t.laborId);
+                  // Sumar las mesas reales de esa labor ese día
+                  const realesMesas=registros
+                    .filter(r=>r.fecha===dia&&r._predio===pid&&(r._worker||{}).subjefe===sub)
+                    .reduce((s,r)=>{
+                      const labs=r.labores||[{laborId:r.laborId,mesas:r.mesas||0}];
+                      return s+labs.filter(l=>l.laborId===t.laborId).reduce((ss,l)=>ss+(l.mesas||0),0);
+                    },0);
+                  const realesHoras=registros
+                    .filter(r=>r.fecha===dia&&r._predio===pid&&(r._worker||{}).subjefe===sub)
+                    .reduce((s,r)=>{
+                      const labs=r.labores||[{laborId:r.laborId,horas:r.horas||0}];
+                      return s+labs.filter(l=>l.laborId===t.laborId).reduce((ss,l)=>ss+(l.horas||0),0);
+                    },0);
+                  const metaM=t.metaMesas||0;
+                  const cumpl=metaM>0?Math.round(realesMesas/metaM*100):'';
+                  rows.push({
+                    predio:PREDIOS[pid].nombre,
+                    subjefe:sub,
+                    fecha:dia,
+                    codigo_labor:t.laborId,
+                    labor:labDef?labDef.d:'',
+                    modulo:t.modulo||'',
+                    meta_mesas:metaM,
+                    mesas_reales:realesMesas,
+                    horas_reales:realesHoras.toFixed(1),
+                    cumplimiento_pct:cumpl,
+                    notas:t.notas||''
+                  });
+                });
+              });
+            });
+          }catch(e){/* sin acceso o sin datos */}
+        }
+      }
+    }catch(e){toast('Error: '+e.message)}
+    loading(false);
+    if(!rows.length){toast('⚠️ No hay programación en el período');return}
+    // Ordenar por fecha, predio, subjefe
+    rows.sort((a,b)=>(a.fecha+a.predio+a.subjefe).localeCompare(b.fecha+b.predio+b.subjefe));
+    downloadCSV(`fieldlog_progvsreal_${suf}.csv`,
+      ['predio','subjefe','fecha','codigo_labor','labor','modulo','meta_mesas','mesas_reales','horas_reales','cumplimiento_pct','notas'],
+      rows);
+    toast(`✅ Descargado: ${rows.length} tareas programadas`);
+    return;
+  }
+}
+
+// ══════════════════════════════════════════════
 // SCREEN SWITCHER
 // ══════════════════════════════════════════════
 function showScr(name,btn){
@@ -1503,6 +1922,7 @@ function showScr(name,btn){
   if(name==='ciclos')  renderCiclos();
   if(name==='config')  renderConfig();
   if(name==='prog')    {populateProgSubjefe();renderProg();}
+  if(name==='informes')initInformes();
 }
 </script>
 </body>
