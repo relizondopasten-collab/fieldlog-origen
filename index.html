@@ -311,6 +311,7 @@ select:focus,input:focus{border-color:var(--green)}
       <div id="ausenteSection" style="display:none;background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;margin-bottom:9px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><input type="checkbox" id="chkAusente" onchange="toggleReemplazo()" style="width:16px;height:16px;accent-color:var(--red);cursor:pointer"><label for="chkAusente" style="font-size:12px;font-weight:600;color:var(--red);text-transform:uppercase;letter-spacing:.3px;margin:0;cursor:pointer">Trabajador ausente</label></div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><input type="checkbox" id="chkLicencia" style="width:16px;height:16px;accent-color:#7C3AED;cursor:pointer"><label for="chkLicencia" style="font-size:12px;font-weight:600;color:#7C3AED;text-transform:uppercase;letter-spacing:.3px;margin:0;cursor:pointer">Licencia médica</label></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><input type="checkbox" id="chkVacaciones" onchange="toggleReemplazo()" style="width:16px;height:16px;accent-color:#D97706;cursor:pointer"><label for="chkVacaciones" style="font-size:12px;font-weight:600;color:#D97706;text-transform:uppercase;letter-spacing:.3px;margin:0;cursor:pointer">Vacaciones</label></div>
         <div id="reemplazoDiv" style="display:none"><label>Reemplazante</label><select id="selReemplazo"><option value="">— Seleccionar reemplazante —</option></select></div>
       </div>
       <div style="margin-bottom:4px">
@@ -495,7 +496,7 @@ const LABORES=[
   {id:18,d:"Sacar círculo polietileno del perforado"},{id:19,d:"Colocar cinta de riego al centro mesa"},
   {id:20,d:"Aplicación desinfección ambiental"},{id:21,d:"Riego de preplantación"},
   {id:22,d:"Instalación cintas de riego pasillo"},{id:23,d:"Hacer hoyos de plantación (molde)"},
-  {id:24,d:"Establecimiento de cultivo (plantación)"},{id:25,d:"Vacaciones"},
+  {id:24,d:"Establecimiento de cultivo (plantación)"},{id:25,d:"Vacaciones",hidden:true},
   {id:26,d:"Ordenar alambre a 60 cm"},{id:27,d:"Raspar pasillo"},{id:28,d:"Emparejar pasillos"},
   {id:29,d:"Colocar tutor de vara (cercha)"},{id:30,d:"Amarrar hilo al alambre / argolla"},
   {id:31,d:"Abrir cintas 30-40 cm"},{id:32,d:"Tumbar plantas"},{id:33,d:"Definir ejes definitivos (2-3)"},
@@ -809,7 +810,7 @@ function populateSels(){
   if(ns)ns.innerHTML=p.subjefes.map(s=>`<option>${s}</option>`).join('');
   const nCul=document.getElementById('nCul');
   if(nCul)nCul.innerHTML=(p.cultivos||['tomate']).map(c=>`<option value="${c}">${CICONS[c]||''} ${CNAMES[c]||c}</option>`).join('');
-  ['fL'].forEach(sid=>{const sel=document.getElementById(sid);if(!sel)return;sel.innerHTML=`<option value="">Todas</option>`+LABORES.map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')});
+  ['fL'].forEach(sid=>{const sel=document.getElementById(sid);if(!sel)return;sel.innerHTML=`<option value="">Todas</option>`+LABORES.filter(l=>!l.hidden).map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')});
   onSubChange();
   initLaborRows();
 }
@@ -866,20 +867,21 @@ function filtW(){
 function checkAusente(){
   const wId=document.getElementById('selW').value;
   document.getElementById('ausenteSection').style.display=wId?'block':'none';
-  if(!wId){document.getElementById('chkAusente').checked=false;document.getElementById('chkLicencia').checked=false;document.getElementById('reemplazoDiv').style.display='none';}
+  if(!wId){document.getElementById('chkAusente').checked=false;document.getElementById('chkLicencia').checked=false;document.getElementById('chkVacaciones').checked=false;document.getElementById('reemplazoDiv').style.display='none';}
   filtW();
 }
 
 function toggleReemplazo(){
-  const checked=document.getElementById('chkAusente').checked;
-  document.getElementById('reemplazoDiv').style.display=checked?'block':'none';
+  const ausente=document.getElementById('chkAusente').checked;
+  const vacaciones=document.getElementById('chkVacaciones').checked;
+  document.getElementById('reemplazoDiv').style.display=(ausente||vacaciones)?'block':'none';
 }
 
 // ══════════════════════════════════════════════
 // LABOR ROWS
 // ══════════════════════════════════════════════
 const MAX_LAB=4;
-function laborOptsHTML(){return`<option value="">— Seleccionar —</option>`+LABORES.map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')}
+function laborOptsHTML(){return`<option value="">— Seleccionar —</option>`+LABORES.filter(l=>!l.hidden).map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')}
 function initLaborRows(){const c=document.getElementById('laborRows');if(!c)return;c.innerHTML='';addLaborRow();}
 function addLaborRow(){
   const cont=document.getElementById('laborRows'),cur=cont.querySelectorAll('.labor-row').length;
@@ -1032,11 +1034,14 @@ function eHTML(e,pred=activePred){
   const canDel=isAdmin()||(w&&w.subjefe===userSubjefe());
 
   let reemplazoHTML='';
-  if(e.ausente){
+  if(e.ausente||e.vacaciones){
     const esSin=e.reemplazoWorkerId==='reemplazo';const esOtro=e.reemplazoWorkerId==='otro';
     const rw=(!esOtro&&e.reemplazoWorkerId)?(wMap[e.reemplazoPredioId]||[]).find(x=>x.id===e.reemplazoWorkerId):null;
-    reemplazoHTML=`<div style="background:#FEE2E2;border-radius:7px;padding:5px 9px;margin-top:5px;font-size:11px;color:var(--red);display:flex;align-items:center;gap:5px">
-      <span>⚠️ Ausente</span>${e.licencia?'<span style="background:#EDE9FE;color:#7C3AED;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;margin-left:4px">🏥 Licencia médica</span>':''}
+    const bgColor=e.vacaciones?'#FEF3C7':'#FEE2E2';
+    const txtColor=e.vacaciones?'#D97706':'var(--red)';
+    const icono=e.vacaciones?'🌴 Vacaciones':'⚠️ Ausente';
+    reemplazoHTML=`<div style="background:${bgColor};border-radius:7px;padding:5px 9px;margin-top:5px;font-size:11px;color:${txtColor};display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+      <span>${icono}</span>${e.licencia?'<span style="background:#EDE9FE;color:#7C3AED;font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;margin-left:4px">🏥 Licencia médica</span>':''}
       ${esSin?'<span style="color:var(--text)">· Sin reemplazo disponible</span>':esOtro?`<span style="color:var(--text)">· Reemplazado por <strong>Otro (externo)</strong></span>`:rw?`<span style="color:var(--text)">· Reemplazado por <strong>${rw.nombre}</strong>${e.reemplazoPredioId!==pred?` (${PREDIOS[e.reemplazoPredioId].nombre})`:''}</span>`:''}
     </div>`;
   }
@@ -1054,10 +1059,10 @@ function eHTML(e,pred=activePred){
       </div>
     </div>`;
   }).join('');
-  return `<div class="ecard" style="border-left-color:var(--c-${pc})${e.ausente?';border-left-color:var(--red)':''}">
+  return `<div class="ecard" style="border-left-color:var(--c-${pc})${e.ausente?';border-left-color:var(--red)':e.vacaciones?';border-left-color:#D97706':''}">
     <div class="ehdr">
       <div>
-        <div class="ename" style="${e.ausente?'color:var(--muted);text-decoration:line-through':''}">${w?w.nombre:'—'}</div>
+        <div class="ename" style="${(e.ausente||e.vacaciones)?'color:var(--muted);text-decoration:line-through':''}">${w?w.nombre:'—'}</div>
         <div class="emeta">${w?`👤 ${w.subjefe} · `:''}${fD(e.fecha)}</div>
       </div>
       ${canDel?`<button class="del-btn" onclick="delEntry('${e.id}')">✕</button>`:''}
@@ -1085,7 +1090,8 @@ async function guardar(){
   const reemplazoVal=document.getElementById('selReemplazo').value;
   if(!wId){toast('⚠️ Selecciona un trabajador');return}
   const licencia=document.getElementById('chkLicencia').checked;
-  if(ausente&&!reemplazoVal&&!licencia){toast('⚠️ Selecciona un reemplazante o marca licencia médica');return}
+  const vacaciones=document.getElementById('chkVacaciones').checked;
+  if(ausente&&!reemplazoVal&&!licencia&&!vacaciones){toast('⚠️ Selecciona un reemplazante, licencia médica o vacaciones');return}
   const rows=document.querySelectorAll('#laborRows .labor-row');
   const labores=[];let hasError=false;
   rows.forEach(row=>{
@@ -1097,7 +1103,7 @@ async function guardar(){
     labores.push({laborId:lId,horas,mesas});
   });
   const sinReemplazo=reemplazoVal==='sin|reemplazo'||reemplazoVal==='sin|sin';
-  const skipLabores=licencia||(ausente&&sinReemplazo)||(ausente&&!reemplazoVal);
+  const skipLabores=licencia||vacaciones||(ausente&&sinReemplazo)||(ausente&&!reemplazoVal);
   if(!skipLabores&&hasError){toast('⚠️ Selecciona labor en cada fila');return}
   if(!skipLabores&&!labores.length){toast('⚠️ Agrega al menos una labor');return}
 
@@ -1127,16 +1133,18 @@ async function guardar(){
   }
 
   let reemplazoPredioId=null,reemplazoWorkerId=null;
-  if(ausente&&reemplazoVal){[reemplazoPredioId,reemplazoWorkerId]=reemplazoVal.split('|')}
+  if((ausente||vacaciones)&&reemplazoVal){[reemplazoPredioId,reemplazoWorkerId]=reemplazoVal.split('|')}
   loading(true,'Guardando…');
   try{
     const workerData=pWs().find(w=>w.id===wId);
     const cultivoReg=(workerData&&workerData.cultivo)||document.getElementById('selCultivo').value||'';
     await colRegistros(activePred).add({fecha:selDate,workerId:wId,labores,obs,cultivo:cultivoReg,
-      ausente:ausente||false,licencia:document.getElementById('chkLicencia').checked||false,reemplazoPredioId,reemplazoWorkerId,
+      ausente:ausente||false,licencia:document.getElementById('chkLicencia').checked||false,vacaciones:vacaciones||false,reemplazoPredioId,reemplazoWorkerId,
       ts:Date.now(),creadoPor:currentUser.uid});
     document.getElementById('iO').value='';
     document.getElementById('chkAusente').checked=false;
+    document.getElementById('chkLicencia').checked=false;
+    document.getElementById('chkVacaciones').checked=false;
     document.getElementById('reemplazoDiv').style.display='none';
     document.getElementById('ausenteSection').style.display='none';
     initLaborRows();
@@ -1467,7 +1475,7 @@ function renderProgModalDias(progDays,dayNames){
 function progTaskFormHTML(dayIso,ti,t={}){
   return `<div class="ptask-form" id="ptf-${dayIso}-${ti}">
     <div class="ptask-form-hdr"><span class="ptask-form-num">Tarea ${ti+1}</span><button class="del-btn" onclick="rmProgTask('${dayIso}',${ti})">✕</button></div>
-    <div class="form-row"><label>Labor</label><select onchange="updPT('${dayIso}',${ti},'laborId',parseInt(this.value))"><option value="">— Seleccionar —</option>${LABORES.map(l=>`<option value="${l.id}"${t.laborId===l.id?' selected':''}>${l.id}. ${l.d}</option>`).join('')}</select></div>
+    <div class="form-row"><label>Labor</label><select onchange="updPT('${dayIso}',${ti},'laborId',parseInt(this.value))"><option value="">— Seleccionar —</option>${LABORES.filter(l=>!l.hidden).map(l=>`<option value="${l.id}"${t.laborId===l.id?' selected':''}>${l.id}. ${l.d}</option>`).join('')}</select></div>
     <div class="form-grid">
       <div><label>Módulo</label><input type="text" placeholder="MOD 7" value="${t.modulo||''}" onchange="updPT('${dayIso}',${ti},'modulo',this.value)"></div>
       <div><label>Meta mesas</label><input type="number" placeholder="120" min="0" value="${t.metaMesas||''}" onchange="updPT('${dayIso}',${ti},'metaMesas',parseInt(this.value)||0)"></div>
@@ -1761,12 +1769,13 @@ async function descargarInforme(tipo){
           mesas: lab.mesas||0,
           ausente: r.ausente?'SI':'',
           licencia: r.licencia?'SI':'',
+          vacaciones: r.vacaciones?'SI':'',
           observacion: (r.obs||'').replace(/[\r\n]+/g,' ')
         });
       });
     });
     downloadCSV(`fieldlog_detalle_${suf}.csv`,
-      ['predio','fecha','trabajador','subjefe','cultivo','codigo_labor','labor','horas','mesas','ausente','licencia','observacion'],
+      ['predio','fecha','trabajador','subjefe','cultivo','codigo_labor','labor','horas','mesas','ausente','licencia','vacaciones','observacion'],
       rows);
     toast(`✅ Descargado: ${rows.length} filas`);
     return;
@@ -1784,7 +1793,7 @@ async function descargarInforme(tipo){
           trabajador:w.nombre||r.workerId,
           subjefe:w.subjefe||'',
           cultivo:r._cultivo,
-          dias:new Set(), horas:0, mesas:0, labores:0, ausencias:0, licencias:0
+          dias:new Set(), horas:0, mesas:0, labores:0, ausencias:0, licencias:0, vacaciones:0
         };
       }
       const m=map[key];
@@ -1793,6 +1802,7 @@ async function descargarInforme(tipo){
       labs.forEach(l=>{m.horas+=l.horas||0;m.mesas+=l.mesas||0;m.labores++;});
       if(r.ausente)m.ausencias++;
       if(r.licencia)m.licencias++;
+      if(r.vacaciones)m.vacaciones++;
     });
     const rows=Object.values(map).map(m=>({
       predio:m.predio, trabajador:m.trabajador, subjefe:m.subjefe, cultivo:m.cultivo,
@@ -1801,10 +1811,11 @@ async function descargarInforme(tipo){
       total_mesas:m.mesas,
       labores_registradas:m.labores,
       ausencias:m.ausencias,
-      licencias:m.licencias
+      licencias:m.licencias,
+      vacaciones:m.vacaciones
     })).sort((a,b)=>a.trabajador.localeCompare(b.trabajador));
     downloadCSV(`fieldlog_trabajador_${suf}.csv`,
-      ['predio','trabajador','subjefe','cultivo','dias_trabajados','total_horas','total_mesas','labores_registradas','ausencias','licencias'],
+      ['predio','trabajador','subjefe','cultivo','dias_trabajados','total_horas','total_mesas','labores_registradas','ausencias','licencias','vacaciones'],
       rows);
     toast(`✅ Descargado: ${rows.length} trabajadores`);
     return;
