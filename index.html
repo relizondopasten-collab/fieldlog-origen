@@ -6,6 +6,19 @@
 <title>FieldLog · Agrícola Origen</title>
 
 <!-- ══════════════════════════════════════════
+     PWA: permite "Instalar app" en Android/iOS
+══════════════════════════════════════════ -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1A2E1F">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FieldLog">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+
+<!-- ══════════════════════════════════════════
      PASO 1: Reemplaza estos valores con los de
      tu proyecto Firebase (ver INSTRUCCIONES.md)
 ══════════════════════════════════════════ -->
@@ -520,7 +533,8 @@ const LABORES=[
   {id:77,d:"Desbrote basal"},{id:78,d:"Deshoje basal"},{id:79,d:"Amarra de ejes"},
   {id:80,d:"Primera copa"},{id:81,d:"Segunda copa"},{id:82,d:"Tercera copa"},
   {id:83,d:"Deshoje"},{id:84,d:"Desbrote (Chupones)"},{id:85,d:"Raleo de frutos (Blossom y Chuecos)"},
-  {id:86,d:"Instalación de hilo en costado de mesa"},{id:87,d:"Instalación de hilo entre mesa"}
+  {id:86,d:"Instalación de hilo en costado de mesa"},{id:87,d:"Instalación de hilo entre mesa"},
+  {id:88,d:"Colocar polietileno cubriendo pasillos"}
 ];
 
 // Umbrales de validación para detectar errores de tipeo
@@ -1944,6 +1958,17 @@ function showScr(name,btn){
   if(name==='config')  renderConfig();
   if(name==='prog')    {populateProgSubjefe();renderProg();}
   if(name==='informes')initInformes();
+}
+
+// ══════════════════════════════════════════════
+// PWA: Registro del Service Worker
+// ══════════════════════════════════════════════
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js')
+      .then(reg=>console.log('SW registrado:',reg.scope))
+      .catch(err=>console.warn('SW falló:',err));
+  });
 }
 </script>
 </body>
