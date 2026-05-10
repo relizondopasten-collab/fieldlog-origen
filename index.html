@@ -424,10 +424,7 @@ select:focus,input:focus{border-color:var(--green)}
         <div><label>Código rango</label><input type="text" id="nC" placeholder="9001-9500"></div>
         <div><label>Subjefe</label><select id="nS"></select></div>
       </div>
-      <div class="form-grid">
-        <div><label>Cultivo</label><select id="nCul"></select></div>
-        <div><label>N° plantas</label><input type="number" id="nP" placeholder="1500" min="0"></div>
-      </div>
+      <div class="form-row"><label>N° plantas</label><input type="number" id="nP" placeholder="1500" min="0"></div>
       <button class="btn btn-primary" id="addWBtn" onclick="addW()">Agregar trabajador</button>
     </div>
     <!-- usuarios del sistema (solo admin) -->
@@ -806,6 +803,33 @@ function getCicloEn(predioId,subjefe,fecha=todayIso){
 function getCicloAbierto(predioId,subjefe){
   return (ciclosCache[subjefe]||[]).find(c=>c.fin===null)||null;
 }
+// Devuelve TODOS los ciclos abiertos de un subjefe (puede haber uno por cultivo).
+function getCiclosAbiertos(predioId,subjefe){
+  return (ciclosCache[subjefe]||[]).filter(c=>c.fin===null);
+}
+// Etiqueta legible de un ciclo: cultivo + (época o mes-año de plantación).
+function cicloLabel(c){
+  if(!c) return '—';
+  const cultPart = c.cultivo ? `${CICONS[c.cultivo]||''} ${CNAMES[c.cultivo]||c.cultivo}` : '';
+  let periPart = '';
+  if(c.cultivo==='pimenton' && c.mesPlantacion){
+    const mes = MESES[(c.mesPlantacion.mes||1)-1] || '?';
+    periPart = `${mes} ${c.mesPlantacion.año||'?'}`;
+  } else if(c.temporada){
+    periPart = `${TICONS[c.temporada]||''} ${TNAMES[c.temporada]||c.temporada}`;
+  }
+  if(cultPart && periPart) return `${cultPart} · ${periPart}`;
+  return cultPart || periPart || '—';
+}
+// Resumen corto de módulos (ej: "M: 7,8,9,10" o "M: 0-4,13,14")
+function modulosLabel(arr){
+  if(!arr || !arr.length) return '';
+  return 'M: ' + arr.join(',');
+}
+// Devuelve los módulos disponibles para una finca (de Firestore o vacío)
+function modulosFinca(predioId){
+  return modulosCache[predioId] || [];
+}
 
 // ══════════════════════════════════════════════
 // CONTEXT PILL
@@ -813,12 +837,15 @@ function getCicloAbierto(predioId,subjefe){
 function ctxHTML(){
   const p=pD(),pc={transito:'t',constancia:'c',paradero:'p'}[activePred];
   const rows=p.subjefes.map(s=>{
-    const c=getCicloEn(activePred,s,selDate);
-    const badge=c
-      ?`<span class="tbadge tb-${c.temporada}" style="font-size:10px;padding:2px 8px">${TICONS[c.temporada]} ${TNAMES[c.temporada]}${c.fin===null?' ●':''}</span>`
-      :`<span class="tbadge tb-none" style="font-size:10px;padding:2px 8px">Sin ciclo</span>`;
+    const abiertos = getCiclosAbiertos(activePred,s);
+    let badges = '';
+    if(abiertos.length){
+      badges = abiertos.map(c=>`<span class="tbadge tb-${c.temporada||'none'}" style="font-size:10px;padding:2px 8px">${cicloLabel(c)} ●</span>`).join('');
+    } else {
+      badges = `<span class="tbadge tb-none" style="font-size:10px;padding:2px 8px">Sin ciclo</span>`;
+    }
     return `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:5px">
-      <span class="stag">👤 ${s}</span>${badge}
+      <span class="stag">👤 ${s}</span>${badges}
     </div>`;
   }).join('');
   return `<div class="ctx-pill">
@@ -846,14 +873,6 @@ function populateSels(){
   });
   const ns=document.getElementById('nS');
   if(ns)ns.innerHTML=p.subjefes.map(s=>`<option>${s}</option>`).join('');
-  const nCul=document.getElementById('nCul');
-  if(nCul){
-    // Usar el catálogo global de Firestore si está cargado; de lo contrario, fallback al hardcoded por finca
-    const opts = cultivosCache.length
-      ? cultivosCache.map(c=>({id:c.id, nombre:c.nombre||CNAMES[c.id]||c.id}))
-      : (p.cultivos||['tomate']).map(c=>({id:c, nombre:CNAMES[c]||c}));
-    nCul.innerHTML = opts.map(o=>`<option value="${o.id}">${CICONS[o.id]||''} ${o.nombre}</option>`).join('');
-  }
   ['fL'].forEach(sid=>{const sel=document.getElementById(sid);if(!sel)return;sel.innerHTML=`<option value="">Todas</option>`+LABORES.filter(l=>!l.hidden).map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')});
   onSubChange();
   initLaborRows();
@@ -1114,7 +1133,7 @@ function eHTML(e,pred=activePred){
     ${reemplazoHTML}
     <div class="badges" style="margin:7px 0">
       <span class="badge b${pc}">${PREDIOS[pred].nombre}</span>
-      ${ciclo?`<span class="tbadge tb-${ciclo.temporada}" style="font-size:9px;padding:2px 7px">${TICONS[ciclo.temporada]} ${TNAMES[ciclo.temporada]}</span>`:''}
+      ${ciclo?`<span class="tbadge tb-${ciclo.temporada||'none'}" style="font-size:9px;padding:2px 7px">${cicloLabel(ciclo)}</span>`:''}
       ${labores.length>1?`<span class="badge" style="background:var(--sand);color:var(--dark)">${labores.length} labores</span>`:''}
       ${totalH?`<span class="badge bh">⏱ ${totalH}h total</span>`:''}
       ${totalM?`<span class="badge bm">🪴 ${totalM} mesas</span>`:''}
@@ -1272,22 +1291,27 @@ function renderCiclos(){
     const subs=isAdmin()?p.subjefes:p.subjefes.filter(s=>s===userSubjefe());
     subs.forEach(sub=>{
       const cycles=(ciclosCache[sub]||[]).slice().sort((a,b)=>b.inicio.localeCompare(a.inicio));
-      const openCycle=cycles.find(c=>c.fin===null);
+      const abiertos=cycles.filter(c=>c.fin===null);
       const gb=document.createElement('div');gb.className='group-block';
-      const cycleNow=getCicloEn(pid,sub);
+      // Cabecera: muestra todos los ciclos abiertos (uno por cultivo)
+      const headerBadges = abiertos.length
+        ? abiertos.map(c=>`<span class="tbadge tb-${c.temporada||'none'}" style="font-size:10px;padding:2px 8px;margin-right:4px">${cicloLabel(c)} ●</span>`).join('')
+        : `<span class="tbadge tb-none">Sin ciclo</span>`;
       gb.innerHTML=`<div class="gb-header">
         <div><div class="gb-name">👤 ${sub}</div><div class="gb-wcount">${(wMap[pid]||[]).filter(w=>w.subjefe===sub).length} trabajadores</div></div>
-        ${cycleNow?`<span class="tbadge tb-${cycleNow.temporada}">${TICONS[cycleNow.temporada]} ${TNAMES[cycleNow.temporada]}${cycleNow.fin===null?' ●':''}</span>`:`<span class="tbadge tb-none">Sin ciclo</span>`}
+        <div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end">${headerBadges}</div>
       </div>`;
       const body=document.createElement('div');body.className='gb-body';
       if(cycles.length){
         cycles.forEach(c=>{
-          const isOpen=c.fin===null,isCurrent=getCicloEn(pid,sub)===c,isFuture=c.inicio>todayIso;
-          let sc=isOpen?'is-open':'is-closed';if(isCurrent)sc='is-active';
+          const isOpen=c.fin===null,isFuture=c.inicio>todayIso;
+          let sc=isOpen?'is-open':'is-closed';
           const ci=document.createElement('div');ci.className=`cycle-item ${sc}`;
+          // Construir contenido del ciclo
           ci.innerHTML=`<div class="ci-top">
-            <div>
-              <span class="tbadge tb-${c.temporada}" style="font-size:10px;padding:2px 9px">${TICONS[c.temporada]} ${TNAMES[c.temporada]}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:13px;margin-bottom:3px">${cicloLabel(c)}</div>
+              ${c.modulos&&c.modulos.length?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:3px">📦 ${modulosLabel(c.modulos)}</div>`:''}
               <div class="ci-dates">Inicio: ${fDMY(c.inicio)} · ${isOpen?'<strong style="color:var(--c-primor)">En curso</strong>':`Cierre: ${fDMY(c.fin)}`}</div>
               ${c.superficieM2?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px">📐 ${c.superficieM2.toLocaleString()} m²</div>`:''}
               ${isFuture?`<span class="ci-status-future">Futuro</span>`:isOpen?`<span class="ci-status-open">● Abierto</span>`:`<span class="ci-status-closed">Cerrado</span>`}
@@ -1304,13 +1328,18 @@ function renderCiclos(){
       } else {
         body.innerHTML=`<p style="font-size:12px;color:var(--muted);padding:4px 0 8px">Sin ciclos registrados.</p>`;
       }
-      if(!openCycle){
+      // Botón "Abrir nuevo ciclo": disponible mientras quede al menos un cultivo sin abrir
+      const cultivosTodos = cultivosCache.length ? cultivosCache : [{id:'tomate'},{id:'especialidades'},{id:'pimenton'}];
+      const ocupados = new Set(abiertos.map(c=>c.cultivo).filter(Boolean));
+      const hayCultivoLibre = cultivosTodos.some(c=>!ocupados.has(c.id));
+      if(hayCultivoLibre){
         const ar=document.createElement('div');ar.className='add-cycle-row';
         ar.innerHTML=`<button class="open-cycle-btn" onclick="modalAbrirCiclo('${pid}','${sub}')">🌱 Abrir nuevo ciclo</button>`;
         body.appendChild(ar);
       } else {
         const ar=document.createElement('div');ar.style.cssText='font-size:11px;color:var(--muted);padding:6px 0';
-        ar.textContent='Cierra el ciclo actual antes de abrir uno nuevo.';body.appendChild(ar);
+        ar.textContent='Hay un ciclo abierto por cada cultivo. Cierra alguno para abrir uno nuevo.';
+        body.appendChild(ar);
       }
       gb.appendChild(body);div.appendChild(gb);
     });
@@ -1318,23 +1347,100 @@ function renderCiclos(){
 }
 
 async function modalAbrirCiclo(predioId,subjefe){
+  // Determinar cultivos del catálogo (cargado de Firestore)
+  const cultivos = cultivosCache.length
+    ? cultivosCache
+    : [{id:'tomate',nombre:'Tomate',usaMesPlantacion:false},
+       {id:'especialidades',nombre:'Especialidades',usaMesPlantacion:false},
+       {id:'pimenton',nombre:'Pimentón',usaMesPlantacion:true}];
+  // Cultivos que ya tiene abiertos este subjefe (para no duplicar)
+  const abiertos = getCiclosAbiertos(predioId,subjefe);
+  const cultivosOcupados = new Set(abiertos.map(c=>c.cultivo).filter(Boolean));
+  // Cultivos disponibles para abrir
+  const cultivosLibres = cultivos.filter(c=>!cultivosOcupados.has(c.id));
+  if(cultivosLibres.length===0){
+    toast('⚠️ Ya tienes un ciclo abierto por cada cultivo. Cierra alguno antes de abrir uno nuevo.');
+    return;
+  }
+  const mods = modulosFinca(predioId);
+  const añoActual = new Date().getFullYear();
+  const añoOpts = [añoActual-1, añoActual, añoActual+1].map(a=>`<option value="${a}"${a===añoActual?' selected':''}>${a}</option>`).join('');
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">🌱 Abrir ciclo — ${subjefe}</div>
-    <div class="modal-sub">Registra la fecha real de inicio. Puedes cerrarlo cuando termine el cultivo.</div>
-    <div class="form-row"><label>Temporada</label><select id="mTemp">${TORDER.map(k=>`<option value="${k}">${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
+    <div class="modal-sub">Elige cultivo, época (o mes de plantación si es pimentón) y los módulos donde se cultivará.</div>
+    <div class="form-row"><label>Cultivo</label>
+      <select id="mCul" onchange="mAbrirToggleCampos()">
+        ${cultivosLibres.map(c=>`<option value="${c.id}">${CICONS[c.id]||''} ${c.nombre||CNAMES[c.id]||c.id}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-row" id="rowTemp"><label>Época</label>
+      <select id="mTemp">${TORDER.map(k=>`<option value="${k}">${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select>
+    </div>
+    <div class="form-row" id="rowMes" style="display:none"><label>Mes de plantación</label>
+      <div style="display:flex;gap:8px">
+        <select id="mMes" style="flex:1">${MESES.map((m,i)=>`<option value="${i+1}">${m}</option>`).join('')}</select>
+        <select id="mAño" style="flex:1">${añoOpts}</select>
+      </div>
+    </div>
     <div class="form-row"><label>Fecha de inicio</label><input type="date" id="mIni" value="${todayIso}"></div>
-    <div class="form-row"><label>Superficie (m²)</label><input type="number" id="mM2" placeholder="Ej: 5000" min="0"></div>
-    <div class="form-row"><label>Notas</label><input type="text" id="mNot" placeholder="Ej: Plantación 3ª semana diciembre"></div>
+    <div class="form-row"><label>Módulos</label>
+      ${mods.length
+        ? `<div id="mMods" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;border:1px solid var(--sand);border-radius:8px;background:var(--cream)">
+            ${mods.map(m=>`<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:3px 8px;background:#fff;border:1px solid var(--sand);border-radius:6px;cursor:pointer"><input type="checkbox" value="${m}" style="margin:0">${m}</label>`).join('')}
+           </div>`
+        : `<div style="font-size:11px;color:var(--muted);padding:6px 0">No hay módulos cargados para esta finca.</div>`}
+    </div>
+    <div class="form-row"><label>Superficie (m²) <span style="font-weight:400;text-transform:none;color:var(--muted)">(opcional)</span></label><input type="number" id="mM2" placeholder="Ej: 5000" min="0"></div>
+    <div class="form-row"><label>Notas <span style="font-weight:400;text-transform:none;color:var(--muted)">(opcional)</span></label><input type="text" id="mNot" placeholder="Ej: Plantación 3ª semana diciembre"></div>
     <button class="btn btn-primary" onclick="guardarApertura('${predioId}','${subjefe}')">Abrir ciclo</button>`;
   document.getElementById('overlay').classList.add('open');
+  mAbrirToggleCampos();
+}
+// Muestra/oculta campos del modal de abrir ciclo según cultivo elegido.
+function mAbrirToggleCampos(){
+  const cul = document.getElementById('mCul');
+  if(!cul) return;
+  const c = cultivosCache.find(x=>x.id===cul.value);
+  const usaMes = (c && c.usaMesPlantacion) || cul.value==='pimenton';
+  document.getElementById('rowTemp').style.display = usaMes ? 'none' : '';
+  document.getElementById('rowMes').style.display  = usaMes ? '' : 'none';
 }
 async function guardarApertura(predioId,subjefe){
-  const temp=document.getElementById('mTemp').value,ini=document.getElementById('mIni').value,notas=document.getElementById('mNot').value.trim();
-  const m2=parseInt(document.getElementById('mM2').value)||0;
+  const cultivo = document.getElementById('mCul').value;
+  const ini = document.getElementById('mIni').value;
+  const notas = document.getElementById('mNot').value.trim();
+  const m2 = parseInt(document.getElementById('mM2').value)||0;
+  // Módulos seleccionados
+  const modBox = document.getElementById('mMods');
+  const modulos = modBox
+    ? Array.from(modBox.querySelectorAll('input[type=checkbox]:checked')).map(x=>x.value)
+    : [];
+  if(!cultivo){toast('⚠️ Elige cultivo');return}
   if(!ini){toast('⚠️ Ingresa fecha de inicio');return}
+  if(!modulos.length){toast('⚠️ Selecciona al menos un módulo');return}
+  // Determinar campos según cultivo
+  const cultMeta = cultivosCache.find(c=>c.id===cultivo);
+  const usaMes = (cultMeta && cultMeta.usaMesPlantacion) || cultivo==='pimenton';
+  const data = { cultivo, inicio:ini, fin:null, notas, superficieM2:m2,
+                 modulos, creadoPor:currentUser.uid, ts:Date.now() };
+  if(usaMes){
+    const mes = parseInt(document.getElementById('mMes').value);
+    const año = parseInt(document.getElementById('mAño').value);
+    data.mesPlantacion = { mes, año };
+  } else {
+    data.temporada = document.getElementById('mTemp').value;
+  }
+  // Verificar duplicados (mismo cultivo+temporada o cultivo+mes-año abierto)
+  const abiertos = getCiclosAbiertos(predioId,subjefe);
+  const dup = abiertos.find(c=>{
+    if(c.cultivo!==cultivo) return false;
+    if(usaMes) return c.mesPlantacion && c.mesPlantacion.mes===data.mesPlantacion.mes && c.mesPlantacion.año===data.mesPlantacion.año;
+    return c.temporada===data.temporada;
+  });
+  if(dup){toast('⚠️ Ya existe un ciclo abierto con ese cultivo y época/mes');return}
   loading(true,'Guardando ciclo…');
   try{
-    await colCiclos(predioId,subjefe).add({temporada:temp,inicio:ini,fin:null,notas,superficieM2:m2,creadoPor:currentUser.uid,ts:Date.now()});
+    await colCiclos(predioId,subjefe).add(data);
     closeModal();toast('✅ Ciclo abierto');
   }catch(e){toast('Error: '+e.message)}
   loading(false);
@@ -1344,8 +1450,11 @@ async function modalCerrarCiclo(predioId,subjefe,cicloId){
   const c=(ciclosCache[subjefe]||[]).find(x=>x.id===cicloId);if(!c)return;
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">🔒 Cerrar ciclo — ${subjefe}</div>
-    <div style="margin-bottom:14px"><span class="tbadge tb-${c.temporada}">${TICONS[c.temporada]} ${TNAMES[c.temporada]}</span>
-    <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-top:6px">Inició el ${fDMY(c.inicio)}</div></div>
+    <div style="margin-bottom:14px">
+      <div style="font-weight:600;font-size:13px;margin-bottom:4px">${cicloLabel(c)}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">${modulosLabel(c.modulos)}</div>
+      <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);margin-top:4px">Inició el ${fDMY(c.inicio)}</div>
+    </div>
     <div class="form-row"><label>Fecha de cierre</label><input type="date" id="mFin" value="${todayIso}" min="${c.inicio}"></div>
     <div class="form-row"><label>Notas de cierre</label><input type="text" id="mNot2" placeholder="Ej: Terminó 2ª semana diciembre"></div>
     <button class="btn btn-warn" onclick="guardarCierre('${predioId}','${subjefe}','${cicloId}')">Registrar cierre</button>`;
@@ -1365,24 +1474,92 @@ async function guardarCierre(predioId,subjefe,cicloId){
 }
 async function modalEditarCiclo(predioId,subjefe,cicloId){
   const c=(ciclosCache[subjefe]||[]).find(x=>x.id===cicloId);if(!c)return;
+  // Cultivos: si el ciclo no tiene cultivo (legacy), permitir asignarle uno
+  const cultivos = cultivosCache.length
+    ? cultivosCache
+    : [{id:'tomate',nombre:'Tomate',usaMesPlantacion:false},
+       {id:'especialidades',nombre:'Especialidades',usaMesPlantacion:false},
+       {id:'pimenton',nombre:'Pimentón',usaMesPlantacion:true}];
+  const mods = modulosFinca(predioId);
+  const cMods = c.modulos || [];
+  const añoActual = new Date().getFullYear();
+  const añoOpts = [añoActual-2, añoActual-1, añoActual, añoActual+1].map(a=>{
+    const sel = c.mesPlantacion && c.mesPlantacion.año===a ? ' selected' : '';
+    return `<option value="${a}"${sel}>${a}</option>`;
+  }).join('');
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">✏️ Editar ciclo — ${subjefe}</div>
-    <div class="form-row"><label>Temporada</label><select id="mTemp">${TORDER.map(k=>`<option value="${k}"${c.temporada===k?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
+    <div class="form-row"><label>Cultivo</label>
+      <select id="mCul" onchange="mEditarToggleCampos()">
+        ${cultivos.map(x=>`<option value="${x.id}"${c.cultivo===x.id?' selected':''}>${CICONS[x.id]||''} ${x.nombre||CNAMES[x.id]||x.id}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-row" id="rowTemp"><label>Época</label>
+      <select id="mTemp">${TORDER.map(k=>`<option value="${k}"${c.temporada===k?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select>
+    </div>
+    <div class="form-row" id="rowMes" style="display:none"><label>Mes de plantación</label>
+      <div style="display:flex;gap:8px">
+        <select id="mMes" style="flex:1">${MESES.map((m,i)=>{
+          const sel = c.mesPlantacion && c.mesPlantacion.mes===(i+1) ? ' selected' : '';
+          return `<option value="${i+1}"${sel}>${m}</option>`;
+        }).join('')}</select>
+        <select id="mAño" style="flex:1">${añoOpts}</select>
+      </div>
+    </div>
     <div class="form-row"><label>Fecha inicio</label><input type="date" id="mIni" value="${c.inicio}"></div>
     <div class="form-row"><label>Fecha cierre <span style="font-weight:400;text-transform:none">(vacío = en curso)</span></label><input type="date" id="mFin" value="${c.fin||''}"></div>
+    <div class="form-row"><label>Módulos</label>
+      ${mods.length
+        ? `<div id="mMods" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;border:1px solid var(--sand);border-radius:8px;background:var(--cream)">
+            ${mods.map(m=>{
+              const checked = cMods.includes(m) ? ' checked' : '';
+              return `<label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:3px 8px;background:#fff;border:1px solid var(--sand);border-radius:6px;cursor:pointer"><input type="checkbox" value="${m}"${checked} style="margin:0">${m}</label>`;
+            }).join('')}
+           </div>`
+        : `<div style="font-size:11px;color:var(--muted);padding:6px 0">No hay módulos cargados para esta finca.</div>`}
+    </div>
     <div class="form-row"><label>Superficie (m²)</label><input type="number" id="mM2" placeholder="Ej: 5000" min="0" value="${c.superficieM2||''}"></div>
     <div class="form-row"><label>Notas</label><input type="text" id="mNot" value="${c.notas||''}"></div>
     <button class="btn btn-primary" onclick="guardarEdicionCiclo('${predioId}','${subjefe}','${cicloId}')">Guardar</button>`;
   document.getElementById('overlay').classList.add('open');
+  mEditarToggleCampos();
+}
+function mEditarToggleCampos(){
+  const cul = document.getElementById('mCul');
+  if(!cul) return;
+  const c = cultivosCache.find(x=>x.id===cul.value);
+  const usaMes = (c && c.usaMesPlantacion) || cul.value==='pimenton';
+  document.getElementById('rowTemp').style.display = usaMes ? 'none' : '';
+  document.getElementById('rowMes').style.display  = usaMes ? '' : 'none';
 }
 async function guardarEdicionCiclo(predioId,subjefe,cicloId){
-  const temp=document.getElementById('mTemp').value,ini=document.getElementById('mIni').value,fin=document.getElementById('mFin').value||null,notas=document.getElementById('mNot').value.trim();
-  const m2=parseInt(document.getElementById('mM2').value)||0;
+  const cultivo = document.getElementById('mCul').value;
+  const ini = document.getElementById('mIni').value;
+  const fin = document.getElementById('mFin').value || null;
+  const notas = document.getElementById('mNot').value.trim();
+  const m2 = parseInt(document.getElementById('mM2').value)||0;
+  const modBox = document.getElementById('mMods');
+  const modulos = modBox
+    ? Array.from(modBox.querySelectorAll('input[type=checkbox]:checked')).map(x=>x.value)
+    : [];
+  if(!cultivo){toast('⚠️ Elige cultivo');return}
   if(!ini){toast('⚠️ Fecha de inicio obligatoria');return}
-  if(fin&&fin<ini){toast('⚠️ El cierre debe ser posterior al inicio');return}
+  if(fin && fin<ini){toast('⚠️ El cierre debe ser posterior al inicio');return}
+  if(!modulos.length){toast('⚠️ Selecciona al menos un módulo');return}
+  const cultMeta = cultivosCache.find(c=>c.id===cultivo);
+  const usaMes = (cultMeta && cultMeta.usaMesPlantacion) || cultivo==='pimenton';
+  const upd = { cultivo, inicio:ini, fin, notas, superficieM2:m2, modulos };
+  if(usaMes){
+    upd.mesPlantacion = { mes: parseInt(document.getElementById('mMes').value),
+                          año: parseInt(document.getElementById('mAño').value) };
+    upd.temporada = firebase.firestore.FieldValue.delete();
+  } else {
+    upd.temporada = document.getElementById('mTemp').value;
+    upd.mesPlantacion = firebase.firestore.FieldValue.delete();
+  }
   loading(true,'Actualizando…');
   try{
-    await colCiclos(predioId,subjefe).doc(cicloId).update({temporada:temp,inicio:ini,fin,notas,superficieM2:m2});
+    await colCiclos(predioId,subjefe).doc(cicloId).update(upd);
     closeModal();toast('✅ Ciclo actualizado');
   }catch(e){toast('Error: '+e.message)}
   loading(false);
@@ -1448,7 +1625,16 @@ async function renderProg(){
   newBtnDiv.innerHTML=`<button class="btn btn-secondary" style="margin-top:4px" onclick="openModalNuevaProg('${subjefe}','${mondayIso}')">✏️ Editar programación</button>`;
   contentDiv.innerHTML='';
   progDays.forEach(dayIso=>{
-    const tasks=(prog.dias||{})[dayIso]||[];
+    // Compatibilidad: el día puede venir como array (formato viejo) o como objeto {cicloId, labores}
+    const datoDia = (prog.dias||{})[dayIso];
+    let cicloId=null, tasks=[];
+    if(Array.isArray(datoDia)){
+      tasks = datoDia.map(t=>({...t, modulos: t.modulo?[t.modulo]:[]}));
+    } else if(datoDia){
+      cicloId = datoDia.cicloId || null;
+      tasks = (datoDia.labores||[]).map(t=>({...t, modulos: Array.isArray(t.modulos)?t.modulos:(t.modulo?[t.modulo]:[])}));
+    }
+    const ciclo = cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===cicloId) : null;
     const dayName=progDayName(mondayIso,dayIso);
     const isToday=dayIso===todayIso;
     let realEntries=rCache.filter(r=>r.fecha===dayIso&&pWs().some(w=>w.id===r.workerId&&w.subjefe===subjefe));
@@ -1459,12 +1645,13 @@ async function renderProg(){
       const realMesas=realEntries.reduce((s,e)=>{const ls=e.labores||[{laborId:e.laborId,mesas:e.mesas||0}];return s+ls.filter(lr=>lr.laborId===t.laborId).reduce((ss,lr)=>ss+(lr.mesas||0),0)},0);
       const pct=t.metaMesas>0?Math.min(100,Math.round(realMesas/t.metaMesas*100)):null;
       const bc=pct===null?'var(--green)':pct>=100?'var(--c-primor)':pct>=60?'#F4A261':'var(--red)';
+      const modsTxt = (t.modulos&&t.modulos.length) ? t.modulos.join(',') : '—';
       return `<div class="prog-task">
         <div class="prog-task-num">${i+1}.</div>
         <div class="prog-task-info">
           <div class="prog-task-labor">${l?`<span style="color:var(--muted);font-family:'DM Mono',monospace">${t.laborId}.</span> ${l.d}`:'—'}</div>
           <div class="prog-task-meta">
-            <span class="prog-tag ptag-mod">📦 Módulo ${t.modulo||'—'}</span>
+            <span class="prog-tag ptag-mod">📦 Módulo ${modsTxt}</span>
             ${t.metaMesas?`<span class="prog-tag ptag-meta">🎯 ${t.metaMesas} mesas</span>`:''}
             ${realMesas?`<span class="prog-tag ptag-real">✅ ${realMesas} real</span>`:''}
           </div>
@@ -1473,10 +1660,16 @@ async function renderProg(){
         </div>
       </div>`;
     }).join(''):`<div class="prog-empty-day">Sin tareas programadas</div>`;
+    const cicloBadge = ciclo
+      ? `<span class="tbadge tb-${ciclo.temporada||'none'}" style="font-size:10px;padding:2px 8px">${cicloLabel(ciclo)}</span>`
+      : '';
     card.innerHTML=`<div class="prog-day-hdr">
       <div><div class="prog-day-name">${dayName}${isToday?' <span style="font-size:9px;background:var(--green);color:#fff;padding:1px 6px;border-radius:10px;vertical-align:middle">Hoy</span>':''}</div>
       <div class="prog-day-date">${fDMY(dayIso)}</div></div>
-      ${tasks.length?`<span class="badge" style="background:var(--sand);color:var(--dark)">${tasks.length} tarea${tasks.length>1?'s':''}</span>`:''}
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+        ${cicloBadge}
+        ${tasks.length?`<span class="badge" style="background:var(--sand);color:var(--dark)">${tasks.length} tarea${tasks.length>1?'s':''}</span>`:''}
+      </div>
     </div><div class="prog-day-body">${tasksHTML}</div>`;
     contentDiv.appendChild(card);
   });
@@ -1485,51 +1678,156 @@ async function renderProg(){
 function openModalNuevaProg(subjefe,mondayIso){
   const progDays=getProgDays(mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
+  // Estado interno: {predioId, subjefe, mondayIso, dias: { iso: {cicloId, labores:[]} }}
   window._progEdit={predioId:activePred,subjefe,mondayIso,dias:{}};
-  progDays.forEach(iso=>{window._progEdit.dias[iso]=[];});
+  progDays.forEach(iso=>{window._progEdit.dias[iso]={cicloId:null,labores:[]};});
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">📋 Programación — ${subjefe}</div>
     <div class="modal-sub">Semana del ${fDMY(mondayIso)}</div>
     <div id="progModalDias"></div>
     <button class="btn btn-primary" onclick="saveProgModal()">Guardar programación</button>`;
   renderProgModalDias(progDays,dayNames);
-  // load existing if any
+  // Cargar programación existente si la hay
   colProg(activePred,subjefe).doc(mondayIso).get().then(snap=>{
     if(snap.exists){
       const data=snap.data();
-      progDays.forEach(iso=>{window._progEdit.dias[iso]=(data.dias||{})[iso]||[];});
+      progDays.forEach(iso=>{
+        const dato=(data.dias||{})[iso];
+        if(!dato){ window._progEdit.dias[iso]={cicloId:null,labores:[]}; return; }
+        // Compatibilidad: si es array (formato viejo), convertir a nuevo formato
+        if(Array.isArray(dato)){
+          const labores=dato.map(t=>({
+            laborId:t.laborId,
+            modulos: t.modulo ? [String(t.modulo).replace(/^MOD\s*/i,'').trim()] : [],
+            metaMesas:t.metaMesas||0,
+            notas:t.notas||''
+          }));
+          window._progEdit.dias[iso]={cicloId:null,labores};
+        } else {
+          window._progEdit.dias[iso]={
+            cicloId: dato.cicloId||null,
+            labores: (dato.labores||[]).map(t=>({
+              laborId:t.laborId,
+              modulos: Array.isArray(t.modulos)?t.modulos:(t.modulo?[t.modulo]:[]),
+              metaMesas:t.metaMesas||0,
+              notas:t.notas||''
+            }))
+          };
+        }
+      });
       renderProgModalDias(progDays,dayNames);
     }
   });
   document.getElementById('overlay').classList.add('open');
 }
+
+// Devuelve los ciclos disponibles para programar este día (abiertos hoy o que estuvieron abiertos ese día).
+// Solo se permiten ciclos que tengan cultivo asignado (los legacy sin cultivo se ignoran).
+function getCiclosParaProg(predioId,subjefe,dayIso){
+  const cs=ciclosCache[subjefe]||[];
+  return cs.filter(c=>c.cultivo && c.inicio<=dayIso && (c.fin===null || c.fin>=dayIso));
+}
+
 function renderProgModalDias(progDays,dayNames){
   const cont=document.getElementById('progModalDias');if(!cont)return;
+  const subjefe=window._progEdit.subjefe, predioId=window._progEdit.predioId;
   cont.innerHTML=progDays.map((dayIso,di)=>{
-    const tasks=window._progEdit.dias[dayIso]||[];
+    const dia=window._progEdit.dias[dayIso]||{cicloId:null,labores:[]};
+    const ciclosDisp=getCiclosParaProg(predioId,subjefe,dayIso);
+    // Si solo hay un ciclo disponible y no está elegido, preseleccionarlo
+    if(!dia.cicloId && ciclosDisp.length===1){ dia.cicloId=ciclosDisp[0].id; }
+    const ciclo=dia.cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===dia.cicloId) : null;
+    const ciclosOpts = `<option value="">— Seleccionar ciclo —</option>` +
+      ciclosDisp.map(c=>`<option value="${c.id}"${dia.cicloId===c.id?' selected':''}>${cicloLabel(c)} · M:${(c.modulos||[]).join(',')||'—'}</option>`).join('');
+    const sinCiclos = ciclosDisp.length===0;
     return `<div style="margin-bottom:14px">
       <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:13px;color:var(--dark);margin-bottom:6px;display:flex;align-items:center;gap:6px">
         ${dayNames[di]} <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-weight:400">${fDMY(dayIso)}</span>
       </div>
-      <div id="ptasks-${dayIso}">${tasks.map((t,ti)=>progTaskFormHTML(dayIso,ti,t)).join('')}</div>
-      <button class="btn btn-secondary" style="padding:7px;font-size:11px;margin-top:4px" onclick="addProgTask('${dayIso}')">＋ Tarea</button>
+      <div class="form-row" style="margin-bottom:6px"><label>Ciclo</label>
+        ${sinCiclos
+          ? `<div style="font-size:11px;color:var(--red);padding:6px 0">Sin ciclos abiertos para este día. Ábrelo en CICLOS.</div>`
+          : `<select onchange="setProgCycle('${dayIso}',this.value)">${ciclosOpts}</select>`}
+      </div>
+      <div id="ptasks-${dayIso}">${dia.labores.map((t,ti)=>progTaskFormHTML(dayIso,ti,t,ciclo)).join('')}</div>
+      ${(!sinCiclos && dia.cicloId)
+        ? `<button class="btn btn-secondary" style="padding:7px;font-size:11px;margin-top:4px" onclick="addProgTask('${dayIso}')">＋ Tarea</button>`
+        : ''}
     </div><div style="height:1px;background:var(--sand);margin:4px 0 14px"></div>`;
   }).join('');
 }
-function progTaskFormHTML(dayIso,ti,t={}){
+
+function progTaskFormHTML(dayIso,ti,t={},ciclo=null){
+  const modulosCiclo = ciclo && Array.isArray(ciclo.modulos) ? ciclo.modulos : [];
+  const tMods = Array.isArray(t.modulos) ? t.modulos : [];
+  const modsHTML = modulosCiclo.length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1px solid var(--sand);border-radius:6px;background:var(--cream)">
+        ${modulosCiclo.map(m=>{
+          const checked = tMods.includes(m) ? ' checked' : '';
+          return `<label style="display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:2px 7px;background:#fff;border:1px solid var(--sand);border-radius:5px;cursor:pointer"><input type="checkbox" value="${m}"${checked} onchange="togglePTMod('${dayIso}',${ti},'${m}',this.checked)" style="margin:0">${m}</label>`;
+        }).join('')}
+       </div>`
+    : `<div style="font-size:11px;color:var(--muted);padding:4px 0">Selecciona un ciclo primero.</div>`;
   return `<div class="ptask-form" id="ptf-${dayIso}-${ti}">
     <div class="ptask-form-hdr"><span class="ptask-form-num">Tarea ${ti+1}</span><button class="del-btn" onclick="rmProgTask('${dayIso}',${ti})">✕</button></div>
     <div class="form-row"><label>Labor</label><select onchange="updPT('${dayIso}',${ti},'laborId',parseInt(this.value))"><option value="">— Seleccionar —</option>${LABORES.filter(l=>!l.hidden).map(l=>`<option value="${l.id}"${t.laborId===l.id?' selected':''}>${l.id}. ${l.d}</option>`).join('')}</select></div>
-    <div class="form-grid">
-      <div><label>Módulo</label><input type="text" placeholder="MOD 7" value="${t.modulo||''}" onchange="updPT('${dayIso}',${ti},'modulo',this.value)"></div>
-      <div><label>Meta mesas</label><input type="number" placeholder="120" min="0" value="${t.metaMesas||''}" onchange="updPT('${dayIso}',${ti},'metaMesas',parseInt(this.value)||0)"></div>
-    </div>
-    <div><label>Notas</label><input type="text" placeholder="Indicaciones…" value="${t.notas||''}" onchange="updPT('${dayIso}',${ti},'notas',this.value)"></div>
+    <div class="form-row"><label>Módulos</label>${modsHTML}</div>
+    <div class="form-row"><label>Meta mesas</label><input type="number" placeholder="120" min="0" value="${t.metaMesas||''}" onchange="updPT('${dayIso}',${ti},'metaMesas',parseInt(this.value)||0)"></div>
+    <div class="form-row"><label>Notas</label><input type="text" placeholder="Indicaciones…" value="${t.notas||''}" onchange="updPT('${dayIso}',${ti},'notas',this.value)"></div>
   </div>`;
 }
-function addProgTask(dayIso){if(!window._progEdit.dias[dayIso])window._progEdit.dias[dayIso]=[];window._progEdit.dias[dayIso].push({laborId:null,modulo:'',metaMesas:0,notas:''});const c=document.getElementById(`ptasks-${dayIso}`);if(c)c.innerHTML=window._progEdit.dias[dayIso].map((t,ti)=>progTaskFormHTML(dayIso,ti,t)).join('');}
-function rmProgTask(dayIso,ti){window._progEdit.dias[dayIso].splice(ti,1);const c=document.getElementById(`ptasks-${dayIso}`);if(c)c.innerHTML=window._progEdit.dias[dayIso].map((t,i)=>progTaskFormHTML(dayIso,i,t)).join('');}
-function updPT(dayIso,ti,field,value){if(window._progEdit.dias[dayIso][ti])window._progEdit.dias[dayIso][ti][field]=value;}
+
+// Cambia el ciclo asignado al día y resetea los módulos de las tareas (porque pueden no aplicar al nuevo ciclo).
+function setProgCycle(dayIso,cicloId){
+  const dia = window._progEdit.dias[dayIso];
+  if(!dia) return;
+  dia.cicloId = cicloId || null;
+  // Filtrar módulos de las tareas dejando solo los que existen en el nuevo ciclo
+  const subjefe = window._progEdit.subjefe;
+  const ciclo = cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===cicloId) : null;
+  const validMods = ciclo && Array.isArray(ciclo.modulos) ? ciclo.modulos : [];
+  dia.labores.forEach(t=>{
+    t.modulos = (t.modulos||[]).filter(m=>validMods.includes(m));
+  });
+  // Re-render del día
+  const progDays=getProgDays(window._progEdit.mondayIso);
+  const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
+  renderProgModalDias(progDays,dayNames);
+}
+
+function addProgTask(dayIso){
+  const dia = window._progEdit.dias[dayIso];
+  if(!dia) return;
+  if(!dia.cicloId){ toast('⚠️ Selecciona primero un ciclo para este día'); return; }
+  dia.labores.push({laborId:null,modulos:[],metaMesas:0,notas:''});
+  // Re-render del día
+  const progDays=getProgDays(window._progEdit.mondayIso);
+  const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
+  renderProgModalDias(progDays,dayNames);
+}
+function rmProgTask(dayIso,ti){
+  const dia = window._progEdit.dias[dayIso];
+  if(!dia) return;
+  dia.labores.splice(ti,1);
+  const progDays=getProgDays(window._progEdit.mondayIso);
+  const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
+  renderProgModalDias(progDays,dayNames);
+}
+function updPT(dayIso,ti,field,value){
+  const dia = window._progEdit.dias[dayIso];
+  if(!dia || !dia.labores[ti]) return;
+  dia.labores[ti][field]=value;
+}
+function togglePTMod(dayIso,ti,modulo,checked){
+  const dia = window._progEdit.dias[dayIso];
+  if(!dia || !dia.labores[ti]) return;
+  if(!Array.isArray(dia.labores[ti].modulos)) dia.labores[ti].modulos=[];
+  const arr = dia.labores[ti].modulos;
+  const idx = arr.indexOf(modulo);
+  if(checked && idx===-1) arr.push(modulo);
+  if(!checked && idx>=0) arr.splice(idx,1);
+}
+
 async function saveProgModal(){
   const {predioId,subjefe,mondayIso,dias}=window._progEdit;
   loading(true,'Guardando programación…');
@@ -1559,7 +1857,13 @@ async function renderConfig(){
         </div>
       </div>
       <div style="padding:9px 14px;background:var(--white)">
-        ${p.subjefes.map(s=>{const c=getCicloEn(pid,s);return`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span class="stag">👤 ${s}</span>${c?`<span class="tbadge tb-${c.temporada}" style="font-size:9px;padding:2px 7px">${TICONS[c.temporada]} ${TNAMES[c.temporada]}${c.fin===null?' ●':''}</span>`:''}</div>`;}).join('')}
+        ${p.subjefes.map(s=>{
+          const abiertos=getCiclosAbiertos(pid,s);
+          const badges = abiertos.length
+            ? abiertos.map(c=>`<span class="tbadge tb-${c.temporada||'none'}" style="font-size:9px;padding:2px 7px">${cicloLabel(c)} ●</span>`).join(' ')
+            : '';
+          return `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:4px"><span class="stag">👤 ${s}</span>${badges}</div>`;
+        }).join('')}
       </div>
     </div>`;
   }).join('');
@@ -1582,12 +1886,11 @@ async function renderConfig(){
 async function addW(){
   if(!isAdmin()){toast('Solo el administrador puede agregar trabajadores');return}
   const n=document.getElementById('nN').value.trim(),c=document.getElementById('nC').value.trim(),s=document.getElementById('nS').value,p=parseInt(document.getElementById('nP').value)||0;
-  const cul=document.getElementById('nCul')?document.getElementById('nCul').value:'tomate';
   if(!n){toast('⚠️ Ingresa un nombre');return}
   loading(true,'Guardando…');
   try{
-    const ref=await colWorkers(activePred).add({nombre:n,codigo:c,subjefe:s,plantas:p,cultivo:cul});
-    wMap[activePred].push({id:ref.id,nombre:n,codigo:c,subjefe:s,plantas:p,cultivo:cul});
+    const ref=await colWorkers(activePred).add({nombre:n,codigo:c,subjefe:s,plantas:p});
+    wMap[activePred].push({id:ref.id,nombre:n,codigo:c,subjefe:s,plantas:p});
     ['nN','nC','nP'].forEach(id=>document.getElementById(id).value='');
     populateSels();renderConfig();toast('✅ Trabajador agregado');
   }catch(e){toast('Error: '+e.message)}
