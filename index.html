@@ -498,6 +498,7 @@ const DIAS=['Lunes','Martes','Miérc.','Jueves','Viernes'];
 const TNAMES={otono:'Otoño',invierno:'Invierno',primor:'Primor',trastomate:'Trastomate',verano:'Verano'};
 const TICONS={otono:'🍂',invierno:'❄️',primor:'🌱',trastomate:'🔄',verano:'☀️'};
 const TORDER=['otono','invierno','primor','trastomate','verano'];
+const MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const LABORES=[
   {id:1,d:"Cortar plantas en cuello"},{id:2,d:"Descolgar la planta"},{id:3,d:"Sacar plantas a pasillo central"},
   {id:4,d:"Remoción de residuo de cultivo"},{id:5,d:"Sacar el acolchado"},{id:6,d:"Levantar cintas de riego"},
@@ -581,6 +582,8 @@ let rCache     = [];   // registros of active predio
 let ciclosCache= {};   // {subjefe: [cycles]}
 let progCache  = {};   // {mondayIso: progDoc}
 let usersCache = [];   // all system users
+let cultivosCache = [];   // catálogo de cultivos desde Firestore: [{id,nombre,activo,usaMesPlantacion}]
+let modulosCache  = {};   // {fincaId: [módulos]} desde Firestore
 
 // Listeners to unsubscribe on predio change
 let unsubRegistros = null;
@@ -692,9 +695,30 @@ function bootApp(){
   // Restrict predio tabs for subjefes
   applyRoleUI();
 
+  // Load catálogos (cultivos, módulos) — non-blocking, the app doesn't wait for these
+  loadCatalogos();
+
   // Load data for default predio
   const startPredio = isAdmin()?'transito':(currentProfile.predioId||'transito');
   selPredio(startPredio);
+}
+
+// Carga los catálogos de Firestore al iniciar la sesión.
+// No bloquea: si falla, la app sigue funcionando con los valores por defecto del código.
+async function loadCatalogos(){
+  try{
+    const [cultSnap, modSnap] = await Promise.all([
+      db.collection('cultivos').get(),
+      db.collection('modulos').get()
+    ]);
+    cultivosCache = cultSnap.docs
+      .map(d=>({id:d.id, ...d.data()}))
+      .filter(c=>c.activo!==false);
+    modulosCache = {};
+    modSnap.docs.forEach(d=>{ modulosCache[d.id] = (d.data().items||[]); });
+  }catch(e){
+    console.warn('No se pudieron cargar catálogos de Firestore:', e.message);
+  }
 }
 
 function applyRoleUI(){
@@ -823,7 +847,13 @@ function populateSels(){
   const ns=document.getElementById('nS');
   if(ns)ns.innerHTML=p.subjefes.map(s=>`<option>${s}</option>`).join('');
   const nCul=document.getElementById('nCul');
-  if(nCul)nCul.innerHTML=(p.cultivos||['tomate']).map(c=>`<option value="${c}">${CICONS[c]||''} ${CNAMES[c]||c}</option>`).join('');
+  if(nCul){
+    // Usar el catálogo global de Firestore si está cargado; de lo contrario, fallback al hardcoded por finca
+    const opts = cultivosCache.length
+      ? cultivosCache.map(c=>({id:c.id, nombre:c.nombre||CNAMES[c.id]||c.id}))
+      : (p.cultivos||['tomate']).map(c=>({id:c, nombre:CNAMES[c]||c}));
+    nCul.innerHTML = opts.map(o=>`<option value="${o.id}">${CICONS[o.id]||''} ${o.nombre}</option>`).join('');
+  }
   ['fL'].forEach(sid=>{const sel=document.getElementById(sid);if(!sel)return;sel.innerHTML=`<option value="">Todas</option>`+LABORES.filter(l=>!l.hidden).map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')});
   onSubChange();
   initLaborRows();
