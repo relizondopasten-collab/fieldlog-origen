@@ -1625,16 +1625,22 @@ async function renderProg(){
   newBtnDiv.innerHTML=`<button class="btn btn-secondary" style="margin-top:4px" onclick="openModalNuevaProg('${subjefe}','${mondayIso}')">✏️ Editar programación</button>`;
   contentDiv.innerHTML='';
   progDays.forEach(dayIso=>{
-    // Compatibilidad: el día puede venir como array (formato viejo) o como objeto {cicloId, labores}
+    // Compatibilidad con varios formatos de almacenamiento
     const datoDia = (prog.dias||{})[dayIso];
-    let cicloId=null, tasks=[];
+    let tasks=[];
     if(Array.isArray(datoDia)){
-      tasks = datoDia.map(t=>({...t, modulos: t.modulo?[t.modulo]:[]}));
+      // Formato más viejo: array de tareas con t.modulo (string)
+      tasks = datoDia.map(t=>({...t, cicloId:null, modulos: t.modulo?[t.modulo]:[]}));
     } else if(datoDia){
-      cicloId = datoDia.cicloId || null;
-      tasks = (datoDia.labores||[]).map(t=>({...t, modulos: Array.isArray(t.modulos)?t.modulos:(t.modulo?[t.modulo]:[])}));
+      // Formato intermedio: {cicloId, labores} → propagar cicloId del día a cada labor
+      // Formato nuevo: {labores} con cicloId en cada labor
+      const cicloDelDia = datoDia.cicloId || null;
+      tasks = (datoDia.labores||[]).map(t=>({
+        ...t,
+        cicloId: t.cicloId || cicloDelDia,
+        modulos: Array.isArray(t.modulos)?t.modulos:(t.modulo?[t.modulo]:[])
+      }));
     }
-    const ciclo = cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===cicloId) : null;
     const dayName=progDayName(mondayIso,dayIso);
     const isToday=dayIso===todayIso;
     let realEntries=rCache.filter(r=>r.fecha===dayIso&&pWs().some(w=>w.id===r.workerId&&w.subjefe===subjefe));
@@ -1646,11 +1652,16 @@ async function renderProg(){
       const pct=t.metaMesas>0?Math.min(100,Math.round(realMesas/t.metaMesas*100)):null;
       const bc=pct===null?'var(--green)':pct>=100?'var(--c-primor)':pct>=60?'#F4A261':'var(--red)';
       const modsTxt = (t.modulos&&t.modulos.length) ? t.modulos.join(',') : '—';
+      const cicloT = t.cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===t.cicloId) : null;
+      const cicloBadgeTask = cicloT
+        ? `<span class="tbadge tb-${cicloT.temporada||'none'}" style="font-size:9px;padding:2px 7px">${cicloLabel(cicloT)}</span>`
+        : '';
       return `<div class="prog-task">
         <div class="prog-task-num">${i+1}.</div>
         <div class="prog-task-info">
           <div class="prog-task-labor">${l?`<span style="color:var(--muted);font-family:'DM Mono',monospace">${t.laborId}.</span> ${l.d}`:'—'}</div>
           <div class="prog-task-meta">
+            ${cicloBadgeTask}
             <span class="prog-tag ptag-mod">📦 Módulo ${modsTxt}</span>
             ${t.metaMesas?`<span class="prog-tag ptag-meta">🎯 ${t.metaMesas} mesas</span>`:''}
             ${realMesas?`<span class="prog-tag ptag-real">✅ ${realMesas} real</span>`:''}
@@ -1660,16 +1671,10 @@ async function renderProg(){
         </div>
       </div>`;
     }).join(''):`<div class="prog-empty-day">Sin tareas programadas</div>`;
-    const cicloBadge = ciclo
-      ? `<span class="tbadge tb-${ciclo.temporada||'none'}" style="font-size:10px;padding:2px 8px">${cicloLabel(ciclo)}</span>`
-      : '';
     card.innerHTML=`<div class="prog-day-hdr">
       <div><div class="prog-day-name">${dayName}${isToday?' <span style="font-size:9px;background:var(--green);color:#fff;padding:1px 6px;border-radius:10px;vertical-align:middle">Hoy</span>':''}</div>
       <div class="prog-day-date">${fDMY(dayIso)}</div></div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
-        ${cicloBadge}
-        ${tasks.length?`<span class="badge" style="background:var(--sand);color:var(--dark)">${tasks.length} tarea${tasks.length>1?'s':''}</span>`:''}
-      </div>
+      ${tasks.length?`<span class="badge" style="background:var(--sand);color:var(--dark)">${tasks.length} tarea${tasks.length>1?'s':''}</span>`:''}
     </div><div class="prog-day-body">${tasksHTML}</div>`;
     contentDiv.appendChild(card);
   });
@@ -1678,9 +1683,10 @@ async function renderProg(){
 function openModalNuevaProg(subjefe,mondayIso){
   const progDays=getProgDays(mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
-  // Estado interno: {predioId, subjefe, mondayIso, dias: { iso: {cicloId, labores:[]} }}
+  // Estado interno: {predioId, subjefe, mondayIso, dias: { iso: {labores:[]} }}
+  // Cada labor tiene su propio cicloId (puede haber tareas con ciclos distintos en el mismo día).
   window._progEdit={predioId:activePred,subjefe,mondayIso,dias:{}};
-  progDays.forEach(iso=>{window._progEdit.dias[iso]={cicloId:null,labores:[]};});
+  progDays.forEach(iso=>{window._progEdit.dias[iso]={labores:[]};});
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">📋 Programación — ${subjefe}</div>
     <div class="modal-sub">Semana del ${fDMY(mondayIso)}</div>
@@ -1693,21 +1699,24 @@ function openModalNuevaProg(subjefe,mondayIso){
       const data=snap.data();
       progDays.forEach(iso=>{
         const dato=(data.dias||{})[iso];
-        if(!dato){ window._progEdit.dias[iso]={cicloId:null,labores:[]}; return; }
-        // Compatibilidad: si es array (formato viejo), convertir a nuevo formato
+        if(!dato){ window._progEdit.dias[iso]={labores:[]}; return; }
+        // Compatibilidad 1: si es array (formato más viejo)
         if(Array.isArray(dato)){
           const labores=dato.map(t=>({
             laborId:t.laborId,
+            cicloId: null,
             modulos: t.modulo ? [String(t.modulo).replace(/^MOD\s*/i,'').trim()] : [],
             metaMesas:t.metaMesas||0,
             notas:t.notas||''
           }));
-          window._progEdit.dias[iso]={cicloId:null,labores};
+          window._progEdit.dias[iso]={labores};
         } else {
+          // Compatibilidad 2: si tiene cicloId a nivel de día, propagarlo a cada labor sin cicloId
+          const cicloDelDia = dato.cicloId || null;
           window._progEdit.dias[iso]={
-            cicloId: dato.cicloId||null,
             labores: (dato.labores||[]).map(t=>({
               laborId:t.laborId,
+              cicloId: t.cicloId || cicloDelDia,
               modulos: Array.isArray(t.modulos)?t.modulos:(t.modulo?[t.modulo]:[]),
               metaMesas:t.metaMesas||0,
               notas:t.notas||''
@@ -1721,45 +1730,39 @@ function openModalNuevaProg(subjefe,mondayIso){
   document.getElementById('overlay').classList.add('open');
 }
 
-// Devuelve los ciclos disponibles para programar este día (abiertos hoy o que estuvieron abiertos ese día).
-// Solo se permiten ciclos que tengan cultivo asignado (los legacy sin cultivo se ignoran).
+// Devuelve los ciclos disponibles para programar: solo los abiertos hoy con cultivo asignado.
+// Los ciclos ya cerrados no se pueden programar aunque hayan estado abiertos en la fecha del día.
 function getCiclosParaProg(predioId,subjefe,dayIso){
   const cs=ciclosCache[subjefe]||[];
-  return cs.filter(c=>c.cultivo && c.inicio<=dayIso && (c.fin===null || c.fin>=dayIso));
+  return cs.filter(c=>c.cultivo && c.fin===null);
 }
 
 function renderProgModalDias(progDays,dayNames){
   const cont=document.getElementById('progModalDias');if(!cont)return;
   const subjefe=window._progEdit.subjefe, predioId=window._progEdit.predioId;
+  const ciclosDisp = getCiclosParaProg(predioId,subjefe,null);
+  const sinCiclos = ciclosDisp.length===0;
   cont.innerHTML=progDays.map((dayIso,di)=>{
-    const dia=window._progEdit.dias[dayIso]||{cicloId:null,labores:[]};
-    const ciclosDisp=getCiclosParaProg(predioId,subjefe,dayIso);
-    // Si solo hay un ciclo disponible y no está elegido, preseleccionarlo
-    if(!dia.cicloId && ciclosDisp.length===1){ dia.cicloId=ciclosDisp[0].id; }
-    const ciclo=dia.cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===dia.cicloId) : null;
-    const ciclosOpts = `<option value="">— Seleccionar ciclo —</option>` +
-      ciclosDisp.map(c=>`<option value="${c.id}"${dia.cicloId===c.id?' selected':''}>${cicloLabel(c)} · M:${(c.modulos||[]).join(',')||'—'}</option>`).join('');
-    const sinCiclos = ciclosDisp.length===0;
+    const dia=window._progEdit.dias[dayIso]||{labores:[]};
     return `<div style="margin-bottom:14px">
       <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:13px;color:var(--dark);margin-bottom:6px;display:flex;align-items:center;gap:6px">
         ${dayNames[di]} <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-weight:400">${fDMY(dayIso)}</span>
       </div>
-      <div class="form-row" style="margin-bottom:6px"><label>Ciclo</label>
-        ${sinCiclos
-          ? `<div style="font-size:11px;color:var(--red);padding:6px 0">Sin ciclos abiertos para este día. Ábrelo en CICLOS.</div>`
-          : `<select onchange="setProgCycle('${dayIso}',this.value)">${ciclosOpts}</select>`}
-      </div>
-      <div id="ptasks-${dayIso}">${dia.labores.map((t,ti)=>progTaskFormHTML(dayIso,ti,t,ciclo)).join('')}</div>
-      ${(!sinCiclos && dia.cicloId)
-        ? `<button class="btn btn-secondary" style="padding:7px;font-size:11px;margin-top:4px" onclick="addProgTask('${dayIso}')">＋ Tarea</button>`
-        : ''}
+      <div id="ptasks-${dayIso}">${dia.labores.map((t,ti)=>progTaskFormHTML(dayIso,ti,t,ciclosDisp)).join('')}</div>
+      ${sinCiclos
+        ? `<div style="font-size:11px;color:var(--red);padding:6px 0">Sin ciclos abiertos. Ábrelo en CICLOS antes de programar.</div>`
+        : `<button class="btn btn-secondary" style="padding:7px;font-size:11px;margin-top:4px" onclick="addProgTask('${dayIso}')">＋ Tarea</button>`}
     </div><div style="height:1px;background:var(--sand);margin:4px 0 14px"></div>`;
   }).join('');
 }
 
-function progTaskFormHTML(dayIso,ti,t={},ciclo=null){
+function progTaskFormHTML(dayIso,ti,t={},ciclosDisp=[]){
+  const subjefe = window._progEdit.subjefe;
+  const ciclo = t.cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===t.cicloId) : null;
   const modulosCiclo = ciclo && Array.isArray(ciclo.modulos) ? ciclo.modulos : [];
   const tMods = Array.isArray(t.modulos) ? t.modulos : [];
+  const ciclosOpts = `<option value="">— Seleccionar ciclo —</option>` +
+    ciclosDisp.map(c=>`<option value="${c.id}"${t.cicloId===c.id?' selected':''}>${cicloLabel(c)} · M:${(c.modulos||[]).join(',')||'—'}</option>`).join('');
   const modsHTML = modulosCiclo.length
     ? `<div style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1px solid var(--sand);border-radius:6px;background:var(--cream)">
         ${modulosCiclo.map(m=>{
@@ -1770,6 +1773,7 @@ function progTaskFormHTML(dayIso,ti,t={},ciclo=null){
     : `<div style="font-size:11px;color:var(--muted);padding:4px 0">Selecciona un ciclo primero.</div>`;
   return `<div class="ptask-form" id="ptf-${dayIso}-${ti}">
     <div class="ptask-form-hdr"><span class="ptask-form-num">Tarea ${ti+1}</span><button class="del-btn" onclick="rmProgTask('${dayIso}',${ti})">✕</button></div>
+    <div class="form-row"><label>Ciclo</label><select onchange="setTaskCycle('${dayIso}',${ti},this.value)">${ciclosOpts}</select></div>
     <div class="form-row"><label>Labor</label><select onchange="updPT('${dayIso}',${ti},'laborId',parseInt(this.value))"><option value="">— Seleccionar —</option>${LABORES.filter(l=>!l.hidden).map(l=>`<option value="${l.id}"${t.laborId===l.id?' selected':''}>${l.id}. ${l.d}</option>`).join('')}</select></div>
     <div class="form-row"><label>Módulos</label>${modsHTML}</div>
     <div class="form-row"><label>Meta mesas</label><input type="number" placeholder="120" min="0" value="${t.metaMesas||''}" onchange="updPT('${dayIso}',${ti},'metaMesas',parseInt(this.value)||0)"></div>
@@ -1777,19 +1781,15 @@ function progTaskFormHTML(dayIso,ti,t={},ciclo=null){
   </div>`;
 }
 
-// Cambia el ciclo asignado al día y resetea los módulos de las tareas (porque pueden no aplicar al nuevo ciclo).
-function setProgCycle(dayIso,cicloId){
+// Cambia el ciclo de UNA tarea específica y limpia los módulos que ya no apliquen.
+function setTaskCycle(dayIso,ti,cicloId){
   const dia = window._progEdit.dias[dayIso];
-  if(!dia) return;
-  dia.cicloId = cicloId || null;
-  // Filtrar módulos de las tareas dejando solo los que existen en el nuevo ciclo
+  if(!dia || !dia.labores[ti]) return;
+  dia.labores[ti].cicloId = cicloId || null;
   const subjefe = window._progEdit.subjefe;
   const ciclo = cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===cicloId) : null;
   const validMods = ciclo && Array.isArray(ciclo.modulos) ? ciclo.modulos : [];
-  dia.labores.forEach(t=>{
-    t.modulos = (t.modulos||[]).filter(m=>validMods.includes(m));
-  });
-  // Re-render del día
+  dia.labores[ti].modulos = (dia.labores[ti].modulos||[]).filter(m=>validMods.includes(m));
   const progDays=getProgDays(window._progEdit.mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
   renderProgModalDias(progDays,dayNames);
@@ -1798,9 +1798,10 @@ function setProgCycle(dayIso,cicloId){
 function addProgTask(dayIso){
   const dia = window._progEdit.dias[dayIso];
   if(!dia) return;
-  if(!dia.cicloId){ toast('⚠️ Selecciona primero un ciclo para este día'); return; }
-  dia.labores.push({laborId:null,modulos:[],metaMesas:0,notas:''});
-  // Re-render del día
+  // Nueva tarea hereda el ciclo de la tarea anterior (si hay), para no repetir tanto
+  const ultima = dia.labores[dia.labores.length-1];
+  const cicloHerencia = ultima ? (ultima.cicloId||null) : null;
+  dia.labores.push({laborId:null, cicloId:cicloHerencia, modulos:[], metaMesas:0, notas:''});
   const progDays=getProgDays(window._progEdit.mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
   renderProgModalDias(progDays,dayNames);
