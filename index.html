@@ -39,6 +39,10 @@ const FIREBASE_CONFIG = {
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <!-- Chart.js para los gráficos de informes -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<!-- SheetJS (Excel) y jsPDF (PDF) para descargas de informes -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=Inter:wght@400;500;600&display=swap');
@@ -277,6 +281,9 @@ select:focus,input:focus{border-color:var(--green)}
 .inf-table tr.inc-row td{background:#FEF3C7}
 .inf-chartwrap{position:relative;height:240px;margin-top:10px}
 .inf-empty{text-align:center;padding:30px 10px;color:var(--muted);font-size:12px}
+.inf-hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.inf-dl{padding:5px 9px;border:1.5px solid var(--sand);background:var(--cream);border-radius:7px;font-size:10px;cursor:pointer;font-family:'Syne',sans-serif;font-weight:600;color:var(--dark);white-space:nowrap}
+.inf-dl:hover{border-color:var(--green)}
 </style>
 </head>
 <body>
@@ -431,6 +438,7 @@ select:focus,input:focus{border-color:var(--green)}
         <button class="inftab" data-tab="labores" onclick="switchInfTab('labores')">🔧 Labores</button>
         <button class="inftab" data-tab="inconsist" onclick="switchInfTab('inconsist')">⚠️ Inconsistencias</button>
       </div>
+      <button class="btn btn-secondary" style="margin-bottom:10px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Descargar Excel completo (4 hojas)</button>
       <div id="infContent"></div>
     </div>
   </div>
@@ -1127,12 +1135,12 @@ function toggleReemplazo(){
 // ══════════════════════════════════════════════
 // LABOR ROWS
 // ══════════════════════════════════════════════
-const MAX_LAB=4;
+const MAX_LAB=6;
 function laborOptsHTML(){return`<option value="">— Seleccionar —</option>`+LABORES.filter(l=>!l.hidden).map(l=>`<option value="${l.id}">${l.id}. ${l.d}</option>`).join('')}
 function initLaborRows(){const c=document.getElementById('laborRows');if(!c)return;c.innerHTML='';addLaborRow();}
 function addLaborRow(){
   const cont=document.getElementById('laborRows'),cur=cont.querySelectorAll('.labor-row').length;
-  if(cur>=MAX_LAB){toast('Máximo 4 labores por entrada');return}
+  if(cur>=MAX_LAB){toast('Máximo '+MAX_LAB+' labores por entrada');return}
   const idx=cur+1,row=document.createElement('div');row.className='labor-row';row.dataset.idx=idx;
   row.innerHTML=`<div class="labor-row-num"><span>Labor ${idx}</span>${idx>1?`<button class="rm-labor" onclick="rmLaborRow(this)">✕</button>`:''}</div>
     <div style="display:flex;gap:6px;align-items:flex-end;margin-bottom:6px">
@@ -2177,8 +2185,9 @@ async function createUser(){
 function closeModal(){document.getElementById('overlay').classList.remove('open')}
 
 
+
 // ══════════════════════════════════════════════
-// INFORMES (Fase 2)
+// INFORMES (Fase 2 + Fase 3: Excel y PDF)
 // ══════════════════════════════════════════════
 // Estado del módulo de informes (cache de la última consulta + tab activo + charts vivos)
 let infState = { data: null, tab: 'progreal', charts: {} };
@@ -2351,11 +2360,10 @@ function sumarRealEnDiaSubjefeLabor(registros, fecha, predio, subjefe, laborId){
 }
 
 // ─────────────────────────────────────────────
-// INFORME 1: Programado vs Real (por labor)
+// CÁLCULOS (compartidos entre pantalla y exportación)
 // ─────────────────────────────────────────────
-function renderInfProgVsReal(){
+function calcProgVsReal(){
   const { registros, programaciones, desde, hasta } = infState.data;
-  // Acumular por labor (sumando todas las tareas programadas y todos los registros reales del rango)
   const map = {}; // {laborId: {prog, real, horas}}
   programaciones.forEach(p=>{
     Object.entries(p.dias).forEach(([dia, dato])=>{
@@ -2370,7 +2378,6 @@ function renderInfProgVsReal(){
       });
     });
   });
-
   const rows = Object.entries(map).map(([laborId, v])=>{
     const l = LABORES.find(x=>x.id===parseInt(laborId));
     return {
@@ -2382,67 +2389,18 @@ function renderInfProgVsReal(){
       pct: v.prog > 0 ? Math.round(v.real / v.prog * 100) : null
     };
   }).sort((a,b)=> b.prog - a.prog);
-
   const totalProg = rows.reduce((s,r)=>s+r.prog, 0);
   const totalReal = rows.reduce((s,r)=>s+r.real, 0);
   const totalHoras = rows.reduce((s,r)=>s+r.horas, 0);
   const pctGlobal = totalProg > 0 ? Math.round(totalReal / totalProg * 100) : null;
-
-  let html = `<div class="inf-card">
-    <div class="inf-card-title">📊 Programado vs Real — por labor</div>
-    <div class="inf-summary">
-      <div class="inf-pill"><div class="inf-pill-label">Total prog.</div><div class="inf-pill-value">${totalProg.toLocaleString('es-CL')}</div></div>
-      <div class="inf-pill"><div class="inf-pill-label">Total real</div><div class="inf-pill-value">${totalReal.toLocaleString('es-CL')}</div></div>
-      <div class="inf-pill"><div class="inf-pill-label">Cumplimiento</div><div class="inf-pill-value">${pctGlobal===null?'—':pctGlobal+'%'}</div></div>
-      <div class="inf-pill"><div class="inf-pill-label">Total horas</div><div class="inf-pill-value">${totalHoras.toFixed(1)}</div></div>
-    </div>`;
-  if(!rows.length){
-    html += `<div class="inf-empty">No hay tareas programadas en el período.</div></div>`;
-    document.getElementById('infContent').innerHTML = html;
-    return;
-  }
-  html += `<table class="inf-table">
-    <thead><tr><th>Labor</th><th class="num">Prog.</th><th class="num">Real</th><th class="num">% cumpl.</th></tr></thead>
-    <tbody>${rows.map(r=>{
-      const pctTxt = r.pct===null ? '—' : `<span class="pct-bar"><span class="pct-fill" style="width:${Math.min(100,r.pct)}%"></span></span>${r.pct}%`;
-      return `<tr><td>${r.laborId}. ${r.labor}</td><td class="num">${r.prog}</td><td class="num">${r.real}</td><td class="num">${pctTxt}</td></tr>`;
-    }).join('')}</tbody>
-  </table>
-  <div class="inf-chartwrap"><canvas id="chartProgReal"></canvas></div>
-  </div>`;
-  document.getElementById('infContent').innerHTML = html;
-
-  // Gráfico: barras de prog vs real por labor (top 10)
-  const top = rows.slice(0, 10);
-  const ctx = document.getElementById('chartProgReal').getContext('2d');
-  infState.charts.progreal = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: top.map(r=>`${r.laborId}`),
-      datasets: [
-        { label:'Programado', data: top.map(r=>r.prog), backgroundColor:'#94a3b8' },
-        { label:'Real',       data: top.map(r=>r.real), backgroundColor:'#4ade80' }
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { position: 'bottom', labels:{ font:{ size:10 } } },
-        tooltip: { callbacks:{ title:(items)=>{ const r=top[items[0].dataIndex]; return `${r.laborId}. ${r.labor}`; } } }
-      },
-      scales: { y: { beginAtZero: true, ticks:{ font:{size:10} } }, x: { ticks:{ font:{size:10} } } }
-    }
-  });
+  return { rows, totalProg, totalReal, totalHoras, pctGlobal };
 }
 
-// ─────────────────────────────────────────────
-// INFORME 2: Rendimiento por trabajador
-// ─────────────────────────────────────────────
-function renderInfTrabajadores(){
-  const { registros, workers } = infState.data;
-  const map = {}; // {workerId: {nombre, subjefe, predio, mesas, horas, dias:Set, registros}}
+function calcTrabajadores(){
+  const { registros } = infState.data;
+  const map = {};
   registros.forEach(r=>{
-    if(r.ausente || r.licencia || r.vacaciones) return; // no cuentan en rendimiento
+    if(r.ausente || r.licencia || r.vacaciones) return;
     const w = r._worker || {};
     const key = r._predio + '|' + r.workerId;
     if(!map[key]) map[key] = {
@@ -2462,67 +2420,17 @@ function renderInfTrabajadores(){
   const rows = Object.values(map).map(v=>({
     ...v,
     diasTrabajados: v.dias.size,
-    promedioMesasDia: v.dias.size > 0 ? v.mesas / v.dias.size : 0,
-    promedioMesasHora: v.horas > 0 ? v.mesas / v.horas : 0
+    promedioMesasDia: v.dias.size > 0 ? v.mesas / v.dias.size : 0
   })).sort((a,b)=> b.mesas - a.mesas);
-
   const totalMesas = rows.reduce((s,r)=>s+r.mesas, 0);
   const totalHoras = rows.reduce((s,r)=>s+r.horas, 0);
-
-  let html = `<div class="inf-card">
-    <div class="inf-card-title">👤 Rendimiento por trabajador</div>
-    <div class="inf-summary">
-      <div class="inf-pill"><div class="inf-pill-label">Trabajadores</div><div class="inf-pill-value">${rows.length}</div></div>
-      <div class="inf-pill"><div class="inf-pill-label">Total mesas</div><div class="inf-pill-value">${totalMesas.toLocaleString('es-CL')}</div></div>
-      <div class="inf-pill"><div class="inf-pill-label">Total horas</div><div class="inf-pill-value">${totalHoras.toFixed(1)}</div></div>
-    </div>`;
-  if(!rows.length){
-    html += `<div class="inf-empty">No hay registros válidos en el período.</div></div>`;
-    document.getElementById('infContent').innerHTML = html;
-    return;
-  }
-  html += `<table class="inf-table">
-    <thead><tr><th>Trabajador</th><th>Subjefe</th><th class="num">Días</th><th class="num">Mesas</th><th class="num">Horas</th><th class="num">Mesas/día</th></tr></thead>
-    <tbody>${rows.map(r=>`<tr>
-      <td>${r.nombre}<div style="font-size:9px;color:var(--muted)">${r.predio}</div></td>
-      <td>${r.subjefe}</td>
-      <td class="num">${r.diasTrabajados}</td>
-      <td class="num">${r.mesas.toLocaleString('es-CL')}</td>
-      <td class="num">${r.horas.toFixed(1)}</td>
-      <td class="num">${r.promedioMesasDia.toFixed(1)}</td>
-    </tr>`).join('')}</tbody>
-  </table>
-  <div class="inf-chartwrap"><canvas id="chartTrab"></canvas></div>
-  </div>`;
-  document.getElementById('infContent').innerHTML = html;
-
-  // Gráfico: top 10 trabajadores por mesas
-  const top = rows.slice(0, 10);
-  const ctx = document.getElementById('chartTrab').getContext('2d');
-  infState.charts.trabajadores = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: top.map(r=>r.nombre.split(' ')[0]),
-      datasets: [{ label:'Mesas', data: top.map(r=>r.mesas), backgroundColor:'#4ade80' }]
-    },
-    options: {
-      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks:{ title:(items)=> top[items[0].dataIndex].nombre } }
-      },
-      scales: { x: { beginAtZero: true, ticks:{ font:{size:10} } }, y: { ticks:{ font:{size:10} } } }
-    }
-  });
+  return { rows, totalMesas, totalHoras };
 }
 
-// ─────────────────────────────────────────────
-// INFORME 3: Distribución de labores (con costos)
-// ─────────────────────────────────────────────
-function renderInfLabores(){
+function calcLabores(){
   const { registros } = infState.data;
   const cph = costoPorHora();
-  const map = {}; // {laborId: {mesas, horas, trabajadores:Set, registros}}
+  const map = {};
   registros.forEach(r=>{
     if(r.ausente || r.licencia || r.vacaciones) return;
     const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
@@ -2548,13 +2456,191 @@ function renderInfLabores(){
       costoPorMesa: v.mesas > 0 ? costoTotal / v.mesas : null
     };
   }).sort((a,b)=> b.horas - a.horas);
-
   const totalHoras = rows.reduce((s,r)=>s+r.horas, 0);
   const totalCosto = rows.reduce((s,r)=>s+r.costoTotal, 0);
   const totalMesas = rows.reduce((s,r)=>s+r.mesas, 0);
+  return { rows, totalHoras, totalCosto, totalMesas, cph };
+}
+
+function calcInconsistencias(){
+  const { registros } = infState.data;
+  const issues = [];
+  const porDiaTrab = {};
+  registros.forEach(r=>{
+    const w = r._worker || {};
+    const key = r.fecha + '|' + r._predio + '|' + r.workerId;
+    if(!porDiaTrab[key]) porDiaTrab[key] = { items: [], w, fecha: r.fecha, predio: r._predio };
+    porDiaTrab[key].items.push(r);
+  });
+  registros.forEach(r=>{
+    const w = r._worker || {};
+    const ctx = {
+      fecha: r.fecha,
+      trabajador: w.nombre || r.workerId,
+      subjefe: w.subjefe || '—',
+      predio: PREDIOS[r._predio] ? PREDIOS[r._predio].nombre : r._predio
+    };
+    if((r.ausente || r.licencia || r.vacaciones)){
+      const labs = r.labores || [];
+      const totalH = labs.reduce((s,l)=>s+(l.horas||0), 0) + (r.horas||0);
+      const totalM = labs.reduce((s,l)=>s+(l.mesas||0), 0) + (r.mesas||0);
+      if(totalH > 0 || totalM > 0){
+        issues.push({ ...ctx, tipo:'Ausente con datos', detalle:`Marcado ${r.ausente?'ausente':r.licencia?'licencia':'vacaciones'} pero tiene ${totalH}h y ${totalM} mesas` });
+      }
+      return;
+    }
+    const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
+    labs.forEach(l=>{
+      const lab = LABORES.find(x=>x.id===l.laborId);
+      const labNombre = lab ? `${l.laborId}. ${lab.d}` : `Labor ${l.laborId||'?'}`;
+      if((l.horas||0) > 0 && (l.mesas||0) === 0){
+        issues.push({ ...ctx, tipo:'Horas sin mesas', detalle:`${labNombre}: ${l.horas}h pero 0 mesas` });
+      }
+      if((l.mesas||0) > 0 && (l.horas||0) === 0){
+        issues.push({ ...ctx, tipo:'Mesas sin horas', detalle:`${labNombre}: ${l.mesas} mesas pero 0h` });
+      }
+    });
+  });
+  Object.values(porDiaTrab).forEach(g=>{
+    const totalH = g.items.reduce((s,r)=>{
+      if(r.ausente || r.licencia || r.vacaciones) return s;
+      const labs = r.labores || [{ horas: r.horas || 0 }];
+      return s + labs.reduce((ss,l)=>ss+(l.horas||0), 0);
+    }, 0);
+    if(totalH > 12){
+      issues.push({
+        fecha:g.fecha, trabajador: g.w.nombre || g.items[0].workerId, subjefe: g.w.subjefe || '—',
+        predio: PREDIOS[g.predio] ? PREDIOS[g.predio].nombre : g.predio,
+        tipo:'Jornada >12h', detalle:`Total del día: ${totalH.toFixed(1)} horas`
+      });
+    }
+  });
+  issues.sort((a,b)=> b.fecha.localeCompare(a.fecha));
+  return { issues };
+}
+
+// HTML de los botones de descarga de cada informe
+function infDlBtnsHTML(tab){
+  return `<div style="display:flex;gap:5px">
+    <button class="inf-dl" onclick="exportInfExcel('${tab}')">📥 Excel</button>
+    <button class="inf-dl" onclick="exportInfPDF('${tab}')">📄 PDF</button>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// INFORME 1: Programado vs Real (por labor)
+// ─────────────────────────────────────────────
+function renderInfProgVsReal(){
+  const { rows, totalProg, totalReal, totalHoras, pctGlobal } = calcProgVsReal();
 
   let html = `<div class="inf-card">
-    <div class="inf-card-title">🔧 Distribución de labores</div>
+    <div class="inf-hdr"><div class="inf-card-title">📊 Programado vs Real — por labor</div>${infDlBtnsHTML('progreal')}</div>
+    <div class="inf-summary">
+      <div class="inf-pill"><div class="inf-pill-label">Total prog.</div><div class="inf-pill-value">${totalProg.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total real</div><div class="inf-pill-value">${totalReal.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Cumplimiento</div><div class="inf-pill-value">${pctGlobal===null?'—':pctGlobal+'%'}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total horas</div><div class="inf-pill-value">${totalHoras.toFixed(1)}</div></div>
+    </div>`;
+  if(!rows.length){
+    html += `<div class="inf-empty">No hay tareas programadas en el período.</div></div>`;
+    document.getElementById('infContent').innerHTML = html;
+    return;
+  }
+  html += `<table class="inf-table">
+    <thead><tr><th>Labor</th><th class="num">Prog.</th><th class="num">Real</th><th class="num">% cumpl.</th></tr></thead>
+    <tbody>${rows.map(r=>{
+      const pctTxt = r.pct===null ? '—' : `<span class="pct-bar"><span class="pct-fill" style="width:${Math.min(100,r.pct)}%"></span></span>${r.pct}%`;
+      return `<tr><td>${r.laborId}. ${r.labor}</td><td class="num">${r.prog}</td><td class="num">${r.real}</td><td class="num">${pctTxt}</td></tr>`;
+    }).join('')}</tbody>
+  </table>
+  <div class="inf-chartwrap"><canvas id="chartProgReal"></canvas></div>
+  </div>`;
+  document.getElementById('infContent').innerHTML = html;
+
+  const top = rows.slice(0, 10);
+  const ctx = document.getElementById('chartProgReal').getContext('2d');
+  infState.charts.progreal = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top.map(r=>`${r.laborId}`),
+      datasets: [
+        { label:'Programado', data: top.map(r=>r.prog), backgroundColor:'#94a3b8' },
+        { label:'Real',       data: top.map(r=>r.real), backgroundColor:'#4ade80' }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { position: 'bottom', labels:{ font:{ size:10 } } },
+        tooltip: { callbacks:{ title:(items)=>{ const r=top[items[0].dataIndex]; return `${r.laborId}. ${r.labor}`; } } }
+      },
+      scales: { y: { beginAtZero: true, ticks:{ font:{size:10} } }, x: { ticks:{ font:{size:10} } } }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// INFORME 2: Rendimiento por trabajador
+// ─────────────────────────────────────────────
+function renderInfTrabajadores(){
+  const { rows, totalMesas, totalHoras } = calcTrabajadores();
+
+  let html = `<div class="inf-card">
+    <div class="inf-hdr"><div class="inf-card-title">👤 Rendimiento por trabajador</div>${infDlBtnsHTML('trabajadores')}</div>
+    <div class="inf-summary">
+      <div class="inf-pill"><div class="inf-pill-label">Trabajadores</div><div class="inf-pill-value">${rows.length}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total mesas</div><div class="inf-pill-value">${totalMesas.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total horas</div><div class="inf-pill-value">${totalHoras.toFixed(1)}</div></div>
+    </div>`;
+  if(!rows.length){
+    html += `<div class="inf-empty">No hay registros válidos en el período.</div></div>`;
+    document.getElementById('infContent').innerHTML = html;
+    return;
+  }
+  html += `<table class="inf-table">
+    <thead><tr><th>Trabajador</th><th>Subjefe</th><th class="num">Días</th><th class="num">Mesas</th><th class="num">Horas</th><th class="num">Mesas/día</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td>${r.nombre}<div style="font-size:9px;color:var(--muted)">${r.predio}</div></td>
+      <td>${r.subjefe}</td>
+      <td class="num">${r.diasTrabajados}</td>
+      <td class="num">${r.mesas.toLocaleString('es-CL')}</td>
+      <td class="num">${r.horas.toFixed(1)}</td>
+      <td class="num">${r.promedioMesasDia.toFixed(1)}</td>
+    </tr>`).join('')}</tbody>
+  </table>
+  <div class="inf-chartwrap"><canvas id="chartTrab"></canvas></div>
+  </div>`;
+  document.getElementById('infContent').innerHTML = html;
+
+  const top = rows.slice(0, 10);
+  const ctx = document.getElementById('chartTrab').getContext('2d');
+  infState.charts.trabajadores = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top.map(r=>r.nombre.split(' ')[0]),
+      datasets: [{ label:'Mesas', data: top.map(r=>r.mesas), backgroundColor:'#4ade80' }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks:{ title:(items)=> top[items[0].dataIndex].nombre } }
+      },
+      scales: { x: { beginAtZero: true, ticks:{ font:{size:10} } }, y: { ticks:{ font:{size:10} } } }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// INFORME 3: Distribución de labores (con costos)
+// ─────────────────────────────────────────────
+function renderInfLabores(){
+  const { rows, totalHoras, totalCosto, totalMesas, cph } = calcLabores();
+
+  let html = `<div class="inf-card">
+    <div class="inf-hdr"><div class="inf-card-title">🔧 Distribución de labores</div>${infDlBtnsHTML('labores')}</div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Costo por hora vigente: <b>${fmtCLP(cph)}</b> (editable en Config)</div>
     <div class="inf-summary">
       <div class="inf-pill"><div class="inf-pill-label">Labores</div><div class="inf-pill-value">${rows.length}</div></div>
@@ -2582,7 +2668,6 @@ function renderInfLabores(){
   </div>`;
   document.getElementById('infContent').innerHTML = html;
 
-  // Gráfico: torta de % de horas por labor (top 8 + "Otras")
   const top = rows.slice(0, 8);
   const otras = rows.slice(8).reduce((s,r)=>s+r.horas, 0);
   const labels = top.map(r=>`${r.laborId}. ${r.labor.length>20?r.labor.slice(0,20)+'…':r.labor}`);
@@ -2598,9 +2683,10 @@ function renderInfLabores(){
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      animation: false,
       plugins: {
         legend: { position: 'right', labels:{ font:{ size:9 }, boxWidth:12 } },
-        tooltip: { callbacks:{ label:(ctx)=>{ const h=ctx.parsed; const pct=totalHoras>0?(h/totalHoras*100).toFixed(1):0; return `${ctx.label}: ${h.toFixed(1)}h (${pct}%)`; } } }
+        tooltip: { callbacks:{ label:(c)=>{ const h=c.parsed; const pct=totalHoras>0?(h/totalHoras*100).toFixed(1):0; return `${c.label}: ${h.toFixed(1)}h (${pct}%)`; } } }
       }
     }
   });
@@ -2610,71 +2696,10 @@ function renderInfLabores(){
 // INFORME 4: Inconsistencias detectadas
 // ─────────────────────────────────────────────
 function renderInfInconsistencias(){
-  const { registros } = infState.data;
-  const issues = []; // {fecha, trabajador, subjefe, predio, tipo, detalle}
-
-  // Agrupar por trabajador+fecha para detectar horas totales del día
-  const porDiaTrab = {};
-  registros.forEach(r=>{
-    const w = r._worker || {};
-    const key = r.fecha + '|' + r._predio + '|' + r.workerId;
-    if(!porDiaTrab[key]) porDiaTrab[key] = { items: [], w, fecha: r.fecha, predio: r._predio };
-    porDiaTrab[key].items.push(r);
-  });
-
-  registros.forEach(r=>{
-    const w = r._worker || {};
-    const ctx = {
-      fecha: r.fecha,
-      trabajador: w.nombre || r.workerId,
-      subjefe: w.subjefe || '—',
-      predio: PREDIOS[r._predio] ? PREDIOS[r._predio].nombre : r._predio
-    };
-    // Si está marcado ausente pero con horas/mesas registradas
-    if((r.ausente || r.licencia || r.vacaciones)){
-      const labs = r.labores || [];
-      const totalH = labs.reduce((s,l)=>s+(l.horas||0), 0) + (r.horas||0);
-      const totalM = labs.reduce((s,l)=>s+(l.mesas||0), 0) + (r.mesas||0);
-      if(totalH > 0 || totalM > 0){
-        issues.push({ ...ctx, tipo:'Ausente con datos', detalle:`Marcado ${r.ausente?'ausente':r.licencia?'licencia':'vacaciones'} pero tiene ${totalH}h y ${totalM} mesas` });
-      }
-      return;
-    }
-    // Por labor: horas sin mesas o mesas sin horas
-    const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
-    labs.forEach(l=>{
-      const lab = LABORES.find(x=>x.id===l.laborId);
-      const labNombre = lab ? `${l.laborId}. ${lab.d}` : `Labor ${l.laborId||'?'}`;
-      if((l.horas||0) > 0 && (l.mesas||0) === 0){
-        issues.push({ ...ctx, tipo:'Horas sin mesas', detalle:`${labNombre}: ${l.horas}h pero 0 mesas` });
-      }
-      if((l.mesas||0) > 0 && (l.horas||0) === 0){
-        issues.push({ ...ctx, tipo:'Mesas sin horas', detalle:`${labNombre}: ${l.mesas} mesas pero 0h` });
-      }
-    });
-  });
-
-  // Total de horas del día por trabajador (>12 o <1 con datos)
-  Object.values(porDiaTrab).forEach(g=>{
-    const totalH = g.items.reduce((s,r)=>{
-      if(r.ausente || r.licencia || r.vacaciones) return s;
-      const labs = r.labores || [{ horas: r.horas || 0 }];
-      return s + labs.reduce((ss,l)=>ss+(l.horas||0), 0);
-    }, 0);
-    if(totalH > 12){
-      issues.push({
-        fecha:g.fecha, trabajador: g.w.nombre || g.items[0].workerId, subjefe: g.w.subjefe || '—',
-        predio: PREDIOS[g.predio] ? PREDIOS[g.predio].nombre : g.predio,
-        tipo:'Jornada >12h', detalle:`Total del día: ${totalH.toFixed(1)} horas`
-      });
-    }
-  });
-
-  // Ordenar por fecha desc
-  issues.sort((a,b)=> b.fecha.localeCompare(a.fecha));
+  const { issues } = calcInconsistencias();
 
   let html = `<div class="inf-card">
-    <div class="inf-card-title">⚠️ Inconsistencias detectadas</div>
+    <div class="inf-hdr"><div class="inf-card-title">⚠️ Inconsistencias detectadas</div>${infDlBtnsHTML('inconsist')}</div>
     <p style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">Casos que conviene revisar con los subjefes. No son errores en los datos, solo señales que ameritan verificación.</p>
     <div class="inf-summary">
       <div class="inf-pill"><div class="inf-pill-label">Casos</div><div class="inf-pill-value">${issues.length}</div></div>
@@ -2694,6 +2719,221 @@ function renderInfInconsistencias(){
     </tr>`).join('')}</tbody>
   </table></div>`;
   document.getElementById('infContent').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+// EXPORTACIÓN (Fase 3): Excel y PDF
+// ─────────────────────────────────────────────
+// Metadatos del informe actual: título de filtros y sufijo para nombres de archivo
+function infExportMeta(){
+  const { desde, hasta, predioSel, subjefeSel } = infState.data;
+  const predioTxt = predioSel ? PREDIOS[predioSel].nombre : 'Todos los predios';
+  const subjefeTxt = subjefeSel || 'Todos los subjefes';
+  return {
+    desde, hasta, predioTxt, subjefeTxt,
+    periodo: `${fDMY(desde)} al ${fDMY(hasta)}`,
+    suf: `${desde}_${hasta}`
+  };
+}
+
+// Construye los datos tabulares (array de arrays) de cada informe para exportar.
+// Los números van como números (no texto) para que Excel los trate bien.
+function infTablaExport(tab){
+  if(tab==='progreal'){
+    const { rows, totalProg, totalReal, totalHoras, pctGlobal } = calcProgVsReal();
+    return {
+      titulo: 'Programado vs Real (por labor)',
+      headers: ['Labor','Programado','Real','% cumplimiento','Horas reales'],
+      body: rows.map(r=>[`${r.laborId}. ${r.labor}`, r.prog, r.real, r.pct===null?'':r.pct, Math.round(r.horas*10)/10]),
+      totales: ['TOTAL', totalProg, totalReal, pctGlobal===null?'':pctGlobal, Math.round(totalHoras*10)/10],
+      chartId: 'chartProgReal'
+    };
+  }
+  if(tab==='trabajadores'){
+    const { rows, totalMesas, totalHoras } = calcTrabajadores();
+    return {
+      titulo: 'Rendimiento por trabajador',
+      headers: ['Trabajador','Predio','Subjefe','Días trabajados','Mesas','Horas','Mesas/día'],
+      body: rows.map(r=>[r.nombre, r.predio, r.subjefe, r.diasTrabajados, r.mesas, Math.round(r.horas*10)/10, Math.round(r.promedioMesasDia*10)/10]),
+      totales: ['TOTAL','','', '', totalMesas, Math.round(totalHoras*10)/10, ''],
+      chartId: 'chartTrab'
+    };
+  }
+  if(tab==='labores'){
+    const { rows, totalHoras, totalCosto, totalMesas, cph } = calcLabores();
+    return {
+      titulo: 'Distribución de labores (con costos)',
+      nota: `Costo por hora usado: ${fmtCLP(cph)} (sueldo base + bono, configurable en la app)`,
+      headers: ['Labor','Mesas','Horas','Trabajadores','Costo total CLP','Costo por mesa CLP'],
+      body: rows.map(r=>[`${r.laborId}. ${r.labor}`, r.mesas, Math.round(r.horas*10)/10, r.trabajadores, Math.round(r.costoTotal), r.costoPorMesa===null?'':Math.round(r.costoPorMesa)]),
+      totales: ['TOTAL', totalMesas, Math.round(totalHoras*10)/10, '', Math.round(totalCosto), ''],
+      chartId: 'chartLab'
+    };
+  }
+  if(tab==='inconsist'){
+    const { issues } = calcInconsistencias();
+    return {
+      titulo: 'Inconsistencias detectadas',
+      headers: ['Fecha','Trabajador','Subjefe','Predio','Tipo','Detalle'],
+      body: issues.map(i=>[fDMY(i.fecha), i.trabajador, i.subjefe, i.predio, i.tipo, i.detalle]),
+      totales: null,
+      chartId: null
+    };
+  }
+  return null;
+}
+
+// Convierte un informe a hoja de Excel (con título, filtros y tabla)
+function infHojaExcel(tab){
+  const t = infTablaExport(tab);
+  if(!t) return null;
+  const m = infExportMeta();
+  const aoa = [
+    [`FieldLog — ${t.titulo}`],
+    [`Período: ${m.periodo}`],
+    [`Predio: ${m.predioTxt} · Subjefe: ${m.subjefeTxt}`]
+  ];
+  if(t.nota) aoa.push([t.nota]);
+  aoa.push([]);
+  aoa.push(t.headers);
+  t.body.forEach(row=>aoa.push(row));
+  if(t.totales) aoa.push(t.totales);
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // Anchos de columna aproximados según contenido
+  ws['!cols'] = t.headers.map((h,i)=>{
+    let max = String(h).length;
+    t.body.forEach(row=>{ const len = String(row[i]??'').length; if(len>max) max=len; });
+    return { wch: Math.min(45, Math.max(10, max+2)) };
+  });
+  return ws;
+}
+
+// Exportar UN informe a Excel
+function exportInfExcel(tab){
+  if(!infState.data){ toast('⚠️ Primero genera los informes'); return; }
+  if(typeof XLSX === 'undefined'){ toast('⚠️ Librería Excel no cargada. Revisa tu conexión y recarga.'); return; }
+  try{
+    const t = infTablaExport(tab);
+    const m = infExportMeta();
+    const wb = XLSX.utils.book_new();
+    const ws = infHojaExcel(tab);
+    // Nombre de hoja: máx 31 caracteres permitidos por Excel
+    const sheetNames = { progreal:'Prog vs Real', trabajadores:'Trabajadores', labores:'Labores', inconsist:'Inconsistencias' };
+    XLSX.utils.book_append_sheet(wb, ws, sheetNames[tab] || 'Informe');
+    XLSX.writeFile(wb, `fieldlog_${tab}_${m.suf}.xlsx`);
+    toast('✅ Excel descargado');
+  }catch(e){
+    toast('Error al generar Excel: '+e.message);
+  }
+}
+
+// Exportar TODOS los informes a un Excel de 4 hojas
+function exportInfExcelTodo(){
+  if(!infState.data){ toast('⚠️ Primero genera los informes'); return; }
+  if(typeof XLSX === 'undefined'){ toast('⚠️ Librería Excel no cargada. Revisa tu conexión y recarga.'); return; }
+  try{
+    const m = infExportMeta();
+    const wb = XLSX.utils.book_new();
+    const tabs = [
+      ['progreal','Prog vs Real'],
+      ['trabajadores','Trabajadores'],
+      ['labores','Labores'],
+      ['inconsist','Inconsistencias']
+    ];
+    tabs.forEach(([tab, nombre])=>{
+      const ws = infHojaExcel(tab);
+      if(ws) XLSX.utils.book_append_sheet(wb, ws, nombre);
+    });
+    XLSX.writeFile(wb, `fieldlog_informes_${m.suf}.xlsx`);
+    toast('✅ Excel completo descargado (4 hojas)');
+  }catch(e){
+    toast('Error al generar Excel: '+e.message);
+  }
+}
+
+// Exportar UN informe a PDF (incluye el gráfico del tab si existe)
+function exportInfPDF(tab){
+  if(!infState.data){ toast('⚠️ Primero genera los informes'); return; }
+  if(!window.jspdf || !window.jspdf.jsPDF){ toast('⚠️ Librería PDF no cargada. Revisa tu conexión y recarga.'); return; }
+  try{
+    const t = infTablaExport(tab);
+    const m = infExportMeta();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+
+    // Encabezado
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(14);
+    doc.text(`FieldLog — ${t.titulo}`, 14, 16);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(9);
+    doc.setTextColor(100);
+    doc.text(`Período: ${m.periodo}`, 14, 22);
+    doc.text(`Predio: ${m.predioTxt}  ·  Subjefe: ${m.subjefeTxt}`, 14, 27);
+    let y = 31;
+    if(t.nota){
+      doc.text(t.nota, 14, y);
+      y += 5;
+    }
+    doc.setTextColor(0);
+
+    // Tabla
+    const body = t.body.map(row=>row.map(c=>{
+      // Formato amigable en PDF: miles con separador para números grandes
+      if(typeof c === 'number' && Math.abs(c) >= 1000) return c.toLocaleString('es-CL');
+      return c===null||c===undefined ? '' : String(c);
+    }));
+    if(t.totales){
+      body.push(t.totales.map(c=>{
+        if(typeof c === 'number' && Math.abs(c) >= 1000) return c.toLocaleString('es-CL');
+        return c===null||c===undefined ? '' : String(c);
+      }));
+    }
+    doc.autoTable({
+      head: [t.headers],
+      body,
+      startY: y,
+      styles: { fontSize: 8, cellPadding: 1.6 },
+      headStyles: { fillColor: [34,94,60], textColor: 255, fontStyle:'bold' },
+      didParseCell: (data)=>{
+        // Resaltar fila de totales en negrita
+        if(t.totales && data.section==='body' && data.row.index === body.length-1){
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [240,240,235];
+        }
+      }
+    });
+
+    // Gráfico (si el tab tiene canvas y está renderizado en pantalla)
+    if(t.chartId){
+      const canvas = document.getElementById(t.chartId);
+      if(canvas){
+        try{
+          const img = canvas.toDataURL('image/png', 1.0);
+          const imgW = pageW - 28; // márgenes de 14mm
+          const imgH = imgW * canvas.height / canvas.width;
+          let yImg = (doc.lastAutoTable && doc.lastAutoTable.finalY ? doc.lastAutoTable.finalY : y) + 8;
+          if(yImg + imgH > 285){ doc.addPage(); yImg = 16; }
+          doc.addImage(img, 'PNG', 14, yImg, imgW, imgH);
+        }catch(e){ /* si el canvas no se puede capturar, el PDF sale sin gráfico */ }
+      }
+    }
+
+    // Pie de página con fecha de generación en todas las páginas
+    const pages = doc.internal.getNumberOfPages();
+    for(let i=1; i<=pages; i++){
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setTextColor(150);
+      doc.text(`Generado: ${fDMY(todayIso)} · FieldLog Agrícola Origen · Página ${i}/${pages}`, 14, 292);
+    }
+
+    doc.save(`fieldlog_${tab}_${m.suf}.pdf`);
+    toast('✅ PDF descargado');
+  }catch(e){
+    toast('Error al generar PDF: '+e.message);
+  }
 }
 
 
