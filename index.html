@@ -37,6 +37,8 @@ const FIREBASE_CONFIG = {
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<!-- Chart.js para los gráficos de informes -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=Inter:wght@400;500;600&display=swap');
@@ -252,6 +254,29 @@ select:focus,input:focus{border-color:var(--green)}
 .ur-info{}
 .ur-name{font-weight:600;font-size:13px}
 .ur-meta{font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px}
+
+/* Informes - tabs internos */
+.inftab{flex:0 0 auto;padding:8px 12px;border:1.5px solid var(--sand);background:#fff;color:var(--muted);font-family:'Syne',sans-serif;font-size:11px;font-weight:600;border-radius:8px;cursor:pointer;white-space:nowrap;transition:all .15s}
+.inftab:hover{border-color:var(--green)}
+.inftab.active{background:var(--green);color:#fff;border-color:var(--green)}
+
+/* Informes - tablas */
+.inf-card{background:#fff;border:1.5px solid var(--sand);border-radius:11px;padding:12px;margin-bottom:10px}
+.inf-card-title{font-family:'Syne',sans-serif;font-weight:700;font-size:13px;color:var(--dark);margin-bottom:8px}
+.inf-summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.inf-pill{flex:1 1 auto;min-width:90px;background:var(--cream);border:1px solid var(--sand);border-radius:8px;padding:7px 9px}
+.inf-pill-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-family:'DM Mono',monospace}
+.inf-pill-value{font-family:'Syne',sans-serif;font-weight:700;font-size:14px;color:var(--dark);margin-top:2px}
+.inf-table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:10px}
+.inf-table th{background:var(--cream);text-align:left;padding:6px 7px;font-family:'Syne',sans-serif;font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--dark);border-bottom:2px solid var(--sand)}
+.inf-table td{padding:6px 7px;border-bottom:1px solid var(--sand);vertical-align:top}
+.inf-table tr:last-child td{border-bottom:none}
+.inf-table .num{font-family:'DM Mono',monospace;text-align:right;white-space:nowrap}
+.inf-table .pct-bar{display:inline-block;width:50px;height:8px;background:var(--sand);border-radius:4px;overflow:hidden;vertical-align:middle;margin-right:4px}
+.inf-table .pct-fill{height:100%;background:var(--green)}
+.inf-table tr.inc-row td{background:#FEF3C7}
+.inf-chartwrap{position:relative;height:240px;margin-top:10px}
+.inf-empty{text-align:center;padding:30px 10px;color:var(--muted);font-size:12px}
 </style>
 </head>
 <body>
@@ -384,8 +409,8 @@ select:focus,input:focus{border-color:var(--green)}
   <div id="screen-informes" class="screen">
     <div style="height:10px"></div>
     <div class="card">
-      <div class="card-title">📊 Informes de Avance</div>
-      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">Genera y descarga informes de labores en formato CSV. Los archivos se pueden abrir en Excel o Google Sheets.</p>
+      <div class="card-title">📊 Informes</div>
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">Selecciona el periodo y filtros, luego genera los informes. Verás los datos en pantalla con gráficos. La descarga a Excel/PDF se habilitará en la próxima fase.</p>
 
       <div class="form-grid">
         <div><label>Desde</label><input type="date" id="infDesde"></div>
@@ -393,17 +418,20 @@ select:focus,input:focus{border-color:var(--green)}
       </div>
 
       <div class="form-row"><label>Predio</label><select id="infPredio" onchange="onInfPredioChange()"></select></div>
-      <div class="form-row" id="infCultivoRow" style="display:none"><label>Cultivo</label><select id="infCultivo"><option value="">Todos</option></select></div>
       <div class="form-row"><label>Subjefe</label><select id="infSubjefe"><option value="">Todos</option></select></div>
 
-      <div class="sec-div">Descargar informe</div>
+      <button class="btn btn-primary" onclick="cargarYRenderInformes()">🔄 Generar informes</button>
+    </div>
 
-      <button class="btn btn-primary" style="margin-bottom:8px" onclick="descargarInforme('trabajador')">📋 Resumen por Trabajador</button>
-      <button class="btn btn-primary" style="margin-bottom:8px" onclick="descargarInforme('labor')">🔧 Resumen por Labor</button>
-      <button class="btn btn-primary" style="margin-bottom:8px" onclick="descargarInforme('detalle')">📄 Detalle Completo</button>
-      <button class="btn btn-primary" onclick="descargarInforme('progvsreal')">🎯 Programado vs Real</button>
-
-      <div id="infStats" style="margin-top:10px;display:none;background:var(--cream);border-radius:7px;padding:9px 11px;font-size:12px;color:var(--muted);line-height:1.6"></div>
+    <!-- Tabs de informes (visible solo después de cargar) -->
+    <div id="infTabsWrap" style="display:none">
+      <div style="display:flex;gap:4px;margin-bottom:10px;overflow-x:auto;padding-bottom:4px">
+        <button class="inftab active" data-tab="progreal" onclick="switchInfTab('progreal')">📊 Prog vs Real</button>
+        <button class="inftab" data-tab="trabajadores" onclick="switchInfTab('trabajadores')">👤 Trabajadores</button>
+        <button class="inftab" data-tab="labores" onclick="switchInfTab('labores')">🔧 Labores</button>
+        <button class="inftab" data-tab="inconsist" onclick="switchInfTab('inconsist')">⚠️ Inconsistencias</button>
+      </div>
+      <div id="infContent"></div>
     </div>
   </div>
 
@@ -2148,310 +2176,526 @@ async function createUser(){
 // ══════════════════════════════════════════════
 function closeModal(){document.getElementById('overlay').classList.remove('open')}
 
+
 // ══════════════════════════════════════════════
-// INFORMES
+// INFORMES (Fase 2)
 // ══════════════════════════════════════════════
+// Estado del módulo de informes (cache de la última consulta + tab activo + charts vivos)
+let infState = { data: null, tab: 'progreal', charts: {} };
+
 function initInformes(){
-  // Inicializar fechas: desde=lunes de esta semana, hasta=hoy
-  const wd=weekDates();
-  document.getElementById('infDesde').value=wd[0];
-  document.getElementById('infHasta').value=todayIso;
+  // Default: últimos 30 días
+  const hasta = todayIso;
+  const d = new Date(todayIso); d.setDate(d.getDate()-30);
+  const desde = d.toISOString().slice(0,10);
+  document.getElementById('infDesde').value = desde;
+  document.getElementById('infHasta').value = hasta;
 
   // Predios disponibles según rol
-  const selP=document.getElementById('infPredio');
-  let preds=[];
-  if(currentProfile.role==='admin'&&currentProfile.predioId==='todos'){
-    preds=PRED_ORDER.slice();
+  const selP = document.getElementById('infPredio');
+  let preds = [];
+  if(currentProfile.role==='admin' && currentProfile.predioId==='todos'){
+    preds = PRED_ORDER.slice();
   } else {
-    preds=[currentProfile.predioId||activePred];
+    preds = [currentProfile.predioId || activePred];
   }
-  selP.innerHTML=preds.map(p=>`<option value="${p}">${PREDIOS[p].nombre}</option>`).join('');
-  if(preds.length>1)selP.innerHTML=`<option value="">Todos</option>`+selP.innerHTML;
+  selP.innerHTML = preds.map(p=>`<option value="${p}">${PREDIOS[p].nombre}</option>`).join('');
+  if(preds.length>1) selP.innerHTML = `<option value="">Todos</option>` + selP.innerHTML;
   onInfPredioChange();
+  // Reset estado
+  infState = { data: null, tab: 'progreal', charts: {} };
+  document.getElementById('infTabsWrap').style.display = 'none';
 }
 
 function onInfPredioChange(){
-  const pid=document.getElementById('infPredio').value;
-  const rowC=document.getElementById('infCultivoRow');
-  const selC=document.getElementById('infCultivo');
-  const selS=document.getElementById('infSubjefe');
-  // Cultivo solo si el predio tiene más de uno
-  if(pid&&PREDIOS[pid]&&PREDIOS[pid].cultivos.length>1){
-    selC.innerHTML=`<option value="">Todos</option>`+PREDIOS[pid].cultivos.map(c=>`<option value="${c}">${CICONS[c]||''} ${CNAMES[c]||c}</option>`).join('');
-    rowC.style.display='block';
-  } else {
-    rowC.style.display='none';
-    selC.value='';
-  }
-  // Subjefes
-  let subs=[];
-  if(pid){
-    subs=PREDIOS[pid].subjefes.slice();
-  } else {
-    subs=[...new Set(PRED_ORDER.flatMap(p=>PREDIOS[p].subjefes))];
-  }
-  // Si es subjefe, solo él mismo
+  const pid = document.getElementById('infPredio').value;
+  const selS = document.getElementById('infSubjefe');
+  let subs = [];
+  if(pid) subs = PREDIOS[pid].subjefes.slice();
+  else subs = [...new Set(PRED_ORDER.flatMap(p=>PREDIOS[p].subjefes))];
   if(currentProfile.role==='subjefe'){
-    subs=[currentProfile.subjefe];
-    selS.innerHTML=`<option value="${currentProfile.subjefe}">${currentProfile.subjefe}</option>`;
-    selS.disabled=true;
+    subs = [currentProfile.subjefe];
+    selS.innerHTML = `<option value="${currentProfile.subjefe}">${currentProfile.subjefe}</option>`;
+    selS.disabled = true;
   } else {
-    selS.innerHTML=`<option value="">Todos</option>`+subs.map(s=>`<option value="${s}">${s}</option>`).join('');
-    selS.disabled=false;
+    selS.innerHTML = `<option value="">Todos</option>` + subs.map(s=>`<option value="${s}">${s}</option>`).join('');
+    selS.disabled = false;
   }
 }
 
-// Descargar archivo CSV helper
-function downloadCSV(filename, headers, rows){
-  const csv=[
-    headers.join(','),
-    ...rows.map(r=>headers.map(h=>{
-      const v=r[h]===undefined||r[h]===null?'':String(r[h]);
-      return v.includes(',')||v.includes('"')||v.includes('\n')?'"'+v.replace(/"/g,'""')+'"':v;
-    }).join(','))
-  ].join('\n');
-  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;a.download=filename;a.click();
-  URL.revokeObjectURL(url);
-}
+// ─────────────────────────────────────────────
+// Carga de datos: registros + programación + workers
+// ─────────────────────────────────────────────
+async function cargarYRenderInformes(){
+  const desde = document.getElementById('infDesde').value;
+  const hasta = document.getElementById('infHasta').value;
+  const predioSel = document.getElementById('infPredio').value;
+  const subjefeSel = document.getElementById('infSubjefe').value;
+  if(!desde || !hasta){ toast('⚠️ Selecciona fechas desde y hasta'); return; }
+  if(desde > hasta){ toast('⚠️ La fecha desde debe ser ≤ a hasta'); return; }
 
-// Cargar registros según filtros (respeta las reglas de Firestore)
-async function cargarRegistrosInforme(){
-  const desde=document.getElementById('infDesde').value;
-  const hasta=document.getElementById('infHasta').value;
-  const predioSel=document.getElementById('infPredio').value;
-  const cultivoSel=document.getElementById('infCultivo').value;
-  const subjefeSel=document.getElementById('infSubjefe').value;
-  if(!desde||!hasta){toast('⚠️ Selecciona fechas desde y hasta');return null}
-  if(desde>hasta){toast('⚠️ La fecha desde debe ser menor o igual a hasta');return null}
+  const preds = predioSel ? [predioSel] : PRED_ORDER.slice();
+  const workers = {}, registros = [];
+  const programaciones = []; // [{predio, subjefe, mondayIso, dias:{...}}]
 
-  const preds=predioSel?[predioSel]:PRED_ORDER.slice();
-  const workers={}, registros=[];
-
-  loading(true,'Cargando datos…');
+  loading(true, 'Cargando datos…');
   try{
-    // Cargar workers
+    // 1. Workers de cada predio
     for(const pid of preds){
       try{
-        const snap=await colWorkers(pid).get();
-        workers[pid]={};
-        snap.forEach(d=>workers[pid][d.id]=d.data());
-      }catch(e){/* sin acceso a ese predio, ignorar */}
+        const snap = await colWorkers(pid).get();
+        workers[pid] = {};
+        snap.forEach(d=>workers[pid][d.id] = d.data());
+      }catch(e){ /* sin acceso */ }
     }
-    // Cargar registros del rango de fechas
+    // 2. Registros del rango
     for(const pid of preds){
       try{
-        const snap=await colRegistros(pid).where('fecha','>=',desde).where('fecha','<=',hasta).get();
+        const snap = await colRegistros(pid).where('fecha','>=',desde).where('fecha','<=',hasta).get();
         snap.forEach(d=>{
-          const r=d.data();
-          const w=(workers[pid]||{})[r.workerId]||{};
-          // Filtros
-          if(subjefeSel&&w.subjefe!==subjefeSel)return;
-          const regCultivo=r.cultivo||w.cultivo||'';
-          if(cultivoSel&&regCultivo!==cultivoSel)return;
-          registros.push({...r, _id:d.id, _predio:pid, _worker:w, _cultivo:regCultivo});
+          const r = d.data();
+          const w = (workers[pid]||{})[r.workerId] || {};
+          if(subjefeSel && w.subjefe !== subjefeSel) return;
+          registros.push({ ...r, _id:d.id, _predio:pid, _worker:w });
         });
-      }catch(e){/* sin acceso a registros de ese predio */}
+      }catch(e){ /* sin acceso */ }
+    }
+    // 3. Programaciones (puede haber semanas que terminan dentro del rango aunque empiecen antes)
+    for(const pid of preds){
+      const subs = subjefeSel ? [subjefeSel] : PREDIOS[pid].subjefes;
+      for(const sub of subs){
+        try{
+          const snap = await colProg(pid, sub).get();
+          snap.forEach(doc=>{
+            programaciones.push({
+              predio: pid,
+              subjefe: sub,
+              mondayIso: doc.id,
+              dias: (doc.data() || {}).dias || {}
+            });
+          });
+        }catch(e){ /* sin acceso */ }
+      }
     }
     loading(false);
-    return {registros, workers, preds, desde, hasta, predioSel, cultivoSel, subjefeSel};
   }catch(e){
     loading(false);
-    toast('Error: '+e.message);
-    return null;
+    toast('Error: ' + e.message);
+    return;
   }
+
+  if(!registros.length && !programaciones.length){
+    toast('⚠️ No hay datos en el período seleccionado');
+    return;
+  }
+
+  infState.data = { registros, programaciones, workers, preds, desde, hasta, predioSel, subjefeSel };
+  document.getElementById('infTabsWrap').style.display = 'block';
+  switchInfTab(infState.tab);
 }
 
-async function descargarInforme(tipo){
-  const data=await cargarRegistrosInforme();
-  if(!data)return;
-  const {registros, desde, hasta}=data;
-  if(!registros.length){toast('⚠️ No hay registros en el período seleccionado');return}
-
-  // Sufijo para el nombre del archivo
-  const suf=`${desde}_${hasta}`;
-
-  if(tipo==='detalle'){
-    const rows=[];
-    registros.forEach(r=>{
-      const w=r._worker||{};
-      const labores=r.labores||[{laborId:r.laborId,horas:r.horas||0,mesas:r.mesas||0}];
-      labores.forEach(lab=>{
-        const labDef=LABORES.find(l=>l.id===lab.laborId);
-        rows.push({
-          predio: PREDIOS[r._predio].nombre,
-          fecha: r.fecha,
-          trabajador: w.nombre||r.workerId,
-          subjefe: w.subjefe||'',
-          cultivo: r._cultivo,
-          codigo_labor: lab.laborId,
-          labor: labDef?labDef.d:'',
-          horas: lab.horas||0,
-          mesas: lab.mesas||0,
-          ausente: r.ausente?'SI':'',
-          licencia: r.licencia?'SI':'',
-          vacaciones: r.vacaciones?'SI':'',
-          observacion: (r.obs||'').replace(/[\r\n]+/g,' ')
-        });
-      });
-    });
-    downloadCSV(`fieldlog_detalle_${suf}.csv`,
-      ['predio','fecha','trabajador','subjefe','cultivo','codigo_labor','labor','horas','mesas','ausente','licencia','vacaciones','observacion'],
-      rows);
-    toast(`✅ Descargado: ${rows.length} filas`);
-    return;
-  }
-
-  if(tipo==='trabajador'){
-    // Agrupar por trabajador
-    const map={};
-    registros.forEach(r=>{
-      const w=r._worker||{};
-      const key=`${r._predio}|${r.workerId}`;
-      if(!map[key]){
-        map[key]={
-          predio:PREDIOS[r._predio].nombre,
-          trabajador:w.nombre||r.workerId,
-          subjefe:w.subjefe||'',
-          cultivo:r._cultivo,
-          dias:new Set(), horas:0, mesas:0, labores:0, ausencias:0, licencias:0, vacaciones:0
-        };
-      }
-      const m=map[key];
-      m.dias.add(r.fecha);
-      const labs=r.labores||[{horas:r.horas||0,mesas:r.mesas||0}];
-      labs.forEach(l=>{m.horas+=l.horas||0;m.mesas+=l.mesas||0;m.labores++;});
-      if(r.ausente)m.ausencias++;
-      if(r.licencia)m.licencias++;
-      if(r.vacaciones)m.vacaciones++;
-    });
-    const rows=Object.values(map).map(m=>({
-      predio:m.predio, trabajador:m.trabajador, subjefe:m.subjefe, cultivo:m.cultivo,
-      dias_trabajados:m.dias.size,
-      total_horas:m.horas.toFixed(1),
-      total_mesas:m.mesas,
-      labores_registradas:m.labores,
-      ausencias:m.ausencias,
-      licencias:m.licencias,
-      vacaciones:m.vacaciones
-    })).sort((a,b)=>a.trabajador.localeCompare(b.trabajador));
-    downloadCSV(`fieldlog_trabajador_${suf}.csv`,
-      ['predio','trabajador','subjefe','cultivo','dias_trabajados','total_horas','total_mesas','labores_registradas','ausencias','licencias','vacaciones'],
-      rows);
-    toast(`✅ Descargado: ${rows.length} trabajadores`);
-    return;
-  }
-
-  if(tipo==='labor'){
-    // Agrupar por labor
-    const map={};
-    registros.forEach(r=>{
-      const labs=r.labores||[{laborId:r.laborId,horas:r.horas||0,mesas:r.mesas||0}];
-      labs.forEach(l=>{
-        const id=l.laborId;if(!id)return;
-        const key=`${r._predio}|${id}`;
-        if(!map[key]){
-          const labDef=LABORES.find(x=>x.id===id);
-          map[key]={
-            predio:PREDIOS[r._predio].nombre,
-            codigo:id,
-            labor:labDef?labDef.d:'',
-            trabajadores:new Set(), horas:0, mesas:0, ocurrencias:0
-          };
-        }
-        const m=map[key];
-        m.trabajadores.add(r.workerId);
-        m.horas+=l.horas||0;
-        m.mesas+=l.mesas||0;
-        m.ocurrencias++;
-      });
-    });
-    const rows=Object.values(map).map(m=>({
-      predio:m.predio,
-      codigo:m.codigo,
-      labor:m.labor,
-      trabajadores_distintos:m.trabajadores.size,
-      total_horas:m.horas.toFixed(1),
-      total_mesas:m.mesas,
-      registros:m.ocurrencias
-    })).sort((a,b)=>a.codigo-b.codigo);
-    downloadCSV(`fieldlog_labor_${suf}.csv`,
-      ['predio','codigo','labor','trabajadores_distintos','total_horas','total_mesas','registros'],
-      rows);
-    toast(`✅ Descargado: ${rows.length} labores`);
-    return;
-  }
-
-  if(tipo==='progvsreal'){
-    // Comparar programación vs registros reales
-    const {predioSel, subjefeSel}=data;
-    const predsAUsar=predioSel?[predioSel]:PRED_ORDER.slice();
-    const rows=[];
-    loading(true,'Comparando programado vs real…');
-    try{
-      for(const pid of predsAUsar){
-        const subs=subjefeSel?[subjefeSel]:PREDIOS[pid].subjefes;
-        for(const sub of subs){
-          try{
-            // Obtener todas las programaciones del rango
-            const snap=await colProg(pid,sub).get();
-            snap.forEach(doc=>{
-              const monday=doc.id;  // YYYY-MM-DD del lunes
-              if(monday<desde||monday>hasta)return; // fuera de rango aprox
-              const prog=doc.data();
-              const dias=prog.dias||{};
-              Object.entries(dias).forEach(([dia,tareas])=>{
-                if(dia<desde||dia>hasta)return;
-                (tareas||[]).forEach(t=>{
-                  const labDef=LABORES.find(l=>l.id===t.laborId);
-                  // Sumar las mesas reales de esa labor ese día
-                  const realesMesas=registros
-                    .filter(r=>r.fecha===dia&&r._predio===pid&&(r._worker||{}).subjefe===sub)
-                    .reduce((s,r)=>{
-                      const labs=r.labores||[{laborId:r.laborId,mesas:r.mesas||0}];
-                      return s+labs.filter(l=>l.laborId===t.laborId).reduce((ss,l)=>ss+(l.mesas||0),0);
-                    },0);
-                  const realesHoras=registros
-                    .filter(r=>r.fecha===dia&&r._predio===pid&&(r._worker||{}).subjefe===sub)
-                    .reduce((s,r)=>{
-                      const labs=r.labores||[{laborId:r.laborId,horas:r.horas||0}];
-                      return s+labs.filter(l=>l.laborId===t.laborId).reduce((ss,l)=>ss+(l.horas||0),0);
-                    },0);
-                  const metaM=t.metaMesas||0;
-                  const cumpl=metaM>0?Math.round(realesMesas/metaM*100):'';
-                  rows.push({
-                    predio:PREDIOS[pid].nombre,
-                    subjefe:sub,
-                    fecha:dia,
-                    codigo_labor:t.laborId,
-                    labor:labDef?labDef.d:'',
-                    modulo:t.modulo||'',
-                    meta_mesas:metaM,
-                    mesas_reales:realesMesas,
-                    horas_reales:realesHoras.toFixed(1),
-                    cumplimiento_pct:cumpl,
-                    notas:t.notas||''
-                  });
-                });
-              });
-            });
-          }catch(e){/* sin acceso o sin datos */}
-        }
-      }
-    }catch(e){toast('Error: '+e.message)}
-    loading(false);
-    if(!rows.length){toast('⚠️ No hay programación en el período');return}
-    // Ordenar por fecha, predio, subjefe
-    rows.sort((a,b)=>(a.fecha+a.predio+a.subjefe).localeCompare(b.fecha+b.predio+b.subjefe));
-    downloadCSV(`fieldlog_progvsreal_${suf}.csv`,
-      ['predio','subjefe','fecha','codigo_labor','labor','modulo','meta_mesas','mesas_reales','horas_reales','cumplimiento_pct','notas'],
-      rows);
-    toast(`✅ Descargado: ${rows.length} tareas programadas`);
-    return;
-  }
+function switchInfTab(tab){
+  infState.tab = tab;
+  document.querySelectorAll('.inftab').forEach(b=>{
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  // Destruir gráficos previos antes de renderizar el nuevo tab
+  Object.values(infState.charts).forEach(ch=>{ try{ ch.destroy(); }catch(e){} });
+  infState.charts = {};
+  if(!infState.data){ return; }
+  if(tab==='progreal')      renderInfProgVsReal();
+  else if(tab==='trabajadores') renderInfTrabajadores();
+  else if(tab==='labores')      renderInfLabores();
+  else if(tab==='inconsist')    renderInfInconsistencias();
 }
+
+// ─────────────────────────────────────────────
+// Helpers de extracción
+// ─────────────────────────────────────────────
+// Normaliza una entrada de día de programación a un array de tareas
+function normalizarTareasDia(dato){
+  if(!dato) return [];
+  if(Array.isArray(dato)){
+    return dato.map(t=>({
+      laborId: t.laborId,
+      cicloId: null,
+      metaMesas: t.metaMesas || 0,
+      notas: t.notas || ''
+    }));
+  }
+  const cicloDelDia = dato.cicloId || null;
+  return (dato.labores || []).map(t=>({
+    laborId: t.laborId,
+    cicloId: t.cicloId || cicloDelDia,
+    metaMesas: t.metaMesas || 0,
+    notas: t.notas || ''
+  }));
+}
+
+// Suma horas y mesas reales para una labor en una fecha y un subjefe específico
+function sumarRealEnDiaSubjefeLabor(registros, fecha, predio, subjefe, laborId){
+  let mesas = 0, horas = 0;
+  registros.forEach(r=>{
+    if(r.fecha !== fecha) return;
+    if(r._predio !== predio) return;
+    if((r._worker || {}).subjefe !== subjefe) return;
+    const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
+    labs.forEach(l=>{
+      if(l.laborId === laborId){
+        mesas += (l.mesas || 0);
+        horas += (l.horas || 0);
+      }
+    });
+  });
+  return { mesas, horas };
+}
+
+// ─────────────────────────────────────────────
+// INFORME 1: Programado vs Real (por labor)
+// ─────────────────────────────────────────────
+function renderInfProgVsReal(){
+  const { registros, programaciones, desde, hasta } = infState.data;
+  // Acumular por labor (sumando todas las tareas programadas y todos los registros reales del rango)
+  const map = {}; // {laborId: {prog, real, horas}}
+  programaciones.forEach(p=>{
+    Object.entries(p.dias).forEach(([dia, dato])=>{
+      if(dia < desde || dia > hasta) return;
+      normalizarTareasDia(dato).forEach(t=>{
+        if(!t.laborId) return;
+        if(!map[t.laborId]) map[t.laborId] = { prog:0, real:0, horas:0 };
+        map[t.laborId].prog += t.metaMesas || 0;
+        const real = sumarRealEnDiaSubjefeLabor(registros, dia, p.predio, p.subjefe, t.laborId);
+        map[t.laborId].real += real.mesas;
+        map[t.laborId].horas += real.horas;
+      });
+    });
+  });
+
+  const rows = Object.entries(map).map(([laborId, v])=>{
+    const l = LABORES.find(x=>x.id===parseInt(laborId));
+    return {
+      laborId: parseInt(laborId),
+      labor: l ? l.d : '—',
+      prog: v.prog,
+      real: v.real,
+      horas: v.horas,
+      pct: v.prog > 0 ? Math.round(v.real / v.prog * 100) : null
+    };
+  }).sort((a,b)=> b.prog - a.prog);
+
+  const totalProg = rows.reduce((s,r)=>s+r.prog, 0);
+  const totalReal = rows.reduce((s,r)=>s+r.real, 0);
+  const totalHoras = rows.reduce((s,r)=>s+r.horas, 0);
+  const pctGlobal = totalProg > 0 ? Math.round(totalReal / totalProg * 100) : null;
+
+  let html = `<div class="inf-card">
+    <div class="inf-card-title">📊 Programado vs Real — por labor</div>
+    <div class="inf-summary">
+      <div class="inf-pill"><div class="inf-pill-label">Total prog.</div><div class="inf-pill-value">${totalProg.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total real</div><div class="inf-pill-value">${totalReal.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Cumplimiento</div><div class="inf-pill-value">${pctGlobal===null?'—':pctGlobal+'%'}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total horas</div><div class="inf-pill-value">${totalHoras.toFixed(1)}</div></div>
+    </div>`;
+  if(!rows.length){
+    html += `<div class="inf-empty">No hay tareas programadas en el período.</div></div>`;
+    document.getElementById('infContent').innerHTML = html;
+    return;
+  }
+  html += `<table class="inf-table">
+    <thead><tr><th>Labor</th><th class="num">Prog.</th><th class="num">Real</th><th class="num">% cumpl.</th></tr></thead>
+    <tbody>${rows.map(r=>{
+      const pctTxt = r.pct===null ? '—' : `<span class="pct-bar"><span class="pct-fill" style="width:${Math.min(100,r.pct)}%"></span></span>${r.pct}%`;
+      return `<tr><td>${r.laborId}. ${r.labor}</td><td class="num">${r.prog}</td><td class="num">${r.real}</td><td class="num">${pctTxt}</td></tr>`;
+    }).join('')}</tbody>
+  </table>
+  <div class="inf-chartwrap"><canvas id="chartProgReal"></canvas></div>
+  </div>`;
+  document.getElementById('infContent').innerHTML = html;
+
+  // Gráfico: barras de prog vs real por labor (top 10)
+  const top = rows.slice(0, 10);
+  const ctx = document.getElementById('chartProgReal').getContext('2d');
+  infState.charts.progreal = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top.map(r=>`${r.laborId}`),
+      datasets: [
+        { label:'Programado', data: top.map(r=>r.prog), backgroundColor:'#94a3b8' },
+        { label:'Real',       data: top.map(r=>r.real), backgroundColor:'#4ade80' }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels:{ font:{ size:10 } } },
+        tooltip: { callbacks:{ title:(items)=>{ const r=top[items[0].dataIndex]; return `${r.laborId}. ${r.labor}`; } } }
+      },
+      scales: { y: { beginAtZero: true, ticks:{ font:{size:10} } }, x: { ticks:{ font:{size:10} } } }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// INFORME 2: Rendimiento por trabajador
+// ─────────────────────────────────────────────
+function renderInfTrabajadores(){
+  const { registros, workers } = infState.data;
+  const map = {}; // {workerId: {nombre, subjefe, predio, mesas, horas, dias:Set, registros}}
+  registros.forEach(r=>{
+    if(r.ausente || r.licencia || r.vacaciones) return; // no cuentan en rendimiento
+    const w = r._worker || {};
+    const key = r._predio + '|' + r.workerId;
+    if(!map[key]) map[key] = {
+      nombre: w.nombre || r.workerId,
+      subjefe: w.subjefe || '—',
+      predio: PREDIOS[r._predio].nombre,
+      mesas: 0, horas: 0, dias: new Set(), registros: 0
+    };
+    const labs = r.labores || [{ mesas: r.mesas || 0, horas: r.horas || 0 }];
+    labs.forEach(l=>{
+      map[key].mesas += (l.mesas || 0);
+      map[key].horas += (l.horas || 0);
+    });
+    map[key].dias.add(r.fecha);
+    map[key].registros += 1;
+  });
+  const rows = Object.values(map).map(v=>({
+    ...v,
+    diasTrabajados: v.dias.size,
+    promedioMesasDia: v.dias.size > 0 ? v.mesas / v.dias.size : 0,
+    promedioMesasHora: v.horas > 0 ? v.mesas / v.horas : 0
+  })).sort((a,b)=> b.mesas - a.mesas);
+
+  const totalMesas = rows.reduce((s,r)=>s+r.mesas, 0);
+  const totalHoras = rows.reduce((s,r)=>s+r.horas, 0);
+
+  let html = `<div class="inf-card">
+    <div class="inf-card-title">👤 Rendimiento por trabajador</div>
+    <div class="inf-summary">
+      <div class="inf-pill"><div class="inf-pill-label">Trabajadores</div><div class="inf-pill-value">${rows.length}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total mesas</div><div class="inf-pill-value">${totalMesas.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total horas</div><div class="inf-pill-value">${totalHoras.toFixed(1)}</div></div>
+    </div>`;
+  if(!rows.length){
+    html += `<div class="inf-empty">No hay registros válidos en el período.</div></div>`;
+    document.getElementById('infContent').innerHTML = html;
+    return;
+  }
+  html += `<table class="inf-table">
+    <thead><tr><th>Trabajador</th><th>Subjefe</th><th class="num">Días</th><th class="num">Mesas</th><th class="num">Horas</th><th class="num">Mesas/día</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td>${r.nombre}<div style="font-size:9px;color:var(--muted)">${r.predio}</div></td>
+      <td>${r.subjefe}</td>
+      <td class="num">${r.diasTrabajados}</td>
+      <td class="num">${r.mesas.toLocaleString('es-CL')}</td>
+      <td class="num">${r.horas.toFixed(1)}</td>
+      <td class="num">${r.promedioMesasDia.toFixed(1)}</td>
+    </tr>`).join('')}</tbody>
+  </table>
+  <div class="inf-chartwrap"><canvas id="chartTrab"></canvas></div>
+  </div>`;
+  document.getElementById('infContent').innerHTML = html;
+
+  // Gráfico: top 10 trabajadores por mesas
+  const top = rows.slice(0, 10);
+  const ctx = document.getElementById('chartTrab').getContext('2d');
+  infState.charts.trabajadores = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top.map(r=>r.nombre.split(' ')[0]),
+      datasets: [{ label:'Mesas', data: top.map(r=>r.mesas), backgroundColor:'#4ade80' }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks:{ title:(items)=> top[items[0].dataIndex].nombre } }
+      },
+      scales: { x: { beginAtZero: true, ticks:{ font:{size:10} } }, y: { ticks:{ font:{size:10} } } }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// INFORME 3: Distribución de labores (con costos)
+// ─────────────────────────────────────────────
+function renderInfLabores(){
+  const { registros } = infState.data;
+  const cph = costoPorHora();
+  const map = {}; // {laborId: {mesas, horas, trabajadores:Set, registros}}
+  registros.forEach(r=>{
+    if(r.ausente || r.licencia || r.vacaciones) return;
+    const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
+    labs.forEach(l=>{
+      if(!l.laborId) return;
+      if(!map[l.laborId]) map[l.laborId] = { mesas:0, horas:0, trabajadores: new Set(), registros: 0 };
+      map[l.laborId].mesas += (l.mesas || 0);
+      map[l.laborId].horas += (l.horas || 0);
+      map[l.laborId].trabajadores.add(r._predio + '|' + r.workerId);
+      map[l.laborId].registros += 1;
+    });
+  });
+  const rows = Object.entries(map).map(([laborId, v])=>{
+    const l = LABORES.find(x=>x.id===parseInt(laborId));
+    const costoTotal = v.horas * cph;
+    return {
+      laborId: parseInt(laborId),
+      labor: l ? l.d : '—',
+      mesas: v.mesas,
+      horas: v.horas,
+      trabajadores: v.trabajadores.size,
+      costoTotal,
+      costoPorMesa: v.mesas > 0 ? costoTotal / v.mesas : null
+    };
+  }).sort((a,b)=> b.horas - a.horas);
+
+  const totalHoras = rows.reduce((s,r)=>s+r.horas, 0);
+  const totalCosto = rows.reduce((s,r)=>s+r.costoTotal, 0);
+  const totalMesas = rows.reduce((s,r)=>s+r.mesas, 0);
+
+  let html = `<div class="inf-card">
+    <div class="inf-card-title">🔧 Distribución de labores</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Costo por hora vigente: <b>${fmtCLP(cph)}</b> (editable en Config)</div>
+    <div class="inf-summary">
+      <div class="inf-pill"><div class="inf-pill-label">Labores</div><div class="inf-pill-value">${rows.length}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total horas</div><div class="inf-pill-value">${totalHoras.toFixed(1)}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Total mesas</div><div class="inf-pill-value">${totalMesas.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Costo total</div><div class="inf-pill-value">${fmtCLP(totalCosto)}</div></div>
+    </div>`;
+  if(!rows.length){
+    html += `<div class="inf-empty">No hay registros de labores en el período.</div></div>`;
+    document.getElementById('infContent').innerHTML = html;
+    return;
+  }
+  html += `<table class="inf-table">
+    <thead><tr><th>Labor</th><th class="num">Mesas</th><th class="num">Horas</th><th class="num">Trab.</th><th class="num">Costo total</th><th class="num">$/mesa</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td>${r.laborId}. ${r.labor}</td>
+      <td class="num">${r.mesas.toLocaleString('es-CL')}</td>
+      <td class="num">${r.horas.toFixed(1)}</td>
+      <td class="num">${r.trabajadores}</td>
+      <td class="num">${fmtCLP(r.costoTotal)}</td>
+      <td class="num">${r.costoPorMesa===null?'—':fmtCLP(r.costoPorMesa)}</td>
+    </tr>`).join('')}</tbody>
+  </table>
+  <div class="inf-chartwrap"><canvas id="chartLab"></canvas></div>
+  </div>`;
+  document.getElementById('infContent').innerHTML = html;
+
+  // Gráfico: torta de % de horas por labor (top 8 + "Otras")
+  const top = rows.slice(0, 8);
+  const otras = rows.slice(8).reduce((s,r)=>s+r.horas, 0);
+  const labels = top.map(r=>`${r.laborId}. ${r.labor.length>20?r.labor.slice(0,20)+'…':r.labor}`);
+  const data = top.map(r=>r.horas);
+  if(otras > 0){ labels.push('Otras'); data.push(otras); }
+  const ctx = document.getElementById('chartLab').getContext('2d');
+  infState.charts.labores = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels, datasets: [{ data,
+        backgroundColor:['#4ade80','#22c55e','#16a34a','#15803d','#facc15','#f59e0b','#fb923c','#94a3b8','#cbd5e1']
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels:{ font:{ size:9 }, boxWidth:12 } },
+        tooltip: { callbacks:{ label:(ctx)=>{ const h=ctx.parsed; const pct=totalHoras>0?(h/totalHoras*100).toFixed(1):0; return `${ctx.label}: ${h.toFixed(1)}h (${pct}%)`; } } }
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// INFORME 4: Inconsistencias detectadas
+// ─────────────────────────────────────────────
+function renderInfInconsistencias(){
+  const { registros } = infState.data;
+  const issues = []; // {fecha, trabajador, subjefe, predio, tipo, detalle}
+
+  // Agrupar por trabajador+fecha para detectar horas totales del día
+  const porDiaTrab = {};
+  registros.forEach(r=>{
+    const w = r._worker || {};
+    const key = r.fecha + '|' + r._predio + '|' + r.workerId;
+    if(!porDiaTrab[key]) porDiaTrab[key] = { items: [], w, fecha: r.fecha, predio: r._predio };
+    porDiaTrab[key].items.push(r);
+  });
+
+  registros.forEach(r=>{
+    const w = r._worker || {};
+    const ctx = {
+      fecha: r.fecha,
+      trabajador: w.nombre || r.workerId,
+      subjefe: w.subjefe || '—',
+      predio: PREDIOS[r._predio] ? PREDIOS[r._predio].nombre : r._predio
+    };
+    // Si está marcado ausente pero con horas/mesas registradas
+    if((r.ausente || r.licencia || r.vacaciones)){
+      const labs = r.labores || [];
+      const totalH = labs.reduce((s,l)=>s+(l.horas||0), 0) + (r.horas||0);
+      const totalM = labs.reduce((s,l)=>s+(l.mesas||0), 0) + (r.mesas||0);
+      if(totalH > 0 || totalM > 0){
+        issues.push({ ...ctx, tipo:'Ausente con datos', detalle:`Marcado ${r.ausente?'ausente':r.licencia?'licencia':'vacaciones'} pero tiene ${totalH}h y ${totalM} mesas` });
+      }
+      return;
+    }
+    // Por labor: horas sin mesas o mesas sin horas
+    const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
+    labs.forEach(l=>{
+      const lab = LABORES.find(x=>x.id===l.laborId);
+      const labNombre = lab ? `${l.laborId}. ${lab.d}` : `Labor ${l.laborId||'?'}`;
+      if((l.horas||0) > 0 && (l.mesas||0) === 0){
+        issues.push({ ...ctx, tipo:'Horas sin mesas', detalle:`${labNombre}: ${l.horas}h pero 0 mesas` });
+      }
+      if((l.mesas||0) > 0 && (l.horas||0) === 0){
+        issues.push({ ...ctx, tipo:'Mesas sin horas', detalle:`${labNombre}: ${l.mesas} mesas pero 0h` });
+      }
+    });
+  });
+
+  // Total de horas del día por trabajador (>12 o <1 con datos)
+  Object.values(porDiaTrab).forEach(g=>{
+    const totalH = g.items.reduce((s,r)=>{
+      if(r.ausente || r.licencia || r.vacaciones) return s;
+      const labs = r.labores || [{ horas: r.horas || 0 }];
+      return s + labs.reduce((ss,l)=>ss+(l.horas||0), 0);
+    }, 0);
+    if(totalH > 12){
+      issues.push({
+        fecha:g.fecha, trabajador: g.w.nombre || g.items[0].workerId, subjefe: g.w.subjefe || '—',
+        predio: PREDIOS[g.predio] ? PREDIOS[g.predio].nombre : g.predio,
+        tipo:'Jornada >12h', detalle:`Total del día: ${totalH.toFixed(1)} horas`
+      });
+    }
+  });
+
+  // Ordenar por fecha desc
+  issues.sort((a,b)=> b.fecha.localeCompare(a.fecha));
+
+  let html = `<div class="inf-card">
+    <div class="inf-card-title">⚠️ Inconsistencias detectadas</div>
+    <p style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">Casos que conviene revisar con los subjefes. No son errores en los datos, solo señales que ameritan verificación.</p>
+    <div class="inf-summary">
+      <div class="inf-pill"><div class="inf-pill-label">Casos</div><div class="inf-pill-value">${issues.length}</div></div>
+    </div>`;
+  if(!issues.length){
+    html += `<div class="inf-empty">✅ No se detectaron inconsistencias en el período.</div></div>`;
+    document.getElementById('infContent').innerHTML = html;
+    return;
+  }
+  html += `<table class="inf-table">
+    <thead><tr><th>Fecha</th><th>Trabajador</th><th>Tipo</th><th>Detalle</th></tr></thead>
+    <tbody>${issues.map(i=>`<tr class="inc-row">
+      <td>${fDMY(i.fecha)}</td>
+      <td>${i.trabajador}<div style="font-size:9px;color:var(--muted)">${i.subjefe} · ${i.predio}</div></td>
+      <td><b>${i.tipo}</b></td>
+      <td>${i.detalle}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+  document.getElementById('infContent').innerHTML = html;
+}
+
 
 // ══════════════════════════════════════════════
 // SCREEN SWITCHER
