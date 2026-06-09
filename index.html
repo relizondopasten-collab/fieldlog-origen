@@ -429,6 +429,21 @@ select:focus,input:focus{border-color:var(--green)}
       <div class="form-row"><label>N° plantas</label><input type="number" id="nP" placeholder="1500" min="0"></div>
       <button class="btn btn-primary" id="addWBtn" onclick="addW()">Agregar trabajador</button>
     </div>
+    <!-- configuración de costos (solo admin) -->
+    <div id="costosConfigSection" style="display:none">
+      <div class="card">
+        <div class="card-title">💰 Costos del personal</div>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5">Estos valores se usan para calcular el costo por hora trabajada en los informes. Cuando cambie el sueldo mínimo legal, actualízalo aquí.</p>
+        <div class="form-row"><label>Sueldo mínimo mensual (CLP)</label><input type="number" id="cfgSueldoMin" placeholder="539000" min="0" step="1000"></div>
+        <div class="form-row"><label>Bono / extra fijo mensual (CLP)</label><input type="number" id="cfgBonoExtra" placeholder="350000" min="0" step="1000"></div>
+        <div class="form-row"><label>Jornada semanal (horas)</label><input type="number" id="cfgHorasSemana" placeholder="42" min="1" max="60"></div>
+        <div id="cfgCostoCalculado" style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;margin-bottom:9px;font-size:12px;line-height:1.6">
+          <div style="font-weight:700;color:var(--dark);margin-bottom:4px">Cálculo derivado:</div>
+          <div id="cfgCostoTexto">—</div>
+        </div>
+        <button class="btn btn-primary" onclick="saveCostosConfig()">Guardar configuración</button>
+      </div>
+    </div>
     <!-- usuarios del sistema (solo admin) -->
     <div id="usersAdminSection" style="display:none">
       <div class="card">
@@ -584,6 +599,14 @@ let usersCache = [];   // all system users
 let cultivosCache = [];   // catálogo de cultivos desde Firestore: [{id,nombre,activo,usaMesPlantacion}]
 let modulosCache  = {};   // {fincaId: [módulos]} desde Firestore
 
+// Configuración de costos (editable desde la pantalla Config, solo admins)
+// Defaults: sueldo mínimo Chile vigente desde 01/01/2026 según Ley N°21.751
+let costosConfig = {
+  sueldoMinimo: 539000,
+  bonoExtra: 350000,
+  horasSemana: 42
+};
+
 // Listeners to unsubscribe on predio change
 let unsubRegistros = null;
 let unsubCiclos    = {};
@@ -706,18 +729,97 @@ function bootApp(){
 // No bloquea: si falla, la app sigue funcionando con los valores por defecto del código.
 async function loadCatalogos(){
   try{
-    const [cultSnap, modSnap] = await Promise.all([
+    const [cultSnap, modSnap, costoSnap] = await Promise.all([
       db.collection('cultivos').get(),
-      db.collection('modulos').get()
+      db.collection('modulos').get(),
+      db.collection('config').doc('costos').get()
     ]);
     cultivosCache = cultSnap.docs
       .map(d=>({id:d.id, ...d.data()}))
       .filter(c=>c.activo!==false);
     modulosCache = {};
     modSnap.docs.forEach(d=>{ modulosCache[d.id] = (d.data().items||[]); });
+    if(costoSnap.exists){
+      const data = costoSnap.data();
+      if(typeof data.sueldoMinimo === 'number') costosConfig.sueldoMinimo = data.sueldoMinimo;
+      if(typeof data.bonoExtra === 'number') costosConfig.bonoExtra = data.bonoExtra;
+      if(typeof data.horasSemana === 'number') costosConfig.horasSemana = data.horasSemana;
+    }
   }catch(e){
     console.warn('No se pudieron cargar catálogos de Firestore:', e.message);
   }
+}
+
+// ══════════════════════════════════════════════
+// CONFIGURACIÓN DE COSTOS (solo admin)
+// ══════════════════════════════════════════════
+// Calcula el costo por hora basado en sueldo mínimo + bono extra / horas mensuales.
+// Horas mensuales = horasSemana × 52 / 12 (estándar para conversión mes/semana).
+function costoPorHora(){
+  const horasMes = costosConfig.horasSemana * 52 / 12;
+  if(horasMes<=0) return 0;
+  return (costosConfig.sueldoMinimo + costosConfig.bonoExtra) / horasMes;
+}
+
+function fmtCLP(n){
+  if(n===null||n===undefined||isNaN(n)) return '—';
+  return '$' + Math.round(n).toLocaleString('es-CL');
+}
+
+// Llena los inputs y el cálculo derivado en la pantalla de Config
+function renderCostosConfig(){
+  const sm = document.getElementById('cfgSueldoMin');
+  const be = document.getElementById('cfgBonoExtra');
+  const hs = document.getElementById('cfgHorasSemana');
+  const txt = document.getElementById('cfgCostoTexto');
+  if(!sm) return; // todavía no está renderizado
+  sm.value = costosConfig.sueldoMinimo;
+  be.value = costosConfig.bonoExtra;
+  hs.value = costosConfig.horasSemana;
+  // Listener en vivo para actualizar el cálculo mientras escribe
+  [sm,be,hs].forEach(el=>{
+    el.oninput = ()=>updateCostoCalculadoView();
+  });
+  updateCostoCalculadoView();
+}
+
+function updateCostoCalculadoView(){
+  const sm = parseInt(document.getElementById('cfgSueldoMin').value)||0;
+  const be = parseInt(document.getElementById('cfgBonoExtra').value)||0;
+  const hs = parseInt(document.getElementById('cfgHorasSemana').value)||42;
+  const sueldoTotal = sm + be;
+  const horasMes = hs * 52 / 12;
+  const cph = horasMes>0 ? sueldoTotal/horasMes : 0;
+  const txt = document.getElementById('cfgCostoTexto');
+  txt.innerHTML =
+    `Sueldo total mensual: <b>${fmtCLP(sueldoTotal)}</b> &nbsp; | &nbsp; ` +
+    `Horas/mes: <b>${horasMes.toFixed(1)} h</b> &nbsp; | &nbsp; ` +
+    `Costo por hora: <b>${fmtCLP(cph)}</b>`;
+}
+
+async function saveCostosConfig(){
+  if(!isAdmin()){ toast('Solo administradores'); return; }
+  const sm = parseInt(document.getElementById('cfgSueldoMin').value);
+  const be = parseInt(document.getElementById('cfgBonoExtra').value);
+  const hs = parseInt(document.getElementById('cfgHorasSemana').value);
+  if(isNaN(sm)||sm<=0){ toast('⚠️ Sueldo mínimo inválido'); return; }
+  if(isNaN(be)||be<0){ toast('⚠️ Bono extra inválido'); return; }
+  if(isNaN(hs)||hs<=0||hs>60){ toast('⚠️ Horas semanales inválidas (1-60)'); return; }
+  loading(true,'Guardando configuración…');
+  try{
+    await db.collection('config').doc('costos').set({
+      sueldoMinimo: sm,
+      bonoExtra: be,
+      horasSemana: hs,
+      updatedAt: Date.now(),
+      updatedBy: currentUser.uid
+    });
+    costosConfig = { sueldoMinimo: sm, bonoExtra: be, horasSemana: hs };
+    toast('✅ Configuración guardada');
+  }catch(e){
+    toast('Error: '+e.message);
+  }
+  loading(false);
 }
 
 function applyRoleUI(){
@@ -730,6 +832,10 @@ function applyRoleUI(){
   // Config: show users section only for admin
   document.getElementById('usersAdminSection').style.display=isAdmin()?'block':'none';
   document.getElementById('clearDataBtn').style.display=isAdmin()?'block':'none';
+  // Config: show costos section only for admin
+  const cs = document.getElementById('costosConfigSection');
+  if(cs) cs.style.display=isAdmin()?'block':'none';
+  if(isAdmin()) renderCostosConfig();
   // Add worker button: only admin
   document.getElementById('addWBtn').style.display=isAdmin()?'block':'none';
   // Informes button: admin, jefe, or autorizado
