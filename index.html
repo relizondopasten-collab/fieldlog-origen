@@ -434,11 +434,12 @@ select:focus,input:focus{border-color:var(--green)}
     <div id="infTabsWrap" style="display:none">
       <div style="display:flex;gap:4px;margin-bottom:10px;overflow-x:auto;padding-bottom:4px">
         <button class="inftab active" data-tab="progreal" onclick="switchInfTab('progreal')">📊 Prog vs Real</button>
+        <button class="inftab" data-tab="ciclos" onclick="switchInfTab('ciclos')">🌱 Por ciclo</button>
         <button class="inftab" data-tab="trabajadores" onclick="switchInfTab('trabajadores')">👤 Trabajadores</button>
         <button class="inftab" data-tab="labores" onclick="switchInfTab('labores')">🔧 Labores</button>
         <button class="inftab" data-tab="inconsist" onclick="switchInfTab('inconsist')">⚠️ Inconsistencias</button>
       </div>
-      <button class="btn btn-secondary" style="margin-bottom:10px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Descargar Excel completo (4 hojas)</button>
+      <button class="btn btn-secondary" style="margin-bottom:10px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Descargar Excel completo (5 hojas)</button>
       <div id="infContent"></div>
     </div>
   </div>
@@ -2286,6 +2287,18 @@ async function cargarYRenderInformes(){
         }catch(e){ /* sin acceso */ }
       }
     }
+    // 4. Ciclos de cada predio/subjefe (para clasificar por cultivo+época)
+    var ciclosInf = {};
+    for(const pid of preds){
+      ciclosInf[pid] = {};
+      const subs = subjefeSel ? [subjefeSel] : PREDIOS[pid].subjefes;
+      for(const sub of subs){
+        try{
+          const snap = await colCiclos(pid, sub).get();
+          ciclosInf[pid][sub] = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+        }catch(e){ ciclosInf[pid][sub] = []; }
+      }
+    }
     loading(false);
   }catch(e){
     loading(false);
@@ -2298,7 +2311,7 @@ async function cargarYRenderInformes(){
     return;
   }
 
-  infState.data = { registros, programaciones, workers, preds, desde, hasta, predioSel, subjefeSel };
+  infState.data = { registros, programaciones, workers, preds, desde, hasta, predioSel, subjefeSel, ciclos: ciclosInf };
   document.getElementById('infTabsWrap').style.display = 'block';
   switchInfTab(infState.tab);
 }
@@ -2313,6 +2326,7 @@ function switchInfTab(tab){
   infState.charts = {};
   if(!infState.data){ return; }
   if(tab==='progreal')      renderInfProgVsReal();
+  else if(tab==='ciclos')       renderInfCiclos();
   else if(tab==='trabajadores') renderInfTrabajadores();
   else if(tab==='labores')      renderInfLabores();
   else if(tab==='inconsist')    renderInfInconsistencias();
@@ -2519,6 +2533,110 @@ function calcInconsistencias(){
   return { issues };
 }
 
+// ─────────────────────────────────────────────
+// Resolución de ciclo por registro (para el informe por ciclo)
+// ─────────────────────────────────────────────
+// Busca el objeto ciclo de un registro: primero por cicloId guardado;
+// si no tiene (registros antiguos), lo deduce por fecha + cultivo del registro.
+function cicloDeRegistro(r){
+  const { ciclos } = infState.data;
+  const w = r._worker || {};
+  const sub = w.subjefe;
+  if(!sub) return null;
+  const lista = ((ciclos[r._predio] || {})[sub]) || [];
+  if(r.cicloId){
+    const c = lista.find(x=>x.id===r.cicloId);
+    if(c) return c;
+  }
+  // Deducción legacy: ciclo cuyo rango de fechas cubre la fecha del registro
+  // y cuyo cultivo coincida con el del registro (si el registro lo tiene)
+  const candidatos = lista.filter(c=>{
+    if(c.inicio && c.inicio > r.fecha) return false;
+    if(c.fin && c.fin < r.fecha) return false;
+    if(r.cultivo && c.cultivo && c.cultivo !== r.cultivo) return false;
+    return true;
+  });
+  return candidatos[0] || null;
+}
+
+// ─────────────────────────────────────────────
+// CÁLCULO: agrupación por ciclo (cultivo + época + subjefe)
+// ─────────────────────────────────────────────
+function calcCiclos(){
+  const { registros, programaciones, desde, hasta, ciclos } = infState.data;
+  const cph = costoPorHora();
+  const map = {}; // key: predio|subjefe|cicloId  →  {ciclo, subjefe, predio, prog, mesas, horas, trabajadores:Set}
+  const keyDe = (predio, subjefe, cicloId)=> predio+'|'+subjefe+'|'+(cicloId||'sin');
+
+  function bucket(predio, subjefe, cicloObj){
+    const k = keyDe(predio, subjefe, cicloObj ? cicloObj.id : null);
+    if(!map[k]) map[k] = {
+      ciclo: cicloObj || null,
+      subjefe,
+      predio: PREDIOS[predio] ? PREDIOS[predio].nombre : predio,
+      prog: 0, mesas: 0, horas: 0,
+      trabajadores: new Set()
+    };
+    return map[k];
+  }
+
+  // 1. Mesas programadas por ciclo (de las tareas de programación dentro del rango)
+  programaciones.forEach(p=>{
+    const listaC = ((ciclos[p.predio] || {})[p.subjefe]) || [];
+    Object.entries(p.dias).forEach(([dia, dato])=>{
+      if(dia < desde || dia > hasta) return;
+      normalizarTareasDia(dato).forEach(t=>{
+        if(!t.laborId) return;
+        const cObj = t.cicloId ? (listaC.find(c=>c.id===t.cicloId) || null) : null;
+        bucket(p.predio, p.subjefe, cObj).prog += t.metaMesas || 0;
+      });
+    });
+  });
+
+  // 2. Mesas y horas reales por ciclo (de los registros)
+  registros.forEach(r=>{
+    if(r.ausente || r.licencia || r.vacaciones) return;
+    const w = r._worker || {};
+    if(!w.subjefe) return;
+    const cObj = cicloDeRegistro(r);
+    const b = bucket(r._predio, w.subjefe, cObj);
+    const labs = r.labores || [{ mesas: r.mesas || 0, horas: r.horas || 0 }];
+    labs.forEach(l=>{
+      b.mesas += (l.mesas || 0);
+      b.horas += (l.horas || 0);
+    });
+    b.trabajadores.add(r._predio + '|' + r.workerId);
+  });
+
+  const rows = Object.values(map).map(v=>({
+    etiqueta: v.ciclo ? cicloLabel(v.ciclo) : 'Sin ciclo',
+    cultivo: v.ciclo && v.ciclo.cultivo ? (CNAMES[v.ciclo.cultivo] || v.ciclo.cultivo) : '—',
+    epoca: v.ciclo
+      ? (v.ciclo.cultivo==='pimenton' && v.ciclo.mesPlantacion
+          ? `${MESES[(v.ciclo.mesPlantacion.mes||1)-1]||'?'} ${v.ciclo.mesPlantacion.año||'?'}`
+          : (TNAMES[v.ciclo.temporada] || v.ciclo.temporada || '—'))
+      : '—',
+    subjefe: v.subjefe,
+    predio: v.predio,
+    estado: v.ciclo ? (v.ciclo.fin ? 'Cerrado' : 'Abierto') : '—',
+    prog: v.prog,
+    mesas: v.mesas,
+    horas: v.horas,
+    pct: v.prog > 0 ? Math.round(v.mesas / v.prog * 100) : null,
+    costoTotal: v.horas * cph,
+    trabajadores: v.trabajadores.size
+  }))
+  // Filtrar buckets totalmente vacíos (sin prog, sin mesas, sin horas)
+  .filter(r=> r.prog>0 || r.mesas>0 || r.horas>0)
+  .sort((a,b)=> b.mesas - a.mesas);
+
+  const totalProg  = rows.reduce((s,r)=>s+r.prog, 0);
+  const totalMesas = rows.reduce((s,r)=>s+r.mesas, 0);
+  const totalHoras = rows.reduce((s,r)=>s+r.horas, 0);
+  const totalCosto = rows.reduce((s,r)=>s+r.costoTotal, 0);
+  return { rows, totalProg, totalMesas, totalHoras, totalCosto, cph };
+}
+
 // HTML de los botones de descarga de cada informe
 function infDlBtnsHTML(tab){
   return `<div style="display:flex;gap:5px">
@@ -2576,6 +2694,72 @@ function renderInfProgVsReal(){
         tooltip: { callbacks:{ title:(items)=>{ const r=top[items[0].dataIndex]; return `${r.laborId}. ${r.labor}`; } } }
       },
       scales: { y: { beginAtZero: true, ticks:{ font:{size:10} } }, x: { ticks:{ font:{size:10} } } }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// INFORME: Por ciclo (cultivo + época)
+// ─────────────────────────────────────────────
+function renderInfCiclos(){
+  const { rows, totalProg, totalMesas, totalHoras, totalCosto, cph } = calcCiclos();
+
+  let html = `<div class="inf-card">
+    <div class="inf-hdr"><div class="inf-card-title">🌱 Resumen por ciclo</div>${infDlBtnsHTML('ciclos')}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Agrupa lo programado y lo trabajado por ciclo (cultivo + época). Costo por hora vigente: <b>${fmtCLP(cph)}</b></div>
+    <div class="inf-summary">
+      <div class="inf-pill"><div class="inf-pill-label">Ciclos</div><div class="inf-pill-value">${rows.length}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Prog.</div><div class="inf-pill-value">${totalProg.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Real</div><div class="inf-pill-value">${totalMesas.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Horas</div><div class="inf-pill-value">${totalHoras.toFixed(1)}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Costo</div><div class="inf-pill-value">${fmtCLP(totalCosto)}</div></div>
+    </div>`;
+  if(!rows.length){
+    html += `<div class="inf-empty">No hay datos asociados a ciclos en el período.</div></div>`;
+    document.getElementById('infContent').innerHTML = html;
+    return;
+  }
+  html += `<table class="inf-table">
+    <thead><tr><th>Ciclo</th><th>Subjefe</th><th class="num">Prog.</th><th class="num">Real</th><th class="num">%</th><th class="num">Horas</th><th class="num">Costo</th></tr></thead>
+    <tbody>${rows.map(r=>{
+      const pctTxt = r.pct===null ? '—' : `${r.pct}%`;
+      return `<tr>
+        <td>${r.etiqueta}<div style="font-size:9px;color:var(--muted)">${r.predio} · ${r.estado}</div></td>
+        <td>${r.subjefe}</td>
+        <td class="num">${r.prog.toLocaleString('es-CL')}</td>
+        <td class="num">${r.mesas.toLocaleString('es-CL')}</td>
+        <td class="num">${pctTxt}</td>
+        <td class="num">${r.horas.toFixed(1)}</td>
+        <td class="num">${fmtCLP(r.costoTotal)}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>
+  <div class="inf-chartwrap"><canvas id="chartCiclos"></canvas></div>
+  </div>`;
+  document.getElementById('infContent').innerHTML = html;
+
+  // Gráfico: barras prog vs real por ciclo (top 10 por mesas reales)
+  const top = rows.slice(0, 10);
+  const ctx = document.getElementById('chartCiclos').getContext('2d');
+  infState.charts.ciclos = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: top.map(r=>`${r.etiqueta} (${r.subjefe})`.replace(/🍅|🫑|🌶|🥬|❄️|☀️|🌱|🍂|🌞/g,'').trim()),
+      datasets: [
+        { label:'Programado', data: top.map(r=>r.prog),  backgroundColor:'#94a3b8' },
+        { label:'Real',       data: top.map(r=>r.mesas), backgroundColor:'#4ade80' }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: false,
+      plugins: {
+        legend: { position: 'bottom', labels:{ font:{ size:10 } } }
+      },
+      scales: {
+        y: { beginAtZero: true, ticks:{ font:{size:10} } },
+        x: { ticks:{ font:{size:9}, maxRotation: 45, minRotation: 30 } }
+      }
     }
   });
 }
@@ -2739,6 +2923,22 @@ function infExportMeta(){
 // Construye los datos tabulares (array de arrays) de cada informe para exportar.
 // Los números van como números (no texto) para que Excel los trate bien.
 function infTablaExport(tab){
+  if(tab==='ciclos'){
+    const { rows, totalProg, totalMesas, totalHoras, totalCosto, cph } = calcCiclos();
+    return {
+      titulo: 'Resumen por ciclo (cultivo + época)',
+      nota: `Costo por hora usado: ${fmtCLP(cph)} (sueldo base + bono, configurable en la app)`,
+      headers: ['Ciclo','Cultivo','Época','Subjefe','Predio','Estado','Programado','Real','% cumplimiento','Horas','Costo total CLP'],
+      body: rows.map(r=>[
+        r.etiqueta.replace(/🍅|🫑|🌶|🥬|❄️|☀️|🌱|🍂|🌞/g,'').trim(),
+        r.cultivo, r.epoca, r.subjefe, r.predio, r.estado,
+        r.prog, r.mesas, r.pct===null?'':r.pct,
+        Math.round(r.horas*10)/10, Math.round(r.costoTotal)
+      ]),
+      totales: ['TOTAL','','','','','', totalProg, totalMesas, '', Math.round(totalHoras*10)/10, Math.round(totalCosto)],
+      chartId: 'chartCiclos'
+    };
+  }
   if(tab==='progreal'){
     const { rows, totalProg, totalReal, totalHoras, pctGlobal } = calcProgVsReal();
     return {
@@ -2818,7 +3018,7 @@ function exportInfExcel(tab){
     const wb = XLSX.utils.book_new();
     const ws = infHojaExcel(tab);
     // Nombre de hoja: máx 31 caracteres permitidos por Excel
-    const sheetNames = { progreal:'Prog vs Real', trabajadores:'Trabajadores', labores:'Labores', inconsist:'Inconsistencias' };
+    const sheetNames = { progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', inconsist:'Inconsistencias' };
     XLSX.utils.book_append_sheet(wb, ws, sheetNames[tab] || 'Informe');
     XLSX.writeFile(wb, `fieldlog_${tab}_${m.suf}.xlsx`);
     toast('✅ Excel descargado');
@@ -2836,6 +3036,7 @@ function exportInfExcelTodo(){
     const wb = XLSX.utils.book_new();
     const tabs = [
       ['progreal','Prog vs Real'],
+      ['ciclos','Por ciclo'],
       ['trabajadores','Trabajadores'],
       ['labores','Labores'],
       ['inconsist','Inconsistencias']
@@ -2845,7 +3046,7 @@ function exportInfExcelTodo(){
       if(ws) XLSX.utils.book_append_sheet(wb, ws, nombre);
     });
     XLSX.writeFile(wb, `fieldlog_informes_${m.suf}.xlsx`);
-    toast('✅ Excel completo descargado (4 hojas)');
+    toast('✅ Excel completo descargado (5 hojas)');
   }catch(e){
     toast('Error al generar Excel: '+e.message);
   }
