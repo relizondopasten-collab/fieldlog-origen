@@ -340,6 +340,7 @@ select:focus,input:focus{border-color:var(--green)}
       <button class="nb"        onclick="showScr('avance',this)">Avance</button>
       <button class="nb"        onclick="showScr('ciclos',this)">Ciclos</button>
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
+      <button class="nb" id="btnBodega" style="display:none" onclick="showScr('bodega',this)">Bodega</button>
       <button class="nb"        onclick="showScr('config',this)">Config</button>
     </div>
   </div>
@@ -445,6 +446,68 @@ select:focus,input:focus{border-color:var(--green)}
   </div>
 
   <!-- CONFIG -->
+  <!-- BODEGA -->
+  <div id="screen-bodega" class="screen">
+    <div style="height:10px"></div>
+    <div class="emp-hdr">
+      <div class="emp-name">📦 Bodega y Aplicaciones</div>
+      <div class="emp-sub">Catálogo de productos fitosanitarios</div>
+    </div>
+
+    <!-- catálogo de productos -->
+    <div class="card">
+      <div class="card-title">🧪 Productos</div>
+      <div id="prodList"></div>
+      <div class="sec-div">Agregar producto</div>
+      <div class="form-row"><label>Nombre del producto</label><input type="text" id="pNombre" placeholder="Ej: Serenade"></div>
+      <div class="form-row"><label>Categoría</label>
+        <div style="display:flex;gap:6px">
+          <select id="pCategoria" style="flex:1"></select>
+          <button class="btn btn-sm" onclick="addCategoriaFito()" style="white-space:nowrap;background:var(--sand);color:var(--dark)">+ Nueva</button>
+        </div>
+      </div>
+      <div class="form-row"><label>Proveedor</label><input type="text" id="pProveedor" placeholder="Ej: Bayer, Anasac…"></div>
+      <div class="form-grid">
+        <div><label>Forma de aplicación</label>
+          <select id="pForma">
+            <option value="foliar">Foliar (desinfección)</option>
+            <option value="riego">Riego directo</option>
+            <option value="estanque">Estanque / biodigestor</option>
+          </select>
+        </div>
+        <div><label>Unidad de stock</label>
+          <select id="pUniStock">
+            <option value="L">Litros (L)</option>
+            <option value="kg">Kilos (kg)</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div><label>Unidad de dosis</label>
+          <select id="pUniDosis">
+            <option value="cc/100L">cc/100L</option>
+            <option value="g/100L">g/100L</option>
+            <option value="L/ha">L/ha</option>
+            <option value="kg/ha">kg/ha</option>
+          </select>
+        </div>
+        <div><label>Stock mínimo (alerta)</label>
+          <div style="display:flex;gap:6px">
+            <input type="number" id="pStockMin" placeholder="500" min="0" step="any" style="flex:1">
+            <select id="pStockMinUni" style="width:80px">
+              <option value="ml">ml</option>
+              <option value="g">g</option>
+              <option value="L">L</option>
+              <option value="kg">kg</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="addProducto()">Agregar producto</button>
+    </div>
+  </div>
+
+
   <div id="screen-config" class="screen">
     <div style="height:10px"></div>
     <div class="emp-hdr">
@@ -636,6 +699,10 @@ let progCache  = {};   // {mondayIso: progDoc}
 let usersCache = [];   // all system users
 let cultivosCache = [];   // catálogo de cultivos desde Firestore: [{id,nombre,activo,usaMesPlantacion}]
 let modulosCache  = {};   // {fincaId: [módulos]} desde Firestore
+let productosCache = [];  // catálogo de productos fitosanitarios
+let categoriasFitoCache = []; // categorías de productos (editables desde la app)
+const CATEGORIAS_FITO_DEFAULT = ['Insecticida / control polillas','Fungicida','Bioestimulante','Fertilizante','Nematicida','Coadyuvante'];
+const FORMAS_APLIC = {foliar:'Foliar (desinfección)', riego:'Riego directo', estanque:'Estanque / biodigestor'};
 
 // Configuración de costos (editable desde la pantalla Config, solo admins)
 // Defaults: sueldo mínimo Chile vigente desde 01/01/2026 según Ley N°21.751
@@ -767,16 +834,25 @@ function bootApp(){
 // No bloquea: si falla, la app sigue funcionando con los valores por defecto del código.
 async function loadCatalogos(){
   try{
-    const [cultSnap, modSnap, costoSnap] = await Promise.all([
+    const [cultSnap, modSnap, costoSnap, prodSnap, catSnap] = await Promise.all([
       db.collection('cultivos').get(),
       db.collection('modulos').get(),
-      db.collection('config').doc('costos').get()
+      db.collection('config').doc('costos').get(),
+      db.collection('productos').get(),
+      db.collection('config').doc('categoriasFito').get()
     ]);
     cultivosCache = cultSnap.docs
       .map(d=>({id:d.id, ...d.data()}))
       .filter(c=>c.activo!==false);
     modulosCache = {};
     modSnap.docs.forEach(d=>{ modulosCache[d.id] = (d.data().items||[]); });
+    productosCache = prodSnap.docs
+      .map(d=>({id:d.id, ...d.data()}))
+      .filter(p=>p.activo!==false)
+      .sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+    categoriasFitoCache = (catSnap.exists && Array.isArray(catSnap.data().items) && catSnap.data().items.length)
+      ? catSnap.data().items.slice()
+      : CATEGORIAS_FITO_DEFAULT.slice();
     if(costoSnap.exists){
       const data = costoSnap.data();
       if(typeof data.sueldoMinimo === 'number') costosConfig.sueldoMinimo = data.sueldoMinimo;
@@ -860,6 +936,117 @@ async function saveCostosConfig(){
   loading(false);
 }
 
+// ══════════════════════════════════════════════
+// BODEGA Y APLICACIONES — Fase A1: catálogo de productos (solo admin)
+// ══════════════════════════════════════════════
+function escH(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function renderBodega(){
+  if(!isAdmin()) return;
+  fillCategoriasSelect();
+  renderProductosList();
+}
+
+function fillCategoriasSelect(){
+  const sel = document.getElementById('pCategoria');
+  if(!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = categoriasFitoCache.map(c=>`<option value="${escH(c)}">${escH(c)}</option>`).join('');
+  if(prev && categoriasFitoCache.includes(prev)) sel.value = prev;
+}
+
+function renderProductosList(){
+  const box = document.getElementById('prodList');
+  if(!box) return;
+  if(!productosCache.length){
+    box.innerHTML = `<p style="font-size:12px;color:var(--muted);padding:4px 0">Aún no hay productos cargados.</p>`;
+    return;
+  }
+  box.innerHTML = productosCache.map(p=>{
+    const forma = FORMAS_APLIC[p.forma]||p.forma||'—';
+    const min = (p.stockMinimo!==undefined && p.stockMinimo!==null && p.stockMinimo!=='')
+      ? `${p.stockMinimo} ${escH(p.stockMinimoUnidad||'')}` : '—';
+    return `<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--sand)">
+      <div style="flex:1">
+        <div style="font-weight:700;color:var(--dark)">${escH(p.nombre)}</div>
+        <div style="font-size:11px;color:var(--muted);line-height:1.5">
+          <span class="badge" style="background:var(--cream);color:var(--dark)">${escH(p.categoria||'sin categoría')}</span>
+          ${p.proveedor?` · ${escH(p.proveedor)}`:''}<br>
+          ${forma} · stock en ${escH(p.unidadStock||'—')} · dosis ${escH(p.unidadDosis||'—')} · mín: ${min}
+        </div>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="delProducto('${p.id}')">✕</button>
+    </div>`;
+  }).join('');
+}
+
+async function addProducto(){
+  if(!isAdmin()){ toast('Solo administradores'); return; }
+  const nombre = document.getElementById('pNombre').value.trim();
+  const categoria = document.getElementById('pCategoria').value;
+  const proveedor = document.getElementById('pProveedor').value.trim();
+  const forma = document.getElementById('pForma').value;
+  const unidadStock = document.getElementById('pUniStock').value;
+  const unidadDosis = document.getElementById('pUniDosis').value;
+  const stockMinRaw = document.getElementById('pStockMin').value;
+  const stockMinimoUnidad = document.getElementById('pStockMinUni').value;
+  if(!nombre){ toast('⚠️ Escribe el nombre del producto'); return; }
+  if(productosCache.find(p=>(p.nombre||'').toLowerCase()===nombre.toLowerCase())){ toast('⚠️ Ya existe un producto con ese nombre'); return; }
+  const stockMinimo = stockMinRaw===''?null:parseFloat(stockMinRaw);
+  if(stockMinRaw!=='' && (isNaN(stockMinimo)||stockMinimo<0)){ toast('⚠️ Stock mínimo inválido'); return; }
+  loading(true,'Guardando producto…');
+  try{
+    const ref = await db.collection('productos').add({
+      nombre, categoria, proveedor, forma, unidadStock, unidadDosis,
+      stockMinimo, stockMinimoUnidad,
+      activo:true, createdAt:Date.now(), createdBy:currentUser.uid
+    });
+    productosCache.push({id:ref.id, nombre, categoria, proveedor, forma, unidadStock, unidadDosis, stockMinimo, stockMinimoUnidad, activo:true});
+    productosCache.sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+    document.getElementById('pNombre').value='';
+    document.getElementById('pProveedor').value='';
+    document.getElementById('pStockMin').value='';
+    renderProductosList();
+    toast('✅ Producto agregado');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+async function delProducto(id){
+  if(!isAdmin()){ toast('Solo admin'); return; }
+  const p = productosCache.find(x=>x.id===id);
+  if(!p) return;
+  if(!confirm(`¿Eliminar el producto "${p.nombre}"?`)) return;
+  loading(true,'Eliminando…');
+  try{
+    await db.collection('productos').doc(id).delete();
+    productosCache = productosCache.filter(x=>x.id!==id);
+    renderProductosList();
+    toast('Producto eliminado');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+async function addCategoriaFito(){
+  if(!isAdmin()){ toast('Solo admin'); return; }
+  const nombre = (prompt('Nombre de la nueva categoría:')||'').trim();
+  if(!nombre) return;
+  const existe = categoriasFitoCache.find(c=>c.toLowerCase()===nombre.toLowerCase());
+  if(existe){ toast('Esa categoría ya existe'); document.getElementById('pCategoria').value = existe; return; }
+  const nueva = categoriasFitoCache.concat([nombre]);
+  loading(true,'Guardando categoría…');
+  try{
+    await db.collection('config').doc('categoriasFito').set({
+      items: nueva, updatedAt: Date.now(), updatedBy: currentUser.uid
+    });
+    categoriasFitoCache = nueva;
+    fillCategoriasSelect();
+    document.getElementById('pCategoria').value = nombre;
+    toast('✅ Categoría agregada');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
 function applyRoleUI(){
   // Predio tabs: subjefes only see their predio
   document.querySelectorAll('.ptab').forEach(tab=>{
@@ -879,6 +1066,8 @@ function applyRoleUI(){
   // Informes button: admin, jefe, or autorizado
   const bi=document.getElementById('btnInformes');
   if(bi)bi.style.display=canViewInformes()?'':'none';
+  const bb=document.getElementById('btnBodega');
+  if(bb)bb.style.display=isAdmin()?'':'none';
 }
 
 // ══════════════════════════════════════════════
@@ -3153,6 +3342,7 @@ function showScr(name,btn){
   if(name==='config')  renderConfig();
   if(name==='prog')    {populateProgSubjefe();renderProg();}
   if(name==='informes')initInformes();
+  if(name==='bodega')  renderBodega();
 }
 
 // ══════════════════════════════════════════════
