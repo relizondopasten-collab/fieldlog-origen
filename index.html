@@ -340,6 +340,7 @@ select:focus,input:focus{border-color:var(--green)}
       <button class="nb"        onclick="showScr('avance',this)">Avance</button>
       <button class="nb"        onclick="showScr('ciclos',this)">Ciclos</button>
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
+      <button class="nb" id="btnAplic" style="display:none" onclick="showScr('aplic',this)">Aplicaciones</button>
       <button class="nb" id="btnBodega" style="display:none" onclick="showScr('bodega',this)">Bodega</button>
       <button class="nb"        onclick="showScr('config',this)">Config</button>
     </div>
@@ -446,7 +447,29 @@ select:focus,input:focus{border-color:var(--green)}
   </div>
 
   <!-- CONFIG -->
-  <!-- BODEGA -->
+  <!-- APLICACIONES -->
+  <div id="screen-aplic" class="screen">
+    <div style="height:10px"></div>
+    <div class="emp-hdr">
+      <div class="emp-name">💧 Aplicaciones</div>
+      <div class="emp-sub">Registro de desinfecciones foliares y aplicaciones vía riego</div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;gap:6px;margin-bottom:10px">
+        <button class="btn btn-sm" id="aplTabFoliar" onclick="aplSetTab('foliar')" style="flex:1">🍃 Foliar</button>
+        <button class="btn btn-sm" id="aplTabRiego" onclick="aplSetTab('riego')" style="flex:1;background:var(--sand);color:var(--dark)">💦 Riego</button>
+      </div>
+      <div id="aplBody"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">📋 Últimas aplicaciones</div>
+      <div id="aplList"></div>
+    </div>
+  </div>
+
+
   <div id="screen-bodega" class="screen">
     <div style="height:10px"></div>
     <div class="emp-hdr">
@@ -706,6 +729,8 @@ let cultivosCache = [];   // catálogo de cultivos desde Firestore: [{id,nombre,
 let modulosCache  = {};   // {fincaId: [módulos]} desde Firestore
 let productosCache = [];  // catálogo de productos fitosanitarios
 let categoriasFitoCache = []; // categorías de productos (editables desde la app)
+let terrenoCache = {};    // {predioId: {modulos:{nombre:ha}, sectores:{nombre:ha}}}
+let ciclosAllCache = {};  // {predioId: [{...ciclo, subjefe}]} — ciclos abiertos de TODOS los predios (para aplicaciones)
 const CATEGORIAS_FITO_DEFAULT = ['Insecticida / control polillas','Fungicida','Bioestimulante','Fertilizante','Nematicida','Coadyuvante'];
 // Formas de aplicación: se eligen al REGISTRAR la aplicación (Fase C), no en el producto,
 // porque un mismo producto (ej. Serenade) puede aplicarse foliar o vía riego.
@@ -873,6 +898,12 @@ async function loadCatalogos(){
     categoriasFitoCache = (catSnap.exists && Array.isArray(catSnap.data().items) && catSnap.data().items.length)
       ? catSnap.data().items.slice()
       : CATEGORIAS_FITO_DEFAULT.slice();
+    // terreno (módulos y sectores con superficie)
+    try{
+      const terrSnap = await db.collection('terreno').get();
+      terrenoCache = {};
+      terrSnap.docs.forEach(d=>{ terrenoCache[d.id] = d.data()||{}; });
+    }catch(e){ terrenoCache = {}; }
     if(costoSnap.exists){
       const data = costoSnap.data();
       if(typeof data.sueldoMinimo === 'number') costosConfig.sueldoMinimo = data.sueldoMinimo;
@@ -1321,6 +1352,274 @@ async function confirmImport(){
 }
 
 
+// ══════════════════════════════════════════════
+// APLICACIONES — Fase C1 (foliar) + C2 (riego, luego)
+// Modelo de una aplicación (colección raíz 'aplicaciones'):
+//   { tipo:'foliar', fecha, receta:[{productoId,nombre,unidadStock,dosis}],  // dosis por 100L
+//     destinos:[{predioId,unidad,litros,cicloId,cultivo,ha}],                // unidad = módulo
+//     registradoPor, registradoPorNombre, createdAt }
+// La FORMA (foliar/riego) se decide aquí, no en el producto.
+// En C1 NO se descuenta stock (eso lo hará el bodeguero, Fase C3).
+// ══════════════════════════════════════════════
+let aplTab = 'foliar';
+let aplFol = null;   // estado del formulario foliar
+
+function initAplic(){
+  if(!isAdmin()) return;
+  aplTab='foliar';
+  aplFol = { fecha: todayIso, receta:[{productoId:'',dosis:''}], destinos:[{predioId:'',unidad:'',litros:''}] };
+  loadCiclosAll().then(()=>{ aplSetTab('foliar'); renderAplList(); });
+}
+
+// Carga ciclos abiertos de TODOS los predios (get puntual, no listener)
+async function loadCiclosAll(){
+  ciclosAllCache = {};
+  try{
+    for(const pid of Object.keys(PREDIOS)){
+      ciclosAllCache[pid]=[];
+      for(const sub of PREDIOS[pid].subjefes){
+        const snap = await colCiclos(pid,sub).get();
+        snap.docs.forEach(d=>{
+          const c={id:d.id,subjefe:sub,...d.data()};
+          if(c.fin===null || c.fin===undefined) ciclosAllCache[pid].push(c);
+        });
+      }
+    }
+  }catch(e){ /* sin ciclos */ }
+}
+
+// Base de un módulo: "1A"/"1B" -> "1" (para cruzar con ciclos que usan "1")
+function moduloBase(m){ const s=String(m); const b=s.replace(/[A-Za-z].*$/,'').trim(); return b||s; }
+
+// Ciclos abiertos que cubren un módulo dado (match exacto o por número base)
+function ciclosDeModulo(predioId, modulo){
+  if(!modulo) return [];
+  const base = moduloBase(modulo);
+  return (ciclosAllCache[predioId]||[]).filter(c=>{
+    const mods=(c.modulos||[]).map(String);
+    return mods.includes(String(modulo)) || mods.map(moduloBase).includes(base);
+  });
+}
+
+// Superficie (ha) de un módulo del terreno
+function haModulo(predioId, modulo){
+  const t=terrenoCache[predioId]; if(!t||!t.modulos) return null;
+  const v=t.modulos[modulo]; return (v===undefined||v===null)?null:Number(v);
+}
+function modulosDePredio(predioId){
+  const t=terrenoCache[predioId];
+  if(!t||!t.modulos) return [];
+  return Object.keys(t.modulos).sort((a,b)=>{
+    const na=parseFloat(a), nb=parseFloat(b);
+    if(!isNaN(na)&&!isNaN(nb)&&na!==nb) return na-nb;
+    return a.localeCompare(b);
+  });
+}
+
+function aplSetTab(t){
+  aplTab=t;
+  const bF=document.getElementById('aplTabFoliar'), bR=document.getElementById('aplTabRiego');
+  if(bF&&bR){
+    const on='', off='background:var(--sand);color:var(--dark)';
+    bF.style.cssText='flex:1;'+(t==='foliar'?on:off);
+    bR.style.cssText='flex:1;'+(t==='riego'?on:off);
+  }
+  if(t==='foliar') renderFoliarForm();
+  else document.getElementById('aplBody').innerHTML='<p style="font-size:12px;color:var(--muted);padding:10px 0">El registro vía riego (estanques por sector) se construye en la siguiente etapa (C2).</p>';
+}
+
+function renderFoliarForm(){
+  const box=document.getElementById('aplBody');
+  if(!productosCache.length){
+    box.innerHTML='<p style="font-size:12px;color:var(--red);padding:8px 0">No hay productos cargados. Carga productos en Bodega antes de registrar aplicaciones.</p>';
+    return;
+  }
+  const prodOpts = p=>`<option value="">— producto —</option>`+productosCache.map(x=>`<option value="${x.id}"${x.id===p?' selected':''}>${escH(x.nombre)}</option>`).join('');
+  const predOpts = pid=>`<option value="">— predio —</option>`+Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+
+  // RECETA
+  let recetaH = aplFol.receta.map((r,i)=>{
+    const prod = productosCache.find(x=>x.id===r.productoId);
+    const uni = prod ? (prod.unidadStock==='L'?'cc/100L':'g/100L') : 'dosis/100L';
+    return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <select onchange="aplFolSet('receta',${i},'productoId',this.value)" style="flex:1">${prodOpts(r.productoId)}</select>
+      <input type="number" placeholder="dosis" value="${r.dosis}" oninput="aplFolSet('receta',${i},'dosis',this.value)" style="width:80px" min="0" step="any">
+      <span style="font-size:10px;color:var(--muted);width:52px">${uni}</span>
+      ${aplFol.receta.length>1?`<button class="btn btn-danger btn-sm" onclick="aplFolDel('receta',${i})" style="padding:4px 8px">✕</button>`:'<span style="width:28px"></span>'}
+    </div>`;
+  }).join('');
+
+  // DESTINOS
+  let destH = aplFol.destinos.map((d,i)=>{
+    const mods = d.predioId ? modulosDePredio(d.predioId) : [];
+    const modOpts = `<option value="">— módulo —</option>`+mods.map(m=>{
+      const ha=haModulo(d.predioId,m);
+      return `<option value="${escH(m)}"${m===d.unidad?' selected':''}>Mód ${escH(m)}${ha!==null?` (${ha} ha)`:''}</option>`;
+    }).join('');
+    // ciclo / cultivo
+    let cicloH='';
+    if(d.predioId && d.unidad){
+      const ciclos=ciclosDeModulo(d.predioId,d.unidad);
+      if(ciclos.length===1){
+        cicloH=`<div style="font-size:10.5px;color:var(--green,#2E7D32);padding:2px 0">🌱 ${escH(cicloLabel(ciclos[0]))} <span style="color:var(--muted)">(auto)</span></div>`;
+      }else if(ciclos.length>1){
+        cicloH=`<select onchange="aplFolSet('destinos',${i},'cicloId',this.value)" style="margin-top:4px"><option value="">— elige ciclo —</option>${ciclos.map(c=>`<option value="${c.id}"${c.id===d.cicloId?' selected':''}>${escH(cicloLabel(c))}</option>`).join('')}</select>`;
+      }else{
+        // sin ciclo: elegir de todos los abiertos del predio
+        const todos=ciclosAllCache[d.predioId]||[];
+        cicloH=`<div style="font-size:10.5px;color:#B45309;padding:2px 0">⚠ sin ciclo para este módulo</div>`+
+          (todos.length?`<select onchange="aplFolSet('destinos',${i},'cicloId',this.value)" style="margin-top:2px"><option value="">— elige cultivo —</option>${todos.map(c=>`<option value="${c.id}"${c.id===d.cicloId?' selected':''}>${escH(cicloLabel(c))} · ${escH(c.subjefe)}</option>`).join('')}</select>`:'');
+      }
+    }
+    return `<div style="border:1px solid var(--sand);border-radius:9px;padding:8px;margin-bottom:8px;background:var(--cream)">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
+        <select onchange="aplFolSet('destinos',${i},'predioId',this.value)" style="flex:1">${predOpts(d.predioId)}</select>
+        <select onchange="aplFolSet('destinos',${i},'unidad',this.value)" style="flex:1"${d.predioId?'':' disabled'}>${modOpts}</select>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <label style="font-size:11px;color:var(--muted)">Litros de agua:</label>
+        <input type="number" placeholder="Ej: 2000" value="${d.litros}" oninput="aplFolSet('destinos',${i},'litros',this.value)" style="width:110px" min="0" step="any">
+        ${aplFol.destinos.length>1?`<button class="btn btn-danger btn-sm" onclick="aplFolDel('destinos',${i})" style="padding:4px 8px;margin-left:auto">✕</button>`:''}
+      </div>
+      ${cicloH}
+    </div>`;
+  }).join('');
+
+  // CONSUMO calculado
+  const consumo = calcFolConsumo();
+  let consumoH='';
+  if(consumo.total>0 && consumo.items.length){
+    consumoH=`<div class="sec-div">Consumo calculado</div>
+      <div style="font-size:11px;color:var(--dark);line-height:1.7">
+        <b>Total agua: ${fmtNum(consumo.total,0)} L</b> en ${aplFol.destinos.filter(d=>d.unidad&&parseFloat(d.litros)>0).length} destino(s)<br>
+        ${consumo.items.map(it=>`${escH(it.nombre)}: <b>${fmtNum(it.total)} ${escH(it.unidadStock==='L'?'cc':'g')}</b> (${fmtNum(it.total/1000,3)} ${escH(it.unidadStock)})`).join('<br>')}
+      </div>`;
+  }
+
+  box.innerHTML=`
+    <div class="form-row"><label>Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value"></div>
+    <div class="sec-div">Receta (por 100 L de agua)</div>
+    ${recetaH}
+    <button class="btn btn-sm" onclick="aplFolAdd('receta')" style="background:var(--sand);color:var(--dark);margin-bottom:6px">+ Producto</button>
+    <div class="sec-div">Destinos (módulo + litros aplicados)</div>
+    ${destH}
+    <button class="btn btn-sm" onclick="aplFolAdd('destinos')" style="background:var(--sand);color:var(--dark)">+ Destino</button>
+    ${consumoH}
+    <button class="btn btn-primary" style="margin-top:12px" onclick="guardarFoliar()">Registrar aplicación</button>
+  `;
+}
+
+function aplFolSet(grupo,i,campo,val){
+  aplFol[grupo][i][campo]=val;
+  // al cambiar predio, resetear módulo y ciclo
+  if(grupo==='destinos'&&campo==='predioId'){ aplFol.destinos[i].unidad=''; aplFol.destinos[i].cicloId=''; }
+  if(grupo==='destinos'&&campo==='unidad'){ aplFol.destinos[i].cicloId=''; }
+  renderFoliarForm();
+}
+function aplFolAdd(grupo){
+  if(grupo==='receta') aplFol.receta.push({productoId:'',dosis:''});
+  else aplFol.destinos.push({predioId:'',unidad:'',litros:''});
+  renderFoliarForm();
+}
+function aplFolDel(grupo,i){ aplFol[grupo].splice(i,1); renderFoliarForm(); }
+
+// Consumo por producto = dosis × (litros_totales / 100)
+function calcFolConsumo(){
+  const totalAgua = aplFol.destinos.reduce((s,d)=>s+(parseFloat(d.litros)||0),0);
+  const items=[];
+  aplFol.receta.forEach(r=>{
+    const prod=productosCache.find(x=>x.id===r.productoId);
+    const dosis=parseFloat(r.dosis);
+    if(prod && !isNaN(dosis)){
+      items.push({productoId:prod.id, nombre:prod.nombre, unidadStock:prod.unidadStock, dosis, total: dosis*totalAgua/100});
+    }
+  });
+  return {total:totalAgua, items};
+}
+
+async function guardarFoliar(){
+  if(!isAdmin()){ toast('Solo admin'); return; }
+  // validar receta
+  const receta = aplFol.receta.filter(r=>r.productoId && parseFloat(r.dosis)>0);
+  if(!receta.length){ toast('⚠️ Agrega al menos un producto con dosis'); return; }
+  // validar destinos
+  const destinos = aplFol.destinos.filter(d=>d.predioId && d.unidad && parseFloat(d.litros)>0);
+  if(!destinos.length){ toast('⚠️ Agrega al menos un destino con litros'); return; }
+
+  // armar receta con datos del producto
+  const recetaData = receta.map(r=>{
+    const p=productosCache.find(x=>x.id===r.productoId);
+    return {productoId:p.id, nombre:p.nombre, unidadStock:p.unidadStock, dosis:parseFloat(r.dosis)};
+  });
+  // armar destinos con ciclo/cultivo/ha
+  const destData = destinos.map(d=>{
+    const ciclos=ciclosDeModulo(d.predioId,d.unidad);
+    let cicloId=d.cicloId||'', cultivo='';
+    if(!cicloId && ciclos.length===1){ cicloId=ciclos[0].id; }
+    // resolver cultivo desde el ciclo elegido
+    let cobj=null;
+    for(const pid of Object.keys(ciclosAllCache)){
+      const f=(ciclosAllCache[pid]||[]).find(c=>c.id===cicloId);
+      if(f){ cobj=f; break; }
+    }
+    if(cobj) cultivo=cobj.cultivo||'';
+    return {predioId:d.predioId, unidad:String(d.unidad), litros:parseFloat(d.litros),
+            cicloId, cultivo, ha:haModulo(d.predioId,d.unidad)};
+  });
+
+  loading(true,'Registrando…');
+  try{
+    await db.collection('aplicaciones').add({
+      tipo:'foliar', fecha:aplFol.fecha,
+      receta:recetaData, destinos:destData,
+      registradoPor:currentUser.uid,
+      registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+      createdAt:Date.now()
+    });
+    aplFol={ fecha:todayIso, receta:[{productoId:'',dosis:''}], destinos:[{predioId:'',unidad:'',litros:''}] };
+    renderFoliarForm();
+    renderAplList();
+    toast('✅ Aplicación registrada');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+async function renderAplList(){
+  const box=document.getElementById('aplList');
+  if(!box) return;
+  box.innerHTML='<p style="font-size:11px;color:var(--muted)">Cargando…</p>';
+  try{
+    const snap=await db.collection('aplicaciones').orderBy('createdAt','desc').limit(15).get();
+    if(snap.empty){ box.innerHTML='<p style="font-size:12px;color:var(--muted)">Aún no hay aplicaciones registradas.</p>'; return; }
+    box.innerHTML=snap.docs.map(doc=>{
+      const a=doc.data();
+      const receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.dosis)}${r.unidadStock==='L'?'cc':'g'}`).join(' + ');
+      const dests=(a.destinos||[]).map(d=>`${escH(PREDIOS[d.predioId]?PREDIOS[d.predioId].nombre:d.predioId)} mód ${escH(d.unidad)}: ${fmtNum(d.litros,0)}L`).join(' · ');
+      const totalAgua=(a.destinos||[]).reduce((s,d)=>s+(Number(d.litros)||0),0);
+      return `<div style="padding:8px 0;border-bottom:1px solid var(--sand)">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+          <div style="flex:1">
+            <div style="font-size:11px;color:var(--muted)">${escH(fD(a.fecha))} · ${escH(a.registradoPorNombre||'')} · ${fmtNum(totalAgua,0)}L</div>
+            <div style="font-size:12px;color:var(--dark);font-weight:600;margin:2px 0">${receta}</div>
+            <div style="font-size:11px;color:var(--muted)">${dests}</div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="delAplicacion('${doc.id}')">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){ box.innerHTML=`<p style="font-size:11px;color:var(--red)">Error: ${escH(e.message)}</p>`; }
+}
+
+async function delAplicacion(id){
+  if(!isAdmin()){ toast('Solo admin'); return; }
+  if(!confirm('¿Eliminar esta aplicación?')) return;
+  loading(true,'Eliminando…');
+  try{ await db.collection('aplicaciones').doc(id).delete(); renderAplList(); toast('Eliminada'); }
+  catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+
 function applyRoleUI(){
   // Predio tabs: subjefes only see their predio
   document.querySelectorAll('.ptab').forEach(tab=>{
@@ -1342,6 +1641,8 @@ function applyRoleUI(){
   if(bi)bi.style.display=canViewInformes()?'':'none';
   const bb=document.getElementById('btnBodega');
   if(bb)bb.style.display=isAdmin()?'':'none';
+  const ba=document.getElementById('btnAplic');
+  if(ba)ba.style.display=isAdmin()?'':'none';
 }
 
 // ══════════════════════════════════════════════
@@ -3617,6 +3918,7 @@ function showScr(name,btn){
   if(name==='prog')    {populateProgSubjefe();renderProg();}
   if(name==='informes')initInformes();
   if(name==='bodega')  renderBodega();
+  if(name==='aplic')   initAplic();
 }
 
 // ══════════════════════════════════════════════
