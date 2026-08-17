@@ -1363,11 +1363,13 @@ async function confirmImport(){
 // ══════════════════════════════════════════════
 let aplTab = 'foliar';
 let aplFol = null;   // estado del formulario foliar
+let aplRie = null;   // estado del formulario riego
 
 function initAplic(){
   if(!isAdmin()) return;
   aplTab='foliar';
   aplFol = { fecha: todayIso, receta:[{productoId:'',dosis:''}], destinos:[{predioId:'',unidad:'',litros:''}] };
+  aplRie = { fecha: todayIso, predioId:'', litrosEstanque:2250, receta:[{productoId:'',cantidad:''}], destinos:[{sector:'',litros:''}] };
   loadCiclosAll().then(()=>{ aplSetTab('foliar'); renderAplList(); });
 }
 
@@ -1425,7 +1427,7 @@ function aplSetTab(t){
     bR.style.cssText='flex:1;'+(t==='riego'?on:off);
   }
   if(t==='foliar') renderFoliarForm();
-  else document.getElementById('aplBody').innerHTML='<p style="font-size:12px;color:var(--muted);padding:10px 0">El registro vía riego (estanques por sector) se construye en la siguiente etapa (C2).</p>';
+  else renderRiegoForm();
 }
 
 function renderFoliarForm(){
@@ -1593,15 +1595,27 @@ async function renderAplList(){
     if(snap.empty){ box.innerHTML='<p style="font-size:12px;color:var(--muted)">Aún no hay aplicaciones registradas.</p>'; return; }
     box.innerHTML=snap.docs.map(doc=>{
       const a=doc.data();
-      const receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.dosis)}${r.unidadStock==='L'?'cc':'g'}`).join(' + ');
-      const dests=(a.destinos||[]).map(d=>`${escH(PREDIOS[d.predioId]?PREDIOS[d.predioId].nombre:d.predioId)} mód ${escH(d.unidad)}: ${fmtNum(d.litros,0)}L`).join(' · ');
-      const totalAgua=(a.destinos||[]).reduce((s,d)=>s+(Number(d.litros)||0),0);
+      let etiqueta, receta, sub, totalTxt;
+      if(a.tipo==='riego'){
+        etiqueta='💦';
+        receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.cantidad)}${escH(r.unidadStock||'')}`).join(' + ');
+        const totalApl=(a.destinos||[]).reduce((s,d)=>s+(Number(d.litros)||0),0);
+        const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
+        sub=(a.destinos||[]).map(d=>`${escH(d.sector)}: ${fmtNum(d.litros,0)}L`).join(' · ');
+        totalTxt=`${escH(pred)} · estanque ${fmtNum(a.litrosEstanque,0)}L → ${fmtNum(totalApl,0)}L aplicados`;
+      }else{
+        etiqueta='🍃';
+        receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.dosis)}${r.unidadStock==='L'?'cc':'g'}/100L`).join(' + ');
+        const totalAgua=(a.destinos||[]).reduce((s,d)=>s+(Number(d.litros)||0),0);
+        sub=(a.destinos||[]).map(d=>`${escH(PREDIOS[d.predioId]?PREDIOS[d.predioId].nombre:d.predioId)} mód ${escH(d.unidad)}: ${fmtNum(d.litros,0)}L`).join(' · ');
+        totalTxt=`${fmtNum(totalAgua,0)}L de agua`;
+      }
       return `<div style="padding:8px 0;border-bottom:1px solid var(--sand)">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
           <div style="flex:1">
-            <div style="font-size:11px;color:var(--muted)">${escH(fD(a.fecha))} · ${escH(a.registradoPorNombre||'')} · ${fmtNum(totalAgua,0)}L</div>
+            <div style="font-size:11px;color:var(--muted)">${etiqueta} ${escH(fD(a.fecha))} · ${escH(a.registradoPorNombre||'')} · ${totalTxt}</div>
             <div style="font-size:12px;color:var(--dark);font-weight:600;margin:2px 0">${receta}</div>
-            <div style="font-size:11px;color:var(--muted)">${dests}</div>
+            <div style="font-size:11px;color:var(--muted)">${sub}</div>
           </div>
           <button class="btn btn-danger btn-sm" onclick="delAplicacion('${doc.id}')">✕</button>
         </div>
@@ -1616,6 +1630,173 @@ async function delAplicacion(id){
   loading(true,'Eliminando…');
   try{ await db.collection('aplicaciones').doc(id).delete(); renderAplList(); toast('Eliminada'); }
   catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+
+// ══════════════════════════════════════════════
+// RIEGO — Fase C2
+// Modelo (colección 'aplicaciones', tipo:'riego'):
+//   { tipo:'riego', fecha, predioId, litrosEstanque,
+//     receta:[{productoId,nombre,unidadStock,cantidad}],  // cantidad ABSOLUTA echada al estanque (kg/L)
+//     destinos:[{sector,litros,ha}],                       // litros del estanque aplicados por sector
+//     registradoPor, registradoPorNombre, createdAt }
+// Reparto del fertilizante por sector = cantidad × (litros_sector / litros_estanque).
+// El cultivo NO se pide aquí; se deduce en el reporte (sector→módulo→ciclo).
+// ══════════════════════════════════════════════
+
+function sectoresDePredio(predioId){
+  const t=terrenoCache[predioId];
+  if(!t||!t.sectores) return [];
+  return Object.keys(t.sectores).sort((a,b)=>{
+    const na=parseFloat(a), nb=parseFloat(b);
+    if(!isNaN(na)&&!isNaN(nb)&&na!==nb) return na-nb;
+    return a.localeCompare(b);
+  });
+}
+function haSector(predioId, sector){
+  const t=terrenoCache[predioId]; if(!t||!t.sectores) return null;
+  const v=t.sectores[sector]; return (v===undefined||v===null)?null:Number(v);
+}
+
+function renderRiegoForm(){
+  const box=document.getElementById('aplBody');
+  if(!productosCache.length){
+    box.innerHTML='<p style="font-size:12px;color:var(--red);padding:8px 0">No hay productos cargados. Carga fertilizantes en Bodega antes de registrar riego.</p>';
+    return;
+  }
+  const prodOpts = p=>`<option value="">— fertilizante —</option>`+productosCache.map(x=>`<option value="${x.id}"${x.id===p?' selected':''}>${escH(x.nombre)}</option>`).join('');
+  const predOpts = pid=>`<option value="">— predio —</option>`+Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+
+  // RECETA del estanque (cantidad absoluta)
+  let recetaH = aplRie.receta.map((r,i)=>{
+    const prod = productosCache.find(x=>x.id===r.productoId);
+    const uni = prod ? prod.unidadStock : 'kg/L';
+    return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <select onchange="aplRieSet('receta',${i},'productoId',this.value)" style="flex:1">${prodOpts(r.productoId)}</select>
+      <input type="number" placeholder="cantidad" value="${r.cantidad}" oninput="aplRieSet('receta',${i},'cantidad',this.value)" style="width:80px" min="0" step="any">
+      <span style="font-size:11px;color:var(--muted);width:26px">${escH(uni)}</span>
+      ${aplRie.receta.length>1?`<button class="btn btn-danger btn-sm" onclick="aplRieDel('receta',${i})" style="padding:4px 8px">✕</button>`:'<span style="width:28px"></span>'}
+    </div>`;
+  }).join('');
+
+  // DESTINOS por sector
+  const sects = aplRie.predioId ? sectoresDePredio(aplRie.predioId) : [];
+  let destH = aplRie.destinos.map((d,i)=>{
+    const sectOpts = `<option value="">— sector —</option>`+sects.map(s=>{
+      const ha=haSector(aplRie.predioId,s);
+      return `<option value="${escH(s)}"${s===d.sector?' selected':''}>${escH(s)}${ha!==null?` (${ha} ha)`:''}</option>`;
+    }).join('');
+    return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <select onchange="aplRieSet('destinos',${i},'sector',this.value)" style="flex:1"${aplRie.predioId?'':' disabled'}>${sectOpts}</select>
+      <input type="number" placeholder="litros" value="${d.litros}" oninput="aplRieSet('destinos',${i},'litros',this.value)" style="width:90px" min="0" step="any">
+      <span style="font-size:11px;color:var(--muted)">L</span>
+      ${aplRie.destinos.length>1?`<button class="btn btn-danger btn-sm" onclick="aplRieDel('destinos',${i})" style="padding:4px 8px">✕</button>`:'<span style="width:28px"></span>'}
+    </div>`;
+  }).join('');
+
+  // REPARTO calculado
+  const rep = calcRieReparto();
+  let repH='';
+  if(rep.litrosEst>0 && rep.aplicado>0 && rep.receta.length){
+    // aviso si aplican más litros que el estanque
+    let aviso='';
+    if(rep.aplicado > rep.litrosEst+0.001){
+      aviso=`<div style="color:var(--red);font-size:11px;margin-bottom:4px">⚠ Aplicaste ${fmtNum(rep.aplicado,0)}L pero el estanque es de ${fmtNum(rep.litrosEst,0)}L. Revisa los litros.</div>`;
+    }
+    repH=`<div class="sec-div">Gasto por sector</div>${aviso}
+      <div style="font-size:11px;color:var(--dark);line-height:1.7">
+        ${rep.porSector.map(s=>`<b>${escH(s.sector)}</b> (${fmtNum(s.litros,0)}L): ${s.items.map(it=>`${escH(it.nombre)} ${fmtNum(it.cantidad)}${escH(it.unidadStock)}`).join(', ')}`).join('<br>')}
+        ${rep.aplicado < rep.litrosEst-0.001 ? `<br><span style="color:var(--muted)">Sobró estanque: ${fmtNum(rep.litrosEst-rep.aplicado,0)}L sin aplicar.</span>`:''}
+      </div>`;
+  }
+
+  box.innerHTML=`
+    <div class="form-row"><label>Fecha</label><input type="date" value="${aplRie.fecha}" onchange="aplRie.fecha=this.value"></div>
+    <div class="form-row"><label>Predio</label><select onchange="aplRieSetCampo('predioId',this.value)">${predOpts(aplRie.predioId)}</select></div>
+    <div class="form-row"><label>Litros del estanque</label>
+      <input type="number" value="${aplRie.litrosEstanque}" oninput="aplRieSetCampo('litrosEstanque',this.value)" min="1" step="any" placeholder="2250">
+    </div>
+    <div class="sec-div">Fertilizantes echados al estanque</div>
+    ${recetaH}
+    <button class="btn btn-sm" onclick="aplRieAdd('receta')" style="background:var(--sand);color:var(--dark);margin-bottom:6px">+ Fertilizante</button>
+    <div class="sec-div">Litros aplicados por sector</div>
+    ${aplRie.predioId?'':'<p style="font-size:11px;color:var(--muted);margin-bottom:6px">Elige primero el predio.</p>'}
+    ${destH}
+    <button class="btn btn-sm" onclick="aplRieAdd('destinos')" style="background:var(--sand);color:var(--dark)"${aplRie.predioId?'':' disabled'}>+ Sector</button>
+    ${repH}
+    <button class="btn btn-primary" style="margin-top:12px" onclick="guardarRiego()">Registrar riego</button>
+  `;
+}
+
+function aplRieSetCampo(campo,val){
+  if(campo==='litrosEstanque'){ aplRie.litrosEstanque = val===''?'':Number(val); }
+  else if(campo==='predioId'){ aplRie.predioId=val; aplRie.destinos=[{sector:'',litros:''}]; }
+  else aplRie[campo]=val;
+  renderRiegoForm();
+}
+function aplRieSet(grupo,i,campo,val){
+  aplRie[grupo][i][campo]=val;
+  renderRiegoForm();
+}
+function aplRieAdd(grupo){
+  if(grupo==='receta') aplRie.receta.push({productoId:'',cantidad:''});
+  else aplRie.destinos.push({sector:'',litros:''});
+  renderRiegoForm();
+}
+function aplRieDel(grupo,i){ aplRie[grupo].splice(i,1); renderRiegoForm(); }
+
+// Reparto: cada producto se prorratea por (litros_sector / litros_estanque)
+function calcRieReparto(){
+  const litrosEst = parseFloat(aplRie.litrosEstanque)||0;
+  const receta = aplRie.receta.map(r=>{
+    const p=productosCache.find(x=>x.id===r.productoId);
+    const cant=parseFloat(r.cantidad);
+    return (p && !isNaN(cant)) ? {productoId:p.id,nombre:p.nombre,unidadStock:p.unidadStock,cantidad:cant} : null;
+  }).filter(Boolean);
+  const dests = aplRie.destinos.filter(d=>d.sector && parseFloat(d.litros)>0)
+    .map(d=>({sector:d.sector, litros:parseFloat(d.litros)}));
+  const aplicado = dests.reduce((s,d)=>s+d.litros,0);
+  const porSector = dests.map(d=>({
+    sector:d.sector, litros:d.litros,
+    items: receta.map(r=>({nombre:r.nombre, unidadStock:r.unidadStock,
+      cantidad: litrosEst>0 ? r.cantidad*(d.litros/litrosEst) : 0}))
+  }));
+  return {litrosEst, aplicado, receta, dests, porSector};
+}
+
+async function guardarRiego(){
+  if(!isAdmin() && !(currentProfile&&currentProfile.role==='riego')){ toast('Sin permiso'); return; }
+  const litrosEst = parseFloat(aplRie.litrosEstanque);
+  if(isNaN(litrosEst)||litrosEst<=0){ toast('⚠️ Indica los litros del estanque'); return; }
+  if(!aplRie.predioId){ toast('⚠️ Elige el predio'); return; }
+  const receta = aplRie.receta.filter(r=>r.productoId && parseFloat(r.cantidad)>0);
+  if(!receta.length){ toast('⚠️ Agrega al menos un fertilizante'); return; }
+  const destinos = aplRie.destinos.filter(d=>d.sector && parseFloat(d.litros)>0);
+  if(!destinos.length){ toast('⚠️ Agrega al menos un sector con litros'); return; }
+
+  const recetaData = receta.map(r=>{
+    const p=productosCache.find(x=>x.id===r.productoId);
+    return {productoId:p.id, nombre:p.nombre, unidadStock:p.unidadStock, cantidad:parseFloat(r.cantidad)};
+  });
+  const destData = destinos.map(d=>({
+    sector:String(d.sector), litros:parseFloat(d.litros), ha:haSector(aplRie.predioId,d.sector)
+  }));
+
+  loading(true,'Registrando…');
+  try{
+    await db.collection('aplicaciones').add({
+      tipo:'riego', fecha:aplRie.fecha, predioId:aplRie.predioId,
+      litrosEstanque:litrosEst, receta:recetaData, destinos:destData,
+      registradoPor:currentUser.uid,
+      registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+      createdAt:Date.now()
+    });
+    aplRie={ fecha:todayIso, predioId:aplRie.predioId, litrosEstanque:2250, receta:[{productoId:'',cantidad:''}], destinos:[{sector:'',litros:''}] };
+    renderRiegoForm();
+    renderAplList();
+    toast('✅ Riego registrado');
+  }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
 
