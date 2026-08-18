@@ -1880,7 +1880,7 @@ async function initPlanilla(){
   renderPlanilla();
 }
 
-function num(v){ const n=Number(v); return isNaN(n)?0:n; }
+function num(v){ if(v==null||v==="")return 0; const n=Number(String(v).replace(",",".")); return isNaN(n)?0:n; }
 function planTotal(p){ return num(p.stock.transito)+num(p.stock.constancia)+num(p.stock.paradero); }
 function planPrecioUnit(p){
   const pe=parseFloat(p.precioEnv), ce=parseFloat(p.capEnvase);
@@ -1896,16 +1896,17 @@ function planRow(p, idx){
     <td class="pname"><input type="text" value="${escH(p.nombre)}" oninput="planSet(${idx},'nombre',this.value)" placeholder="Nombre"></td>
     <td>${cat}</td>
     <td>${uni}</td>
-    <td class="col-t"><input type="number" step="any" value="${p.stock.transito||''}" oninput="planSetStock(${idx},'transito',this.value)"></td>
-    <td class="col-c"><input type="number" step="any" value="${p.stock.constancia||''}" oninput="planSetStock(${idx},'constancia',this.value)"></td>
-    <td class="col-p"><input type="number" step="any" value="${p.stock.paradero||''}" oninput="planSetStock(${idx},'paradero',this.value)"></td>
+    <td class="col-t"><input type="text" inputmode="decimal" value="${p.stock.transito||''}" oninput="planSetStock(${idx},'transito',this.value)"></td>
+    <td class="col-c"><input type="text" inputmode="decimal" value="${p.stock.constancia||''}" oninput="planSetStock(${idx},'constancia',this.value)"></td>
+    <td class="col-p"><input type="text" inputmode="decimal" value="${p.stock.paradero||''}" oninput="planSetStock(${idx},'paradero',this.value)"></td>
     <td class="plan-total-num" id="tot-${idx}">${fmtNum(planTotal(p))}</td>
-    <td><input type="number" step="any" value="${p.stockMin}" oninput="planSet(${idx},'stockMin',this.value)"></td>
-    <td><input type="number" step="any" value="${p.capEnvase}" oninput="planSet(${idx},'capEnvase',this.value)" placeholder="kg/L x env"></td>
-    <td><input type="number" step="any" value="${p.envases}" oninput="planSet(${idx},'envases',this.value)"></td>
-    <td><input type="number" step="any" value="${p.precioEnv}" oninput="planSet(${idx},'precioEnv',this.value)" placeholder="$"></td>
+    <td><input type="text" inputmode="decimal" value="${p.stockMin}" oninput="planSet(${idx},'stockMin',this.value)"></td>
+    <td><input type="text" inputmode="decimal" value="${p.capEnvase}" oninput="planSet(${idx},'capEnvase',this.value)" placeholder="kg/L x env"></td>
+    <td><input type="text" inputmode="decimal" value="${p.envases}" oninput="planSet(${idx},'envases',this.value)"></td>
+    <td><input type="text" inputmode="decimal" value="${p.precioEnv}" oninput="planSet(${idx},'precioEnv',this.value)" placeholder="$"></td>
     <td class="plan-calc" id="pu-${idx}">${pu!=null?('$'+fmtNum(pu,0)):'—'}</td>
     <td><input type="text" value="${escH(p.vencimiento)}" oninput="planSet(${idx},'vencimiento',this.value)" placeholder="—" style="min-width:70px"></td>
+    <td><button class="plan-del" onclick="abrirMovProducto(${idx})" title="Compras / despachos" style="color:var(--green)">📦</button></td>
     <td><button class="plan-del" onclick="planDelProd(${idx})" title="Eliminar">✕</button></td>
   </tr>`;
 }
@@ -1923,9 +1924,9 @@ function renderPlanilla(){
       <th class="pname">Producto</th><th>Categoría</th><th>Unid.</th>
       <th>Tránsito</th><th>Constancia</th><th>Paradero</th><th>Total</th>
       <th>Stock mín</th><th>Cap. envase</th><th>Envases</th><th>Precio envase</th><th>Precio unit.</th>
-      <th>Vencim.</th><th></th>
+      <th>Vencim.</th><th>Mov.</th><th></th>
     </tr></thead>
-    <tbody>${rows||'<tr><td colspan="14" style="padding:16px;color:var(--muted)">Sin productos. Usa "+ Producto" o carga el inventario.</td></tr>'}</tbody>
+    <tbody>${rows||'<tr><td colspan="15" style="padding:16px;color:var(--muted)">Sin productos. Usa "+ Producto" o carga el inventario.</td></tr>'}</tbody>
   </table>`;
   planUpdateInfo();
 }
@@ -2014,6 +2015,135 @@ async function planGuardar(){
   loading(false);
   toast(err?`Guardados ${ok}, con ${err} errores`:`✅ ${ok} productos guardados`);
   planUpdateInfo();
+}
+
+
+// ══════════════════════════════════════════════
+// COMPRAS Y DESPACHOS — Fase D2
+// Compra: entra stock a un predio (envases × capacidad) + precio → actualiza costo.
+// Despacho: mueve stock de un predio a otro.
+// Movimientos en colección 'movimientos'. Stock se ajusta con transacción.
+// ══════════════════════════════════════════════
+
+function abrirMovProducto(idx){
+  const p=planProds[idx];
+  if(!p.id){ toast('⚠️ Guarda el producto antes de registrar movimientos'); return; }
+  const uni=p.unidad||'u';
+  const predOpts=(sel)=>Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+  const st=p.stock;
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">📦 ${escH(p.nombre)}</div>
+    <div class="modal-sub">Stock actual: 
+      <b>${fmtNum(st.transito)}</b> Tránsito · <b>${fmtNum(st.constancia)}</b> Constancia · <b>${fmtNum(st.paradero)}</b> Paradero ${escH(uni)}</div>
+
+    <div class="sec-div">🛒 Registrar compra (entra stock)</div>
+    <div class="form-row"><label>Predio que recibe</label><select id="mcPredio">${predOpts('constancia')}</select></div>
+    <div style="display:flex;gap:8px">
+      <div class="form-row" style="flex:1"><label>N° envases</label><input type="text" inputmode="decimal" id="mcEnv" oninput="movCalc()" placeholder="Ej: 5"></div>
+      <div class="form-row" style="flex:1"><label>Capacidad c/u (${escH(uni)})</label><input type="text" inputmode="decimal" id="mcCap" value="${p.capEnvase!=null&&p.capEnvase!==''?p.capEnvase:''}" oninput="movCalc()" placeholder="Ej: 20"></div>
+    </div>
+    <div class="form-row"><label>Precio por envase ($)</label><input type="text" inputmode="decimal" id="mcPrecio" oninput="movCalc()" placeholder="Ej: 50000"></div>
+    <div class="form-row"><label>Fecha</label><input type="date" id="mcFecha" value="${todayIso}"></div>
+    <div id="mcResumen" style="font-size:12px;color:var(--muted);margin:2px 0 8px"></div>
+    <button class="btn btn-primary" onclick="movCompra(${idx})">Registrar compra</button>
+
+    <div class="sec-div" style="margin-top:16px">🔄 Registrar despacho (mueve entre predios)</div>
+    <div style="display:flex;gap:8px;align-items:flex-end">
+      <div class="form-row" style="flex:1"><label>Desde</label><select id="mdOrigen">${predOpts('constancia')}</select></div>
+      <div class="form-row" style="flex:1"><label>Hacia</label><select id="mdDestino">${predOpts('paradero')}</select></div>
+    </div>
+    <div class="form-row"><label>Cantidad (${escH(uni)})</label><input type="text" inputmode="decimal" id="mdCant" placeholder="Ej: 10"></div>
+    <div class="form-row"><label>Fecha</label><input type="date" id="mdFecha" value="${todayIso}"></div>
+    <button class="btn btn-secondary" onclick="movDespacho(${idx})">Registrar despacho</button>
+  `;
+  document.getElementById('overlay').classList.add('open');
+}
+
+function movCalc(){
+  const env=num(document.getElementById('mcEnv').value);
+  const cap=num(document.getElementById('mcCap').value);
+  const pre=num(document.getElementById('mcPrecio').value);
+  const box=document.getElementById('mcResumen'); if(!box) return;
+  const total=env*cap;
+  const pu=cap>0?pre/cap:0;
+  if(total>0){
+    box.innerHTML=`Entra <b>${fmtNum(total)}</b> al stock${pre>0?` · precio unitario <b>$${fmtNum(pu,0)}</b>`:''}`;
+  }else box.innerHTML='';
+}
+
+async function movCompra(idx){
+  if(!isAdmin() && !(currentProfile&&currentProfile.role==='bodeguero')){ toast('Sin permiso'); return; }
+  const p=planProds[idx];
+  const predio=document.getElementById('mcPredio').value;
+  const env=num(document.getElementById('mcEnv').value);
+  const cap=num(document.getElementById('mcCap').value);
+  const pre=num(document.getElementById('mcPrecio').value);
+  const fecha=document.getElementById('mcFecha').value;
+  const total=env*cap;
+  if(total<=0){ toast('⚠️ Indica envases y capacidad'); return; }
+  const pu=cap>0?pre/cap:null;
+
+  loading(true,'Registrando compra…');
+  try{
+    await db.runTransaction(async tx=>{
+      const ref=db.collection('productos').doc(p.id);
+      const snap=await tx.get(ref);
+      const d=snap.data();
+      const st=Object.assign({transito:0,constancia:0,paradero:0}, d.stock||{});
+      st[predio]=num(st[predio])+total;
+      const upd={stock:st, updatedAt:Date.now()};
+      if(cap>0) upd.capEnvase=cap;
+      if(env>0) upd.envases=env;
+      if(pre>0){ upd.precioEnv=pre; upd.precioUnit=pu; }
+      tx.update(ref, upd);
+      const movRef=db.collection('movimientos').doc();
+      tx.set(movRef, {tipo:'compra', productoId:p.id, nombre:p.nombre, predio,
+        envases:env, capEnvase:cap, precioEnv:pre||null, total, precioUnit:pu,
+        fecha, registradoPor:currentUser.uid,
+        registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email, createdAt:Date.now()});
+    });
+    // actualizar estado local
+    p.stock[predio]=num(p.stock[predio])+total;
+    if(cap>0)p.capEnvase=cap; if(env>0)p.envases=env;
+    if(pre>0){p.precioEnv=pre;}
+    closeModal(); renderPlanilla();
+    toast(`✅ Compra registrada (+${fmtNum(total)})`);
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+async function movDespacho(idx){
+  if(!isAdmin() && !(currentProfile&&currentProfile.role==='bodeguero')){ toast('Sin permiso'); return; }
+  const p=planProds[idx];
+  const origen=document.getElementById('mdOrigen').value;
+  const destino=document.getElementById('mdDestino').value;
+  const cant=num(document.getElementById('mdCant').value);
+  const fecha=document.getElementById('mdFecha').value;
+  if(origen===destino){ toast('⚠️ Origen y destino deben ser distintos'); return; }
+  if(cant<=0){ toast('⚠️ Indica la cantidad'); return; }
+
+  loading(true,'Registrando despacho…');
+  try{
+    await db.runTransaction(async tx=>{
+      const ref=db.collection('productos').doc(p.id);
+      const snap=await tx.get(ref);
+      const d=snap.data();
+      const st=Object.assign({transito:0,constancia:0,paradero:0}, d.stock||{});
+      if(num(st[origen])<cant) throw new Error(`Stock insuficiente en ${PREDIOS[origen].nombre} (hay ${fmtNum(st[origen])})`);
+      st[origen]=num(st[origen])-cant;
+      st[destino]=num(st[destino])+cant;
+      tx.update(ref, {stock:st, updatedAt:Date.now()});
+      const movRef=db.collection('movimientos').doc();
+      tx.set(movRef, {tipo:'despacho', productoId:p.id, nombre:p.nombre, origen, destino, cantidad:cant,
+        fecha, registradoPor:currentUser.uid,
+        registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email, createdAt:Date.now()});
+    });
+    p.stock[origen]=num(p.stock[origen])-cant;
+    p.stock[destino]=num(p.stock[destino])+cant;
+    closeModal(); renderPlanilla();
+    toast(`✅ Despacho registrado`);
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
 }
 
 
