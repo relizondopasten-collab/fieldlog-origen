@@ -132,6 +132,30 @@ body{font-family:'Inter',sans-serif;background:var(--cream);color:var(--text);ma
 /* ── FORM ── */
 label{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px}
 select,input[type=number],input[type=text],input[type=date],input[type=email],input[type=password]{width:100%;background:var(--cream);border:1.5px solid var(--sand);border-radius:10px;padding:10px 11px;font-size:14px;font-family:'Inter',sans-serif;color:var(--text);appearance:none;-webkit-appearance:none;outline:none;transition:border-color .2s}
+
+/* ===== PLANILLA BODEGA (escritorio) ===== */
+.plan-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.plan-toolbar input[type=text]{width:auto;flex:1;min-width:160px;padding:8px 11px;font-size:13px}
+.plan-wrap{overflow-x:auto;border:1px solid var(--sand);border-radius:10px;max-height:70vh;overflow-y:auto}
+.plan-table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px;white-space:nowrap}
+.plan-table th{position:sticky;top:0;z-index:2;background:var(--dark);color:#fff;font-weight:600;padding:8px 6px;text-align:center;font-size:10.5px;border-right:1px solid rgba(255,255,255,.08)}
+.plan-table td{padding:2px 4px;border-bottom:1px solid var(--sand);border-right:1px solid var(--sand);text-align:center}
+.plan-table tr:nth-child(even){background:#FBFAF7}
+.plan-table td.pname{position:sticky;left:0;background:inherit;z-index:1;text-align:left;min-width:150px}
+.plan-table th.pname{position:sticky;left:0;z-index:3;text-align:left}
+.plan-table input,.plan-table select{width:100%;padding:5px 5px;font-size:12px;border:1px solid transparent;border-radius:6px;background:transparent;text-align:center}
+.plan-table td.pname input{text-align:left;font-weight:600}
+.plan-table input:focus,.plan-table select:focus{border-color:var(--green-l);background:#fff}
+.plan-table input:hover,.plan-table select:hover{background:#fff}
+.plan-table .col-t{background:var(--bg-t)}
+.plan-table .col-c{background:var(--bg-c)}
+.plan-table .col-p{background:var(--bg-p)}
+.plan-calc{color:var(--muted);font-weight:600;font-size:11.5px}
+.plan-total-num{color:var(--dark);font-weight:700}
+.plan-del{color:var(--red);cursor:pointer;font-weight:700;padding:2px 6px;border:none;background:none;font-size:14px}
+.plan-hint{font-size:11px;color:var(--muted);margin:6px 2px}
+@media(max-width:640px){.plan-hint-mobile{display:block}}
+
 select:focus,input:focus{border-color:var(--green)}
 .form-row{margin-bottom:10px}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:9px}
@@ -341,7 +365,7 @@ select:focus,input:focus{border-color:var(--green)}
       <button class="nb"        onclick="showScr('ciclos',this)">Ciclos</button>
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
       <button class="nb" id="btnAplic" style="display:none" onclick="showScr('aplic',this)">Aplicaciones</button>
-      <button class="nb" id="btnBodega" style="display:none" onclick="showScr('bodega',this)">Bodega</button>
+      <button class="nb" id="btnBodega" style="display:none" onclick="showScr('planilla',this)">Bodega</button>
       <button class="nb"        onclick="showScr('config',this)">Config</button>
     </div>
   </div>
@@ -447,6 +471,25 @@ select:focus,input:focus{border-color:var(--green)}
   </div>
 
   <!-- CONFIG -->
+  <!-- PLANILLA BODEGA (escritorio) -->
+  <div id="screen-planilla" class="screen">
+    <div style="height:10px"></div>
+    <div class="emp-hdr">
+      <div class="emp-name">📊 Bodega — Planilla</div>
+      <div class="emp-sub">Catálogo y stock por predio · pensada para trabajar desde el computador</div>
+    </div>
+    <div class="card">
+      <div class="plan-toolbar">
+        <input type="text" id="planBuscar" placeholder="🔍 Buscar producto…" oninput="planFiltrar(this.value)">
+        <button class="btn btn-sm" onclick="planAddProd()" style="background:var(--sand);color:var(--dark)">+ Producto</button>
+        <button class="btn btn-sm btn-primary" onclick="planGuardar()">💾 Guardar cambios</button>
+      </div>
+      <div id="planInfo" class="plan-hint"></div>
+      <div id="planGrid" class="plan-wrap"></div>
+      <div class="plan-hint">💡 El <b>precio unitario</b> y el <b>total</b> se calculan solos. Los cambios no se guardan hasta que pulses "Guardar cambios".</div>
+    </div>
+  </div>
+
   <!-- APLICACIONES -->
   <div id="screen-aplic" class="screen">
     <div style="height:10px"></div>
@@ -1800,6 +1843,176 @@ async function guardarRiego(){
     toast('✅ Riego registrado');
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
+}
+
+
+// ══════════════════════════════════════════════
+// PLANILLA BODEGA (escritorio) — Fase D1
+// Modelo productos/{id}:
+//   { nombre, categoria, unidad(kg|L|uni),
+//     stock:{transito,constancia,paradero}, stockMin,
+//     capEnvase, envases, precioEnv, precioUnit,  // precioUnit = precioEnv/capEnvase
+//     vencimiento, createdAt, updatedAt }
+// Stock separado por predio. Precio unitario y total se calculan solos.
+// ══════════════════════════════════════════════
+const CATEGORIAS_BODEGA = ['Bioestimulante','Fertilizante','Fitosanitario','Materiales'];
+let planProds = [];      // filas en memoria
+let planFiltroTxt = '';
+
+async function initPlanilla(){
+  if(!isAdmin() && !(currentProfile&&currentProfile.role==='bodeguero')){ toast('Sin permiso'); return; }
+  const grid=document.getElementById('planGrid');
+  grid.innerHTML='<p style="font-size:12px;color:var(--muted);padding:10px">Cargando productos…</p>';
+  try{
+    const snap=await db.collection('productos').orderBy('nombre').get();
+    planProds = snap.docs.map(d=>{
+      const x=d.data();
+      return {
+        id:d.id, nombre:x.nombre||'', categoria:x.categoria||'', unidad:x.unidad||'',
+        stock:{ transito:num(x.stock&&x.stock.transito), constancia:num(x.stock&&x.stock.constancia), paradero:num(x.stock&&x.stock.paradero) },
+        stockMin: x.stockMin!=null?x.stockMin:'', capEnvase:x.capEnvase!=null?x.capEnvase:'',
+        envases:x.envases!=null?x.envases:'', precioEnv:x.precioEnv!=null?x.precioEnv:'',
+        vencimiento:x.vencimiento||'', _dirty:false, _new:false
+      };
+    });
+  }catch(e){ grid.innerHTML=`<p style="font-size:12px;color:var(--red);padding:10px">Error: ${escH(e.message)}</p>`; return; }
+  renderPlanilla();
+}
+
+function num(v){ const n=Number(v); return isNaN(n)?0:n; }
+function planTotal(p){ return num(p.stock.transito)+num(p.stock.constancia)+num(p.stock.paradero); }
+function planPrecioUnit(p){
+  const pe=parseFloat(p.precioEnv), ce=parseFloat(p.capEnvase);
+  return (!isNaN(pe)&&!isNaN(ce)&&ce>0) ? pe/ce : null;
+}
+
+function planRow(p, idx){
+  const catOpts=[...new Set([...CATEGORIAS_BODEGA, p.categoria].filter(Boolean))];
+  const cat=`<select onchange="planSet(${idx},'categoria',this.value)"><option value="">—</option>${catOpts.map(c=>`<option${c===p.categoria?' selected':''}>${escH(c)}</option>`).join('')}</select>`;
+  const uni=`<select onchange="planSet(${idx},'unidad',this.value)"><option value="">—</option>${['kg','L','uni'].map(u=>`<option${u===p.unidad?' selected':''}>${u}</option>`).join('')}</select>`;
+  const pu=planPrecioUnit(p);
+  return `<tr>
+    <td class="pname"><input type="text" value="${escH(p.nombre)}" oninput="planSet(${idx},'nombre',this.value)" placeholder="Nombre"></td>
+    <td>${cat}</td>
+    <td>${uni}</td>
+    <td class="col-t"><input type="number" step="any" value="${p.stock.transito||''}" oninput="planSetStock(${idx},'transito',this.value)"></td>
+    <td class="col-c"><input type="number" step="any" value="${p.stock.constancia||''}" oninput="planSetStock(${idx},'constancia',this.value)"></td>
+    <td class="col-p"><input type="number" step="any" value="${p.stock.paradero||''}" oninput="planSetStock(${idx},'paradero',this.value)"></td>
+    <td class="plan-total-num" id="tot-${idx}">${fmtNum(planTotal(p))}</td>
+    <td><input type="number" step="any" value="${p.stockMin}" oninput="planSet(${idx},'stockMin',this.value)"></td>
+    <td><input type="number" step="any" value="${p.capEnvase}" oninput="planSet(${idx},'capEnvase',this.value)" placeholder="kg/L x env"></td>
+    <td><input type="number" step="any" value="${p.envases}" oninput="planSet(${idx},'envases',this.value)"></td>
+    <td><input type="number" step="any" value="${p.precioEnv}" oninput="planSet(${idx},'precioEnv',this.value)" placeholder="$"></td>
+    <td class="plan-calc" id="pu-${idx}">${pu!=null?('$'+fmtNum(pu,0)):'—'}</td>
+    <td><input type="text" value="${escH(p.vencimiento)}" oninput="planSet(${idx},'vencimiento',this.value)" placeholder="—" style="min-width:70px"></td>
+    <td><button class="plan-del" onclick="planDelProd(${idx})" title="Eliminar">✕</button></td>
+  </tr>`;
+}
+
+function renderPlanilla(){
+  const grid=document.getElementById('planGrid');
+  const f=planFiltroTxt.trim().toLowerCase();
+  let rows='';
+  planProds.forEach((p,idx)=>{
+    if(f && !p.nombre.toLowerCase().includes(f)) return;
+    rows+=planRow(p,idx);
+  });
+  grid.innerHTML=`<table class="plan-table">
+    <thead><tr>
+      <th class="pname">Producto</th><th>Categoría</th><th>Unid.</th>
+      <th>Tránsito</th><th>Constancia</th><th>Paradero</th><th>Total</th>
+      <th>Stock mín</th><th>Cap. envase</th><th>Envases</th><th>Precio envase</th><th>Precio unit.</th>
+      <th>Vencim.</th><th></th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="14" style="padding:16px;color:var(--muted)">Sin productos. Usa "+ Producto" o carga el inventario.</td></tr>'}</tbody>
+  </table>`;
+  planUpdateInfo();
+}
+
+function planUpdateInfo(){
+  const info=document.getElementById('planInfo'); if(!info) return;
+  const total=planProds.length;
+  const sinUni=planProds.filter(p=>!p.unidad).length;
+  const dirty=planProds.filter(p=>p._dirty||p._new).length;
+  info.innerHTML=`${total} productos · ${sinUni>0?`<b style="color:#B45309">${sinUni} sin unidad (kg/L)</b> · `:''}${dirty>0?`<b style="color:var(--green)">${dirty} sin guardar</b>`:'todo guardado'}`;
+}
+
+function planSet(idx,campo,val){
+  planProds[idx][campo]=val;
+  planProds[idx]._dirty=true;
+  if(campo==='capEnvase'||campo==='precioEnv'){
+    const el=document.getElementById('pu-'+idx);
+    const pu=planPrecioUnit(planProds[idx]);
+    if(el) el.textContent = pu!=null?('$'+fmtNum(pu,0)):'—';
+  }
+  planUpdateInfo();
+}
+function planSetStock(idx,predio,val){
+  planProds[idx].stock[predio]=val;
+  planProds[idx]._dirty=true;
+  const el=document.getElementById('tot-'+idx);
+  if(el) el.textContent=fmtNum(planTotal(planProds[idx]));
+  planUpdateInfo();
+}
+
+function planAddProd(){
+  planProds.push({ nombre:'', categoria:'', unidad:'',
+    stock:{transito:0,constancia:0,paradero:0}, stockMin:'', capEnvase:'', envases:'', precioEnv:'',
+    vencimiento:'', _dirty:false, _new:true });
+  planFiltroTxt=''; const b=document.getElementById('planBuscar'); if(b)b.value='';
+  renderPlanilla();
+  const wrap=document.getElementById('planGrid'); if(wrap) wrap.scrollTop=wrap.scrollHeight;
+}
+
+async function planDelProd(idx){
+  const p=planProds[idx];
+  if(!confirm(`¿Eliminar "${p.nombre||'(sin nombre)'}"?`)) return;
+  if(p.id){
+    loading(true,'Eliminando…');
+    try{ await db.collection('productos').doc(p.id).delete(); }
+    catch(e){ toast('Error: '+e.message); loading(false); return; }
+    loading(false);
+  }
+  planProds.splice(idx,1);
+  renderPlanilla();
+  toast('Producto eliminado');
+}
+
+function planFiltrar(txt){ planFiltroTxt=txt; renderPlanilla(); }
+
+async function planGuardar(){
+  if(!isAdmin() && !(currentProfile&&currentProfile.role==='bodeguero')){ toast('Sin permiso'); return; }
+  const pend=planProds.filter(p=>p._dirty||p._new);
+  if(!pend.length){ toast('No hay cambios que guardar'); return; }
+  // validar nombres
+  const sinNombre=pend.filter(p=>!p.nombre||!p.nombre.trim());
+  if(sinNombre.length){ toast('⚠️ Hay productos sin nombre'); return; }
+
+  loading(true,`Guardando ${pend.length}…`);
+  let ok=0, err=0;
+  for(const p of planProds){
+    if(!(p._dirty||p._new)) continue;
+    const pu=planPrecioUnit(p);
+    const data={
+      nombre:p.nombre.trim(), categoria:p.categoria||'', unidad:p.unidad||'',
+      stock:{ transito:num(p.stock.transito), constancia:num(p.stock.constancia), paradero:num(p.stock.paradero) },
+      stockMin: p.stockMin===''?null:num(p.stockMin),
+      capEnvase: p.capEnvase===''?null:num(p.capEnvase),
+      envases: p.envases===''?null:num(p.envases),
+      precioEnv: p.precioEnv===''?null:num(p.precioEnv),
+      precioUnit: pu,
+      vencimiento: p.vencimiento||'',
+      updatedAt: Date.now()
+    };
+    try{
+      if(p.id){ await db.collection('productos').doc(p.id).set(data,{merge:true}); }
+      else{ data.createdAt=Date.now(); const ref=await db.collection('productos').add(data); p.id=ref.id; }
+      p._dirty=false; p._new=false; ok++;
+    }catch(e){ err++; }
+  }
+  loading(false);
+  toast(err?`Guardados ${ok}, con ${err} errores`:`✅ ${ok} productos guardados`);
+  planUpdateInfo();
 }
 
 
@@ -4101,6 +4314,7 @@ function showScr(name,btn){
   if(name==='prog')    {populateProgSubjefe();renderProg();}
   if(name==='informes')initInformes();
   if(name==='bodega')  renderBodega();
+  if(name==='planilla') initPlanilla();
   if(name==='aplic')   initAplic();
 }
 
