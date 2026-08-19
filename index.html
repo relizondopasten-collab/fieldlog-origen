@@ -934,13 +934,8 @@ async function loadCatalogos(){
       .map(d=>({id:d.id, ...d.data()}))
       .filter(p=>p.activo!==false)
       .sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
-    // cargar los lotes (compras) de cada producto
-    await Promise.all(productosCache.map(async p=>{
-      try{
-        const ls = await db.collection('productos').doc(p.id).collection('lotes').get();
-        p.lotes = ls.docs.map(d=>({id:d.id, ...d.data()}));
-      }catch(e){ p.lotes = []; }
-    }));
+    // Modelo nuevo: el stock vive en p.stock (por predio). Ya no hay subcolección "lotes".
+    productosCache.forEach(p=>{ if(!Array.isArray(p.lotes)) p.lotes=[]; });
     categoriasFitoCache = (catSnap.exists && Array.isArray(catSnap.data().items) && catSnap.data().items.length)
       ? catSnap.data().items.slice()
       : CATEGORIAS_FITO_DEFAULT.slice();
