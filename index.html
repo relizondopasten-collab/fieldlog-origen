@@ -503,6 +503,7 @@ select:focus,input:focus{border-color:var(--green)}
       <div style="display:flex;gap:6px;margin-bottom:10px">
         <button class="btn btn-sm" id="aplTabFoliar" onclick="aplSetTab('foliar')" style="flex:1">🍃 Foliar</button>
         <button class="btn btn-sm" id="aplTabRiego" onclick="aplSetTab('riego')" style="flex:1;background:var(--sand);color:var(--dark)">💦 Riego</button>
+        <button class="btn btn-sm" id="aplTabResumen" onclick="aplSetTab('resumen')" style="flex:1;background:var(--sand);color:var(--dark)">📊 Gasto</button>
       </div>
       <div id="aplBody"></div>
     </div>
@@ -1405,12 +1406,14 @@ async function confirmImport(){
 let aplTab = 'foliar';
 let aplFol = null;   // estado del formulario foliar
 let aplRie = null;   // estado del formulario riego
+let aplResumen = null;  // estado del reporte de gasto
 
 function initAplic(){
   if(!isAdmin()) return;
   aplTab='foliar';
   aplFol = { fecha: todayIso, recetaTxt:'', receta:[], destinos:[{predioId:'',unidad:'',litros:''}] };
   aplRie = { fecha: todayIso, predioId:'', litrosEstanque:2250, receta:[{productoId:'',cantidad:''}], destinos:[{sector:'',litros:''}] };
+  aplResumen = { desde: primerDiaMes(), hasta: todayIso, filas:[], nApp:0 };
   loadCiclosAll().then(()=>{ aplSetTab('foliar'); renderAplList(); });
 }
 
@@ -1461,14 +1464,14 @@ function modulosDePredio(predioId){
 
 function aplSetTab(t){
   aplTab=t;
-  const bF=document.getElementById('aplTabFoliar'), bR=document.getElementById('aplTabRiego');
-  if(bF&&bR){
-    const on='', off='background:var(--sand);color:var(--dark)';
-    bF.style.cssText='flex:1;'+(t==='foliar'?on:off);
-    bR.style.cssText='flex:1;'+(t==='riego'?on:off);
-  }
+  const off='background:var(--sand);color:var(--dark)';
+  const bF=document.getElementById('aplTabFoliar'), bR=document.getElementById('aplTabRiego'), bG=document.getElementById('aplTabResumen');
+  if(bF) bF.style.cssText='flex:1;'+(t==='foliar'?'':off);
+  if(bR) bR.style.cssText='flex:1;'+(t==='riego'?'':off);
+  if(bG) bG.style.cssText='flex:1;'+(t==='resumen'?'':off);
   if(t==='foliar') renderFoliarForm();
-  else renderRiegoForm();
+  else if(t==='riego') renderRiegoForm();
+  else { renderResumenForm(); calcResumen(); }
 }
 
 // ── Intérprete de recetas (compartido foliar/riego) ──
@@ -1642,6 +1645,102 @@ function folRenderConsumo(){
         ${consumo.items.map(it=>`${escH(it.nombre)}: <b>${fmtNum(it.origTotal)} ${escH(it.unidad)}</b> = ${fmtNum(it.baseTotal,3)} ${escH(it.base)}`).join('<br>')}
       </div>`;
   } else el.innerHTML='';
+}
+
+
+// ══════════ Reporte de gasto por producto (filtro por fechas) ══════════
+function primerDiaMes(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; }
+
+async function calcResumen(){
+  const box=document.getElementById('aplBody');
+  const desde=aplResumen.desde||'', hasta=aplResumen.hasta||'';
+  try{
+    const snap=await db.collection('aplicaciones').get();
+    const acc={};  // productoId -> {nombre, base, total}
+    let nApp=0;
+    snap.docs.forEach(doc=>{
+      const a=doc.data();
+      const f=a.fecha||'';
+      if(desde && f<desde) return;
+      if(hasta && f>hasta) return;
+      nApp++;
+      // base por producto desde la receta (fallback a unidadStock de apps viejas)
+      const baseMap={}, nombreMap={};
+      (a.receta||[]).forEach(r=>{
+        if(!r.productoId) return;
+        baseMap[r.productoId]= r.base || (r.unidadStock==='L'?'L':(r.unidadStock==='kg'?'kg':''));
+        nombreMap[r.productoId]= r.nombre;
+      });
+      (a.descontado||[]).forEach(d=>{
+        if(!d.productoId) return;
+        if(!acc[d.productoId]){
+          const p=productosCache.find(x=>x.id===d.productoId);
+          acc[d.productoId]={ nombre:(p?p.nombre:nombreMap[d.productoId])||d.productoId, base:baseMap[d.productoId]||'', total:0 };
+        }
+        if(!acc[d.productoId].base && baseMap[d.productoId]) acc[d.productoId].base=baseMap[d.productoId];
+        acc[d.productoId].total += Number(d.cantidad)||0;
+      });
+    });
+    aplResumen.filas = Object.keys(acc).map(id=>{
+      const p=productosCache.find(x=>x.id===id);
+      const stockTot = (p&&p.stock) ? (Number(p.stock.transito||0)+Number(p.stock.constancia||0)+Number(p.stock.paradero||0)) : null;
+      return {productoId:id, nombre:acc[id].nombre, base:acc[id].base, total:acc[id].total, stockTot};
+    }).sort((a,b)=>b.total-a.total);
+    aplResumen.nApp=nApp;
+  }catch(e){ aplResumen.filas=[]; aplResumen.nApp=0; toast('Error: '+e.message); }
+  renderResumenForm();
+}
+
+function renderResumenForm(){
+  const box=document.getElementById('aplBody');
+  const filas=aplResumen.filas||[];
+  let tablaH;
+  if(!filas.length){
+    tablaH='<p style="font-size:12px;color:var(--muted);padding:10px 0">Sin gasto registrado en el período. Ajusta las fechas y pulsa Calcular.</p>';
+  }else{
+    tablaH=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="border-bottom:2px solid var(--sand)">
+        <th style="padding:5px;text-align:left">Producto</th>
+        <th style="padding:5px;text-align:right">Gastado</th>
+        <th style="padding:5px;text-align:right">Stock actual</th>
+      </tr></thead><tbody>
+      ${filas.map(f=>`<tr style="border-bottom:1px solid var(--sand)">
+        <td style="padding:5px">${escH(f.nombre)}</td>
+        <td style="padding:5px;text-align:right;color:#B45309;font-weight:600">${fmtNum(f.total,3)} ${escH(f.base)}</td>
+        <td style="padding:5px;text-align:right;color:var(--muted)">${f.stockTot!=null?fmtNum(f.stockTot,2)+' '+escH(f.base):'—'}</td>
+      </tr>`).join('')}
+      </tbody></table></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">${aplResumen.nApp||0} aplicación(es) en el período · gasto descontado de ${escH(BODEGA_NOMBRES.constancia)}. El stock mostrado es el total de los 3 predios.</div>`;
+  }
+  box.innerHTML=`
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
+      <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Desde</label>
+        <input type="date" value="${aplResumen.desde}" onchange="aplResumen.desde=this.value"></div>
+      <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Hasta</label>
+        <input type="date" value="${aplResumen.hasta}" onchange="aplResumen.hasta=this.value"></div>
+      <button class="btn btn-sm" onclick="calcResumen()" style="background:var(--dark);color:#fff">📊 Calcular</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="btn btn-sm" onclick="resumenAtajo('mes')" style="background:var(--sand);color:var(--dark);font-size:11px;padding:4px 8px">Este mes</button>
+      <button class="btn btn-sm" onclick="resumenAtajo('mespasado')" style="background:var(--sand);color:var(--dark);font-size:11px;padding:4px 8px">Mes pasado</button>
+      <button class="btn btn-sm" onclick="resumenAtajo('todo')" style="background:var(--sand);color:var(--dark);font-size:11px;padding:4px 8px">Todo</button>
+    </div>
+    ${tablaH}
+  `;
+}
+
+function resumenAtajo(cual){
+  const d=new Date();
+  if(cual==='mes'){ aplResumen.desde=primerDiaMes(); aplResumen.hasta=todayIso; }
+  else if(cual==='mespasado'){
+    const y=d.getFullYear(), m=d.getMonth();  // 0-based
+    const pm=new Date(y, m-1, 1);
+    const pmY=pm.getFullYear(), pmM=String(pm.getMonth()+1).padStart(2,'0');
+    const ult=new Date(y, m, 0).getDate();  // último día del mes pasado
+    aplResumen.desde=`${pmY}-${pmM}-01`;
+    aplResumen.hasta=`${pmY}-${pmM}-${String(ult).padStart(2,'0')}`;
+  }else{ aplResumen.desde='2020-01-01'; aplResumen.hasta='2099-12-31'; }
+  calcResumen();
 }
 
 // ══════════ C3: descuento de stock desde bodega central (La Constancia) ══════════
