@@ -1585,6 +1585,43 @@ function calcFolConsumo(){
   return {total:totalAgua, items};
 }
 
+// ══════════ C3: descuento de stock desde bodega central (La Constancia) ══════════
+const BODEGA_CENTRAL = 'constancia';
+// Consumo foliar en unidad de stock (L/kg): dosis (cc/g por 100L) × litros/100 ÷ 1000
+function descuentosFoliar(recetaData, totalLitros){
+  return recetaData.map(r=>({ productoId:r.productoId, nombre:r.nombre,
+    cantidad: (r.dosis*totalLitros/100)/1000 }));  // cc→L, g→kg
+}
+// Consumo riego = lo que se echó al estanque (ya en kg/L)
+function descuentosRiego(recetaData){
+  return recetaData.map(r=>({ productoId:r.productoId, nombre:r.nombre, cantidad:r.cantidad }));
+}
+// Avisa (sin bloquear) si el stock central no alcanza; usa el cache
+function faltantesStock(descuentos){
+  const faltan=[];
+  descuentos.forEach(d=>{
+    const p=productosCache.find(x=>x.id===d.productoId);
+    const disp=(p&&p.stock)?Number(p.stock[BODEGA_CENTRAL])||0:0;
+    if(disp < d.cantidad-1e-9) faltan.push(d.nombre);
+  });
+  return faltan;
+}
+// Descuenta (signo -1) o devuelve (signo +1) stock de La Constancia
+async function ajustarStockCentral(descuentos, signo){
+  for(const d of descuentos){
+    if(!d.productoId || !d.cantidad) continue;
+    try{
+      await db.collection('productos').doc(d.productoId).update({
+        ['stock.'+BODEGA_CENTRAL]: firebase.firestore.FieldValue.increment(signo*d.cantidad),
+        updatedAt: Date.now()
+      });
+      const p=productosCache.find(x=>x.id===d.productoId);
+      if(p){ if(!p.stock)p.stock={transito:0,constancia:0,paradero:0};
+        p.stock[BODEGA_CENTRAL]=(Number(p.stock[BODEGA_CENTRAL])||0)+signo*d.cantidad; }
+    }catch(e){ /* continuar con los demás */ }
+  }
+}
+
 async function guardarFoliar(){
   if(!isAdmin()){ toast('Solo admin'); return; }
   // validar receta
@@ -1617,17 +1654,22 @@ async function guardarFoliar(){
 
   loading(true,'Registrando…');
   try{
+    const totalLitros = destinos.reduce((s,d)=>s+parseFloat(d.litros),0);
+    const desc = descuentosFoliar(recetaData, totalLitros);
+    const faltan = faltantesStock(desc);
     await db.collection('aplicaciones').add({
       tipo:'foliar', fecha:aplFol.fecha,
       receta:recetaData, destinos:destData,
+      descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
       registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       createdAt:Date.now()
     });
+    await ajustarStockCentral(desc, -1);
     aplFol={ fecha:todayIso, receta:[{productoId:'',dosis:''}], destinos:[{predioId:'',unidad:'',litros:''}] };
     renderFoliarForm();
     renderAplList();
-    toast('✅ Aplicación registrada');
+    toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Aplicación registrada · stock descontado');
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
@@ -1672,9 +1714,16 @@ async function renderAplList(){
 
 async function delAplicacion(id){
   if(!isAdmin()){ toast('Solo admin'); return; }
-  if(!confirm('¿Eliminar esta aplicación?')) return;
+  if(!confirm('¿Eliminar esta aplicación? Se devolverá el stock descontado.')) return;
   loading(true,'Eliminando…');
-  try{ await db.collection('aplicaciones').doc(id).delete(); renderAplList(); toast('Eliminada'); }
+  try{
+    const snap=await db.collection('aplicaciones').doc(id).get();
+    const desc=(snap.exists && snap.data().descontado)||[];
+    await db.collection('aplicaciones').doc(id).delete();
+    if(desc.length) await ajustarStockCentral(desc, +1);  // devolver
+    renderAplList();
+    toast('Eliminada · stock devuelto');
+  }
   catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
@@ -1831,17 +1880,21 @@ async function guardarRiego(){
 
   loading(true,'Registrando…');
   try{
+    const desc = descuentosRiego(recetaData);
+    const faltan = faltantesStock(desc);
     await db.collection('aplicaciones').add({
       tipo:'riego', fecha:aplRie.fecha, predioId:aplRie.predioId,
       litrosEstanque:litrosEst, receta:recetaData, destinos:destData,
+      descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
       registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       createdAt:Date.now()
     });
+    await ajustarStockCentral(desc, -1);
     aplRie={ fecha:todayIso, predioId:aplRie.predioId, litrosEstanque:2250, receta:[{productoId:'',cantidad:''}], destinos:[{sector:'',litros:''}] };
     renderRiegoForm();
     renderAplList();
-    toast('✅ Riego registrado');
+    toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Riego registrado · stock descontado');
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
