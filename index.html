@@ -1587,6 +1587,7 @@ function calcFolConsumo(){
 
 // ══════════ C3: descuento de stock desde bodega central (La Constancia) ══════════
 const BODEGA_CENTRAL = 'constancia';
+const BODEGA_NOMBRES = {constancia:'Bodega Central (La Constancia)', transito:'Sub bodega El Tránsito', paradero:'Sub bodega Paradero 12'};
 // Consumo foliar en unidad de stock (L/kg): dosis (cc/g por 100L) × litros/100 ÷ 1000
 function descuentosFoliar(recetaData, totalLitros){
   return recetaData.map(r=>({ productoId:r.productoId, nombre:r.nombre,
@@ -1975,7 +1976,7 @@ function renderPlanilla(){
   grid.innerHTML=`<table class="plan-table">
     <thead><tr>
       <th class="pname">Producto</th><th>Categoría</th><th>Unid.</th>
-      <th>Tránsito</th><th>Constancia</th><th>Paradero</th><th>Total</th>
+      <th>Sub Tránsito</th><th>🏬 Central</th><th>Sub Paradero</th><th>Total</th>
       <th>Stock mín</th><th>Cap. envase</th><th>Envases</th><th>Precio envase</th><th>Precio unit.</th>
       <th>Vencim.</th><th>Mov.</th><th></th>
     </tr></thead>
@@ -2082,15 +2083,15 @@ function abrirMovProducto(idx){
   const p=planProds[idx];
   if(!p.id){ toast('⚠️ Guarda el producto antes de registrar movimientos'); return; }
   const uni=p.unidad||'u';
-  const predOpts=(sel)=>Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+  const predOpts=(sel)=>Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(BODEGA_NOMBRES[k]||PREDIOS[k].nombre)}</option>`).join('');
   const st=p.stock;
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">📦 ${escH(p.nombre)}</div>
-    <div class="modal-sub">Stock actual: 
-      <b>${fmtNum(st.transito)}</b> Tránsito · <b>${fmtNum(st.constancia)}</b> Constancia · <b>${fmtNum(st.paradero)}</b> Paradero ${escH(uni)}</div>
+    <div class="modal-sub">Stock: 
+      <b>${fmtNum(st.constancia)}</b> Central · <b>${fmtNum(st.transito)}</b> Sub Tránsito · <b>${fmtNum(st.paradero)}</b> Sub Paradero ${escH(uni)}</div>
 
     <div class="sec-div">🛒 Registrar compra (entra stock)</div>
-    <div class="form-row"><label>Predio que recibe</label><select id="mcPredio">${predOpts('constancia')}</select></div>
+    <div class="form-row"><label>Bodega que recibe</label><select id="mcPredio">${predOpts('constancia')}</select></div>
     <div style="display:flex;gap:8px">
       <div class="form-row" style="flex:1"><label>N° envases</label><input type="text" inputmode="decimal" id="mcEnv" oninput="movCalc()" placeholder="Ej: 5"></div>
       <div class="form-row" style="flex:1"><label>Capacidad c/u (${escH(uni)})</label><input type="text" inputmode="decimal" id="mcCap" value="${p.capEnvase!=null&&p.capEnvase!==''?p.capEnvase:''}" oninput="movCalc()" placeholder="Ej: 20"></div>
@@ -2100,10 +2101,10 @@ function abrirMovProducto(idx){
     <div id="mcResumen" style="font-size:12px;color:var(--muted);margin:2px 0 8px"></div>
     <button class="btn btn-primary" onclick="movCompra(${idx})">Registrar compra</button>
 
-    <div class="sec-div" style="margin-top:16px">🔄 Registrar despacho (mueve entre predios)</div>
+    <div class="sec-div" style="margin-top:16px">🔄 Despacho (mover stock entre bodegas)</div>
     <div style="display:flex;gap:8px;align-items:flex-end">
       <div class="form-row" style="flex:1"><label>Desde</label><select id="mdOrigen">${predOpts('constancia')}</select></div>
-      <div class="form-row" style="flex:1"><label>Hacia</label><select id="mdDestino">${predOpts('paradero')}</select></div>
+      <div class="form-row" style="flex:1"><label>Hacia</label><select id="mdDestino">${predOpts('transito')}</select></div>
     </div>
     <div class="form-row"><label>Cantidad (${escH(uni)})</label><input type="text" inputmode="decimal" id="mdCant" placeholder="Ej: 10"></div>
     <div class="form-row"><label>Fecha</label><input type="date" id="mdFecha" value="${todayIso}"></div>
@@ -2172,7 +2173,7 @@ async function movDespacho(idx){
   const destino=document.getElementById('mdDestino').value;
   const cant=num(document.getElementById('mdCant').value);
   const fecha=document.getElementById('mdFecha').value;
-  if(origen===destino){ toast('⚠️ Origen y destino deben ser distintos'); return; }
+  if(origen===destino){ toast('⚠️ El origen y el destino deben ser distintos'); return; }
   if(cant<=0){ toast('⚠️ Indica la cantidad'); return; }
 
   loading(true,'Registrando despacho…');
@@ -2182,7 +2183,7 @@ async function movDespacho(idx){
       const snap=await tx.get(ref);
       const d=snap.data();
       const st=Object.assign({transito:0,constancia:0,paradero:0}, d.stock||{});
-      if(num(st[origen])<cant) throw new Error(`Stock insuficiente en ${PREDIOS[origen].nombre} (hay ${fmtNum(st[origen])})`);
+      if(num(st[origen])<cant) throw new Error(`Stock insuficiente en ${BODEGA_NOMBRES[origen]||origen} (hay ${fmtNum(st[origen])})`);
       st[origen]=num(st[origen])-cant;
       st[destino]=num(st[destino])+cant;
       tx.update(ref, {stock:st, updatedAt:Date.now()});
