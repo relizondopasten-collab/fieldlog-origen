@@ -1413,7 +1413,7 @@ let aplVia = null;      // estado del formulario vía riego (dosis/ha)
 function initAplic(){
   if(!isAdmin()) return;
   aplTab='foliar';
-  aplFol = { fecha: todayIso, epoca:'', recetaTxt:'', receta:[], destinos:[{predioId:'',unidad:'',litros:''}] };
+  aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], destinos:[{modulo:'',litros:''}] };
   aplRie = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{} };
   aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
   aplResumen = { desde: primerDiaMes(), hasta: todayIso, grupos:[], nApp:0 };
@@ -1548,52 +1548,41 @@ function renderFoliarForm(){
     if(noRec) recetaH+=`<div style="font-size:11px;color:#B45309;margin:2px 0 6px">Hay ${noRec} producto(s) sin reconocer. Elígelos antes de guardar.</div>`;
   }
 
-  // DESTINOS
+  // cultivo (a nivel de registro, como Fertilización/Vía riego)
+  const cultList = cultivosCache.length ? cultivosCache.map(c=>c.nombre) : ['tomate','pimentón','especialidades'];
+  const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===aplFol.cultivo?' selected':''}>${escH(c)}</option>`).join('');
+
+  // MÓDULOS del predio elegido + mojamiento
+  const mods = aplFol.predioId ? modulosDePredio(aplFol.predioId) : [];
   let destH = aplFol.destinos.map((d,i)=>{
-    const mods = d.predioId ? modulosDePredio(d.predioId) : [];
     const modOpts = `<option value="">— módulo —</option>`+mods.map(m=>{
-      const ha=haModulo(d.predioId,m);
-      return `<option value="${escH(m)}"${m===d.unidad?' selected':''}>Mód ${escH(m)}${ha!==null?` (${ha} ha)`:''}</option>`;
+      const ha=haModulo(aplFol.predioId,m);
+      return `<option value="${escH(m)}"${m===d.modulo?' selected':''}>Mód ${escH(m)}${ha!==null?` (${ha} ha)`:''}</option>`;
     }).join('');
-    let cicloH='';
-    if(d.predioId && d.unidad){
-      const ciclos=ciclosDeModulo(d.predioId,d.unidad);
-      if(ciclos.length===1){
-        cicloH=`<div style="font-size:10.5px;color:#2E7D32;padding:2px 0">🌱 ${escH(cicloLabel(ciclos[0]))} <span style="color:var(--muted)">(auto)</span></div>`;
-      }else if(ciclos.length>1){
-        cicloH=`<select onchange="aplFolSet('destinos',${i},'cicloId',this.value)" style="margin-top:4px"><option value="">— elige ciclo —</option>${ciclos.map(c=>`<option value="${c.id}"${c.id===d.cicloId?' selected':''}>${escH(cicloLabel(c))}</option>`).join('')}</select>`;
-      }else{
-        const todos=ciclosAllCache[d.predioId]||[];
-        cicloH=`<div style="font-size:10.5px;color:#B45309;padding:2px 0">⚠ sin ciclo para este módulo</div>`+
-          (todos.length?`<select onchange="aplFolSet('destinos',${i},'cicloId',this.value)" style="margin-top:2px"><option value="">— elige cultivo —</option>${todos.map(c=>`<option value="${c.id}"${c.id===d.cicloId?' selected':''}>${escH(cicloLabel(c))} · ${escH(c.subjefe)}</option>`).join('')}</select>`:'');
-      }
-    }
     return `<div style="border:1px solid var(--sand);border-radius:9px;padding:8px;margin-bottom:8px;background:var(--cream)">
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
-        <select onchange="aplFolSet('destinos',${i},'predioId',this.value)" style="flex:1">${predOpts(d.predioId)}</select>
-        <select onchange="aplFolSet('destinos',${i},'unidad',this.value)" style="flex:1"${d.predioId?'':' disabled'}>${modOpts}</select>
-      </div>
       <div style="display:flex;gap:6px;align-items:center">
-        <label style="font-size:11px;color:var(--muted)">Mojamiento (L agua):</label>
-        <input type="text" inputmode="decimal" placeholder="Ej: 2000" value="${d.litros}" oninput="aplFolSet('destinos',${i},'litros',this.value)" style="width:110px">
-        ${aplFol.destinos.length>1?`<button class="btn btn-danger btn-sm" onclick="aplFolDel('destinos',${i})" style="padding:4px 8px;margin-left:auto">✕</button>`:''}
+        <select onchange="aplFolSet('destinos',${i},'modulo',this.value)" style="flex:1"${aplFol.predioId?'':' disabled'}>${modOpts}</select>
+        <label style="font-size:11px;color:var(--muted);white-space:nowrap">Mojam. (L):</label>
+        <input type="text" inputmode="decimal" placeholder="2000" value="${d.litros}" oninput="aplFolSet('destinos',${i},'litros',this.value)" style="width:90px">
+        ${aplFol.destinos.length>1?`<button class="btn btn-danger btn-sm" onclick="aplFolDel('destinos',${i})" style="padding:4px 8px">✕</button>`:''}
       </div>
-      ${cicloH}
     </div>`;
   }).join('');
 
   box.innerHTML=`
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <div style="flex:1;min-width:130px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value"></div>
-      <div style="flex:1;min-width:130px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época</label><select onchange="aplFol.epoca=this.value">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplFol.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value"></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplFolSetCampo('predioId',this.value)">${predOpts(aplFol.predioId)}</select></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplFolSetCampo('cultivo',this.value)">${cultOpts}</select></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época</label><select onchange="aplFolSetCampo('epoca',this.value)">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplFol.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
     </div>
     <div class="sec-div">Receta (dosis por 100 L de agua)</div>
     <textarea id="folTxt" placeholder="Ej: Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + acido citrico 30 g" oninput="folSetTxt(this.value)" style="width:100%;min-height:64px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplFol.recetaTxt)}</textarea>
     <button class="btn btn-sm" onclick="folInterpretar()" style="background:var(--dark);color:#fff;margin:6px 0">🔎 Interpretar receta</button>
     ${recetaH}
-    <div class="sec-div">Destinos (módulo + mojamiento)</div>
+    <div class="sec-div">Módulos aplicados (módulo + mojamiento)</div>
     ${destH}
-    <button class="btn btn-sm" onclick="aplFolAdd('destinos')" style="background:var(--sand);color:var(--dark)">+ Destino</button>
+    <button class="btn btn-sm" onclick="aplFolAdd('destinos')" style="background:var(--sand);color:var(--dark)"${aplFol.predioId?'':' disabled'}>+ Módulo</button>
     <div id="folConsumo"></div>
     <button class="btn btn-primary" style="margin-top:12px" onclick="guardarFoliar()">Registrar aplicación</button>
   `;
@@ -1616,13 +1605,17 @@ function folDelItem(i){ aplFol.receta.splice(i,1); renderFoliarForm(); }
 
 function aplFolSet(grupo,i,campo,val){
   aplFol[grupo][i][campo]=val;
-  if(grupo==='destinos'&&campo==='predioId'){ aplFol.destinos[i].unidad=''; aplFol.destinos[i].cicloId=''; }
-  if(grupo==='destinos'&&campo==='unidad'){ aplFol.destinos[i].cicloId=''; }
   if(grupo==='destinos'&&campo==='litros'){ folRenderConsumo(); return; }  // no re-render: mantener foco
   renderFoliarForm();
 }
+function aplFolSetCampo(campo,val){
+  aplFol[campo]=val;
+  if(campo==='predioId'){ aplFol.destinos=[{modulo:'',litros:''}]; }  // reset módulos al cambiar predio
+  if(campo==='cultivo'||campo==='epoca'){ return; }  // no re-render: mantener foco/selección
+  renderFoliarForm();
+}
 function aplFolAdd(grupo){
-  if(grupo==='destinos') aplFol.destinos.push({predioId:'',unidad:'',litros:''});
+  if(grupo==='destinos') aplFol.destinos.push({modulo:'',litros:''});
   renderFoliarForm();
 }
 function aplFolDel(grupo,i){ aplFol[grupo].splice(i,1); renderFoliarForm(); }
@@ -1966,22 +1959,18 @@ async function guardarFoliar(){
   if(sinRec.length){ toast('⚠️ Corrige los productos no reconocidos'); return; }
   const sinDosis=aplFol.receta.filter(r=>r.dosis==null||isNaN(r.dosis)||r.dosis<=0);
   if(sinDosis.length){ toast('⚠️ Falta dosis en: '+sinDosis.map(r=>r.nombre||r.txt).join(', ')); return; }
-  const destinos = aplFol.destinos.filter(d=>d.predioId && d.unidad && parseFloat(d.litros)>0);
-  if(!destinos.length){ toast('⚠️ Agrega al menos un destino con mojamiento'); return; }
+  if(!aplFol.predioId){ toast('⚠️ Elige el predio'); return; }
+  if(!aplFol.cultivo){ toast('⚠️ Elige el cultivo'); return; }
+  const destinos = aplFol.destinos.filter(d=>d.modulo && parseFloat(d.litros)>0);
+  if(!destinos.length){ toast('⚠️ Agrega al menos un módulo con mojamiento'); return; }
 
   const recetaData = aplFol.receta.map(r=>{
     const cv=aStock(r.dosis,r.unidad);
     return {productoId:r.productoId, nombre:r.nombre, unidad:r.unidad, dosis:r.dosis, base:cv.base};
   });
-  const destData = destinos.map(d=>{
-    const ciclos=ciclosDeModulo(d.predioId,d.unidad);
-    let cicloId=d.cicloId||'', cultivo='';
-    if(!cicloId && ciclos.length===1) cicloId=ciclos[0].id;
-    let cobj=null;
-    for(const pid of Object.keys(ciclosAllCache)){ const f=(ciclosAllCache[pid]||[]).find(c=>c.id===cicloId); if(f){cobj=f;break;} }
-    if(cobj) cultivo=cobj.cultivo||'';
-    return {predioId:d.predioId, unidad:String(d.unidad), litros:parseFloat(d.litros), cicloId, cultivo, ha:haModulo(d.predioId,d.unidad)};
-  });
+  const destData = destinos.map(d=>({
+    modulo:String(d.modulo), litros:parseFloat(d.litros), ha:haModulo(aplFol.predioId,d.modulo)
+  }));
 
   loading(true,'Registrando…');
   try{
@@ -1989,7 +1978,7 @@ async function guardarFoliar(){
     const desc = descuentosFoliar(recetaData, totalLitros);
     const faltan = faltantesStock(desc);
     await db.collection('aplicaciones').add({
-      tipo:'foliar', fecha:aplFol.fecha, epoca:aplFol.epoca||'',
+      tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'',
       receta:recetaData, destinos:destData,
       descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
@@ -1997,7 +1986,7 @@ async function guardarFoliar(){
       createdAt:Date.now()
     });
     await ajustarStockCentral(desc, -1);
-    aplFol={ fecha:todayIso, epoca:'', recetaTxt:'', receta:[], destinos:[{predioId:'',unidad:'',litros:''}] };
+    aplFol={ fecha:todayIso, predioId:aplFol.predioId, cultivo:'', epoca:'', recetaTxt:'', receta:[], destinos:[{modulo:'',litros:''}] };
     renderFoliarForm();
     renderAplList();
     toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Aplicación registrada · stock descontado');
@@ -2038,8 +2027,9 @@ async function renderAplList(){
         etiqueta='🍃';
         receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.dosis)}${escH(r.unidad||(r.unidadStock==='L'?'cc':'g'))}/100L`).join(' + ');
         const totalAgua=(a.destinos||[]).reduce((s,d)=>s+(Number(d.litros)||0),0);
-        sub=(a.destinos||[]).map(d=>`${escH(PREDIOS[d.predioId]?PREDIOS[d.predioId].nombre:d.predioId)} mód ${escH(d.unidad)}: ${fmtNum(d.litros,0)}L`).join(' · ');
-        totalTxt=`${fmtNum(totalAgua,0)}L de agua`;
+        const predF=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
+        sub=(a.destinos||[]).map(d=>`mód ${escH(d.modulo||d.unidad||'')}: ${fmtNum(d.litros,0)}L`).join(' · ');
+        totalTxt=`${escH(predF)}${a.cultivo?' · '+escH(a.cultivo):''}${a.epoca?' · '+(TNAMES[a.epoca]||a.epoca):''} · ${fmtNum(totalAgua,0)}L de agua`;
       }
       return `<div style="padding:8px 0;border-bottom:1px solid var(--sand)">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
