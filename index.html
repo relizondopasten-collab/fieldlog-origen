@@ -500,10 +500,11 @@ select:focus,input:focus{border-color:var(--green)}
     </div>
 
     <div class="card">
-      <div style="display:flex;gap:6px;margin-bottom:10px">
-        <button class="btn btn-sm" id="aplTabFoliar" onclick="aplSetTab('foliar')" style="flex:1">🍃 Foliar</button>
-        <button class="btn btn-sm" id="aplTabRiego" onclick="aplSetTab('riego')" style="flex:1;background:var(--sand);color:var(--dark)">💦 Riego</button>
-        <button class="btn btn-sm" id="aplTabResumen" onclick="aplSetTab('resumen')" style="flex:1;background:var(--sand);color:var(--dark)">📊 Gasto</button>
+      <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+        <button class="btn btn-sm" id="aplTabFoliar" onclick="aplSetTab('foliar')" style="flex:1;min-width:100px">🍃 Foliar</button>
+        <button class="btn btn-sm" id="aplTabRiego" onclick="aplSetTab('riego')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">🧪 Fertilización</button>
+        <button class="btn btn-sm" id="aplTabVia" onclick="aplSetTab('viariego')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">💧 Vía riego</button>
+        <button class="btn btn-sm" id="aplTabResumen" onclick="aplSetTab('resumen')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">📊 Gasto</button>
       </div>
       <div id="aplBody"></div>
     </div>
@@ -1407,12 +1408,14 @@ let aplTab = 'foliar';
 let aplFol = null;   // estado del formulario foliar
 let aplRie = null;   // estado del formulario riego
 let aplResumen = null;  // estado del reporte de gasto
+let aplVia = null;      // estado del formulario vía riego (dosis/ha)
 
 function initAplic(){
   if(!isAdmin()) return;
   aplTab='foliar';
   aplFol = { fecha: todayIso, recetaTxt:'', receta:[], destinos:[{predioId:'',unidad:'',litros:''}] };
   aplRie = { fecha: todayIso, predioId:'', cultivo:'', capacidad:'', cant:{}, litros:{} };
+  aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
   aplResumen = { desde: primerDiaMes(), hasta: todayIso, filas:[], nApp:0 };
   loadCiclosAll().then(()=>{ aplSetTab('foliar'); renderAplList(); });
 }
@@ -1465,12 +1468,11 @@ function modulosDePredio(predioId){
 function aplSetTab(t){
   aplTab=t;
   const off='background:var(--sand);color:var(--dark)';
-  const bF=document.getElementById('aplTabFoliar'), bR=document.getElementById('aplTabRiego'), bG=document.getElementById('aplTabResumen');
-  if(bF) bF.style.cssText='flex:1;'+(t==='foliar'?'':off);
-  if(bR) bR.style.cssText='flex:1;'+(t==='riego'?'':off);
-  if(bG) bG.style.cssText='flex:1;'+(t==='resumen'?'':off);
+  const map={foliar:'aplTabFoliar', riego:'aplTabRiego', viariego:'aplTabVia', resumen:'aplTabResumen'};
+  Object.keys(map).forEach(k=>{ const b=document.getElementById(map[k]); if(b) b.style.cssText='flex:1;min-width:100px;'+(t===k?'':off); });
   if(t==='foliar') renderFoliarForm();
   else if(t==='riego') renderRiegoForm();
+  else if(t==='viariego') renderViaRiegoForm();
   else { renderResumenForm(); calcResumen(); }
 }
 
@@ -1647,6 +1649,150 @@ function folRenderConsumo(){
   } else el.innerHTML='';
 }
 
+
+
+// ══════════ Vía riego: productos de apoyo por dosis/ha (usa el mismo intérprete del foliar) ══════════
+function renderViaRiegoForm(){
+  const box=document.getElementById('aplBody');
+  if(!productosCache.length){
+    box.innerHTML='<p style="font-size:12px;color:var(--red);padding:8px 0">No hay productos cargados. Carga productos en Bodega antes de registrar.</p>';
+    return;
+  }
+  const predOpts = pid=>`<option value="">— predio —</option>`+Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+  const cultList = cultivosCache.length ? cultivosCache.map(c=>c.nombre) : ['tomate','pimentón','especialidades'];
+  const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===aplVia.cultivo?' selected':''}>${escH(c)}</option>`).join('');
+  const epocaOpts = `<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplVia.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('');
+  const prodOpts = sel=>`<option value="">— elegir producto —</option>`+productosCache.map(x=>`<option value="${x.id}"${x.id===sel?' selected':''}>${escH(x.nombre)}</option>`).join('');
+
+  // Receta interpretada (dosis/ha)
+  let recetaH='';
+  if(aplVia.receta.length){
+    recetaH = aplVia.receta.map((r,i)=>{
+      const ok=!!r.productoId;
+      const dosisTxt = (r.dosis!=null ? `${fmtNum(r.dosis)} ${escH(r.unidad||'?')}/ha` : '<span style="color:var(--red)">sin dosis</span>');
+      if(ok){
+        return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;font-size:12.5px">
+          <span style="color:#2E7D32">✅</span><b style="flex:1">${escH(r.nombre)}</b>
+          <span style="color:var(--muted)">${dosisTxt}</span>
+          <button class="btn btn-danger btn-sm" onclick="viaDelItem(${i})" style="padding:3px 7px">✕</button>
+        </div>`;
+      }
+      return `<div style="border:1px solid #F0C36D;border-radius:8px;padding:7px;margin-bottom:6px;background:#FFF8E8">
+        <div style="font-size:12px;color:#B45309;margin-bottom:4px">⚠ No reconocí <b>"${escH(r.txt)}"</b> — elígelo de la bodega:</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <select onchange="viaSetProd(${i},this.value)" style="flex:1">${prodOpts(r.productoId)}</select>
+          <span style="font-size:11px;color:var(--muted);white-space:nowrap">${dosisTxt}</span>
+          <button class="btn btn-danger btn-sm" onclick="viaDelItem(${i})" style="padding:3px 7px">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+    const noRec=aplVia.receta.filter(r=>!r.productoId).length;
+    if(noRec) recetaH+=`<div style="font-size:11px;color:#B45309;margin:2px 0 6px">Hay ${noRec} producto(s) sin reconocer. Elígelos antes de guardar.</div>`;
+  }
+
+  // Sectores del predio (checkboxes)
+  let sectoresH;
+  if(!aplVia.predioId){ sectoresH='<p style="font-size:11px;color:var(--muted)">Elige el predio para marcar los sectores.</p>'; }
+  else{
+    const secs=sectoresDePredio(aplVia.predioId);
+    if(!secs.length){ sectoresH='<p style="font-size:11px;color:var(--muted)">Este predio no tiene sectores cargados.</p>'; }
+    else sectoresH=`<div style="display:flex;flex-wrap:wrap;gap:6px">`+secs.map((s,i)=>{
+      const ha=haSector(aplVia.predioId,s);
+      const on=!!aplVia.sectores[s];
+      return `<button onclick="viaToggleSector(${i})" style="border:1px solid ${on?'#2E7D32':'var(--sand)'};background:${on?'#E7F3E8':'var(--cream)'};color:var(--dark);border-radius:8px;padding:5px 9px;font-size:11.5px;cursor:pointer">${on?'☑':'☐'} ${escH(s)}${ha!=null?` <span style="color:var(--muted)">(${fmtNum(ha,2)})</span>`:''}</button>`;
+    }).join('')+`</div>`;
+  }
+
+  box.innerHTML=`
+    <div class="form-row"><label>Fecha</label><input type="date" value="${aplVia.fecha}" onchange="viaSetCampo('fecha',this.value)"></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="viaSetCampo('predioId',this.value)">${predOpts(aplVia.predioId)}</select></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="viaSetCampo('cultivo',this.value)">${cultOpts}</select></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época</label><select onchange="viaSetCampo('epoca',this.value)">${epocaOpts}</select></div>
+    </div>
+    <div class="sec-div">Receta (dosis por hectárea)</div>
+    <textarea id="viaTxt" placeholder="Ej: Ultraferro 2 kg + Zincfull 1 L + Serenade 2 L" oninput="viaSetTxt(this.value)" style="width:100%;min-height:60px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplVia.recetaTxt)}</textarea>
+    <button class="btn btn-sm" onclick="viaInterpretar()" style="background:var(--dark);color:#fff;margin:6px 0">🔎 Interpretar receta</button>
+    ${recetaH}
+    <div class="sec-div">Sectores de riego aplicados</div>
+    ${sectoresH}
+    <div id="viaCalc"></div>
+    <button class="btn btn-primary" style="margin-top:12px" onclick="guardarViaRiego()">Registrar vía riego</button>
+  `;
+  viaRenderCalc();
+}
+
+function calcVia(){
+  const secs=Object.keys(aplVia.sectores).filter(s=>aplVia.sectores[s]);
+  const haTotal=secs.reduce((sum,s)=>sum+(haSector(aplVia.predioId,s)||0),0);
+  const items=[];
+  aplVia.receta.forEach(r=>{
+    if(r.productoId && r.dosis!=null && !isNaN(r.dosis)){
+      const cv=aStock(r.dosis,r.unidad);
+      const cantidad=cv.val*haTotal;
+      const p=productosCache.find(x=>x.id===r.productoId);
+      const precioUnit=(p&&p.precioUnit!=null&&p.precioUnit!=='')?Number(p.precioUnit):null;
+      items.push({productoId:r.productoId, nombre:r.nombre, dosis:r.dosis, unidad:r.unidad, base:cv.base, cantidad, costo:precioUnit!=null?cantidad*precioUnit:null});
+    }
+  });
+  return {haTotal, secs, items};
+}
+
+function viaRenderCalc(){
+  const el=document.getElementById('viaCalc'); if(!el) return;
+  const r=calcVia();
+  if(r.haTotal>0 && r.items.length){
+    const costoTot=r.items.reduce((s,it)=>s+(it.costo||0),0);
+    el.innerHTML=`<div class="sec-div">Total aplicado</div>
+      <div style="font-size:11px;color:var(--dark);line-height:1.7">
+        <b>${fmtNum(r.haTotal,2)} ha</b> en ${r.secs.length} sector(es)<br>
+        ${r.items.map(it=>`${escH(it.nombre)}: <b style="color:#B45309">${fmtNum(it.cantidad,3)} ${escH(it.base)}</b>${it.costo!=null?` · ${fmtCLP(it.costo)}`:''}`).join('<br>')}
+        ${costoTot>0?`<br><b>Costo total: ${fmtCLP(costoTot)}</b>`:''}
+      </div>`;
+  }else el.innerHTML='';
+}
+
+function viaSetTxt(v){ aplVia.recetaTxt=v; }
+function viaInterpretar(){ const ta=document.getElementById('viaTxt'); if(ta) aplVia.recetaTxt=ta.value; aplVia.receta=parseReceta(aplVia.recetaTxt); renderViaRiegoForm(); }
+function viaSetProd(i,productoId){ const p=productosCache.find(x=>x.id===productoId); aplVia.receta[i].productoId=productoId; aplVia.receta[i].nombre=p?p.nombre:aplVia.receta[i].txt; renderViaRiegoForm(); }
+function viaDelItem(i){ aplVia.receta.splice(i,1); renderViaRiegoForm(); }
+function viaSetCampo(campo,val){ aplVia[campo]=val; if(campo==='predioId'){ aplVia.sectores={}; renderViaRiegoForm(); return; } if(campo==='fecha'||campo==='cultivo'||campo==='epoca') return; renderViaRiegoForm(); }
+function viaToggleSector(i){ const secs=sectoresDePredio(aplVia.predioId); const s=secs[i]; if(s==null) return; aplVia.sectores[s]=!aplVia.sectores[s]; renderViaRiegoForm(); }
+
+async function guardarViaRiego(){
+  if(!isAdmin() && !(currentProfile&&currentProfile.role==='riego')){ toast('Sin permiso'); return; }
+  if(!aplVia.receta.length){ toast('⚠️ Escribe la receta y pulsa Interpretar'); return; }
+  if(aplVia.receta.some(r=>!r.productoId)){ toast('⚠️ Corrige los productos no reconocidos'); return; }
+  if(aplVia.receta.some(r=>r.dosis==null||isNaN(r.dosis)||r.dosis<=0)){ toast('⚠️ Falta dosis en algún producto'); return; }
+  if(!aplVia.predioId){ toast('⚠️ Elige el predio'); return; }
+  if(!aplVia.cultivo){ toast('⚠️ Elige el cultivo'); return; }
+  const r=calcVia();
+  if(!r.secs.length){ toast('⚠️ Marca al menos un sector'); return; }
+  if(!(r.haTotal>0)){ toast('⚠️ Los sectores marcados no tienen superficie'); return; }
+
+  const recetaData=aplVia.receta.map(x=>{ const cv=aStock(x.dosis,x.unidad); return {productoId:x.productoId, nombre:x.nombre, unidad:x.unidad, dosis:x.dosis, base:cv.base}; });
+  const sectoresData=r.secs.map(s=>({sector:String(s), ha:haSector(aplVia.predioId,s)}));
+  const desc=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.cantidad}));
+
+  loading(true,'Registrando…');
+  try{
+    const faltan=faltantesStock(desc);
+    await db.collection('aplicaciones').add({
+      tipo:'viariego', fecha:aplVia.fecha, predioId:aplVia.predioId, cultivo:aplVia.cultivo, epoca:aplVia.epoca||'',
+      receta:recetaData, sectores:sectoresData, haTotal:r.haTotal,
+      descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
+      registradoPor:currentUser.uid,
+      registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+      createdAt:Date.now()
+    });
+    await ajustarStockCentral(desc, -1);
+    aplVia={ fecha:todayIso, predioId:aplVia.predioId, cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
+    renderViaRiegoForm();
+    renderAplList();
+    toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Vía riego registrado · stock descontado');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
 
 // ══════════ Reporte de gasto por producto (filtro por fechas) ══════════
 function primerDiaMes(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; }
@@ -1844,7 +1990,13 @@ async function renderAplList(){
     box.innerHTML=snap.docs.map(doc=>{
       const a=doc.data();
       let etiqueta, receta, sub, totalTxt;
-      if(a.tipo==='fertirriego'){
+      if(a.tipo==='viariego'){
+        etiqueta='💧';
+        receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.dosis)}${escH(r.unidad||'')}/ha`).join(' + ');
+        const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
+        sub=(a.sectores||[]).map(s=>escH(s.sector)).join(' · ');
+        totalTxt=`${escH(pred)} · ${escH(a.cultivo||'')}${a.epoca?' · '+(TNAMES[a.epoca]||a.epoca):''} · ${fmtNum(a.haTotal,2)} ha`;
+      }else if(a.tipo==='fertirriego'){
         etiqueta='🧪';
         receta=(a.sales||[]).map(s=>`${escH(s.nombre)} ${fmtNum(s.cantidadKg)}${escH(s.unidad||'kg')}`).join(' + ');
         const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
