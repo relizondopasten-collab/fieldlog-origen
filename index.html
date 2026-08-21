@@ -1413,10 +1413,10 @@ let aplVia = null;      // estado del formulario vía riego (dosis/ha)
 function initAplic(){
   if(!isAdmin()) return;
   aplTab='foliar';
-  aplFol = { fecha: todayIso, recetaTxt:'', receta:[], destinos:[{predioId:'',unidad:'',litros:''}] };
-  aplRie = { fecha: todayIso, predioId:'', cultivo:'', capacidad:'', cant:{}, litros:{} };
+  aplFol = { fecha: todayIso, epoca:'', recetaTxt:'', receta:[], destinos:[{predioId:'',unidad:'',litros:''}] };
+  aplRie = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{} };
   aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
-  aplResumen = { desde: primerDiaMes(), hasta: todayIso, filas:[], nApp:0 };
+  aplResumen = { desde: primerDiaMes(), hasta: todayIso, grupos:[], nApp:0 };
   loadCiclosAll().then(()=>{ aplSetTab('foliar'); renderAplList(); });
 }
 
@@ -1583,7 +1583,10 @@ function renderFoliarForm(){
   }).join('');
 
   box.innerHTML=`
-    <div class="form-row"><label>Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value"></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="flex:1;min-width:130px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value"></div>
+      <div style="flex:1;min-width:130px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época</label><select onchange="aplFol.epoca=this.value">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplFol.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
+    </div>
     <div class="sec-div">Receta (dosis por 100 L de agua)</div>
     <textarea id="folTxt" placeholder="Ej: Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + acido citrico 30 g" oninput="folSetTxt(this.value)" style="width:100%;min-height:64px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplFol.recetaTxt)}</textarea>
     <button class="btn btn-sm" onclick="folInterpretar()" style="background:var(--dark);color:#fff;margin:6px 0">🔎 Interpretar receta</button>
@@ -1798,11 +1801,11 @@ async function guardarViaRiego(){
 function primerDiaMes(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; }
 
 async function calcResumen(){
-  const box=document.getElementById('aplBody');
   const desde=aplResumen.desde||'', hasta=aplResumen.hasta||'';
   try{
     const snap=await db.collection('aplicaciones').get();
-    const acc={};  // productoId -> {nombre, base, total}
+    // acc[epoca][productoId] = {nombre, base, cantidad, ha, precio}
+    const acc={};
     let nApp=0;
     snap.docs.forEach(doc=>{
       const a=doc.data();
@@ -1810,59 +1813,81 @@ async function calcResumen(){
       if(desde && f<desde) return;
       if(hasta && f>hasta) return;
       nApp++;
-      // base por producto desde la receta (fallback a unidadStock de apps viejas)
+      const ep=a.epoca||'';
+      // ha aplicada por esta aplicación
+      let haApp=0;
+      if(a.tipo==='viariego') haApp=Number(a.haTotal)|| (a.sectores||[]).reduce((s,x)=>s+(Number(x.ha)||0),0);
+      else if(a.tipo==='fertirriego') haApp=(a.sectores||[]).reduce((s,x)=>s+(Number(x.ha)||0),0);
+      else haApp=(a.destinos||[]).reduce((s,x)=>s+(Number(x.ha)||0),0);  // foliar
+      // base/nombre por producto desde receta/sales
       const baseMap={}, nombreMap={};
-      (a.receta||[]).forEach(r=>{
-        if(!r.productoId) return;
-        baseMap[r.productoId]= r.base || (r.unidadStock==='L'?'L':(r.unidadStock==='kg'?'kg':''));
-        nombreMap[r.productoId]= r.nombre;
-      });
-      (a.sales||[]).forEach(s=>{
-        if(!s.productoId) return;
-        baseMap[s.productoId]= s.unidad || 'kg';
-        nombreMap[s.productoId]= s.nombre;
-      });
+      (a.receta||[]).forEach(r=>{ if(r.productoId){ baseMap[r.productoId]=r.base||(r.unidadStock==='L'?'L':(r.unidadStock==='kg'?'kg':'')); nombreMap[r.productoId]=r.nombre; } });
+      (a.sales||[]).forEach(s=>{ if(s.productoId){ baseMap[s.productoId]=s.unidad||'kg'; nombreMap[s.productoId]=s.nombre; } });
       (a.descontado||[]).forEach(d=>{
         if(!d.productoId) return;
-        if(!acc[d.productoId]){
+        if(!acc[ep]) acc[ep]={};
+        if(!acc[ep][d.productoId]){
           const p=productosCache.find(x=>x.id===d.productoId);
-          acc[d.productoId]={ nombre:(p?p.nombre:nombreMap[d.productoId])||d.productoId, base:baseMap[d.productoId]||'', total:0 };
+          const precio=(p&&p.precioUnit!=null&&p.precioUnit!=='')?Number(p.precioUnit):null;
+          acc[ep][d.productoId]={ nombre:(p?p.nombre:nombreMap[d.productoId])||d.productoId, base:baseMap[d.productoId]||'', cantidad:0, ha:0, precio };
         }
-        if(!acc[d.productoId].base && baseMap[d.productoId]) acc[d.productoId].base=baseMap[d.productoId];
-        acc[d.productoId].total += Number(d.cantidad)||0;
+        if(!acc[ep][d.productoId].base && baseMap[d.productoId]) acc[ep][d.productoId].base=baseMap[d.productoId];
+        acc[ep][d.productoId].cantidad += Number(d.cantidad)||0;
+        acc[ep][d.productoId].ha += haApp;
       });
     });
-    aplResumen.filas = Object.keys(acc).map(id=>{
-      const p=productosCache.find(x=>x.id===id);
-      const stockTot = (p&&p.stock) ? (Number(p.stock.transito||0)+Number(p.stock.constancia||0)+Number(p.stock.paradero||0)) : null;
-      return {productoId:id, nombre:acc[id].nombre, base:acc[id].base, total:acc[id].total, stockTot};
-    }).sort((a,b)=>b.total-a.total);
-    aplResumen.nApp=nApp;
-  }catch(e){ aplResumen.filas=[]; aplResumen.nApp=0; toast('Error: '+e.message); }
+    // armar grupos ordenados por época (TORDER, luego "sin época")
+    const orden=[...TORDER, ''];
+    const grupos=[];
+    orden.forEach(ep=>{
+      if(!acc[ep]) return;
+      const filas=Object.keys(acc[ep]).map(id=>{
+        const o=acc[ep][id];
+        const cantXha=o.ha>0?o.cantidad/o.ha:null;
+        const costo=o.precio!=null?o.cantidad*o.precio:null;
+        const costoXha=(costo!=null&&o.ha>0)?costo/o.ha:null;
+        return {nombre:o.nombre, base:o.base, cantidad:o.cantidad, ha:o.ha, cantXha, costo, costoXha};
+      }).sort((a,b)=>(b.costo||0)-(a.costo||0) || b.cantidad-a.cantidad);
+      const costoTot=filas.reduce((s,x)=>s+(x.costo||0),0);
+      grupos.push({ epoca:ep, label: ep?`${TICONS[ep]||''} ${TNAMES[ep]||ep}`:'Sin época', filas, costoTot });
+    });
+    aplResumen.grupos=grupos; aplResumen.nApp=nApp;
+  }catch(e){ aplResumen.grupos=[]; aplResumen.nApp=0; toast('Error: '+e.message); }
   renderResumenForm();
 }
 
 function renderResumenForm(){
-  const box=document.getElementById('aplBody');
-  const filas=aplResumen.filas||[];
-  let tablaH;
-  if(!filas.length){
-    tablaH='<p style="font-size:12px;color:var(--muted);padding:10px 0">Sin gasto registrado en el período. Ajusta las fechas y pulsa Calcular.</p>';
+  const grupos=aplResumen.grupos||[];
+  let cuerpo;
+  if(!grupos.length){
+    cuerpo='<p style="font-size:12px;color:var(--muted);padding:10px 0">Sin gasto registrado en el período. Ajusta las fechas y pulsa Calcular.</p>';
   }else{
-    tablaH=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">
-      <thead><tr style="border-bottom:2px solid var(--sand)">
-        <th style="padding:5px;text-align:left">Producto</th>
-        <th style="padding:5px;text-align:right">Gastado</th>
-        <th style="padding:5px;text-align:right">Stock actual</th>
-      </tr></thead><tbody>
-      ${filas.map(f=>`<tr style="border-bottom:1px solid var(--sand)">
-        <td style="padding:5px">${escH(f.nombre)}</td>
-        <td style="padding:5px;text-align:right;color:#B45309;font-weight:600">${fmtNum(f.total,3)} ${escH(f.base)}</td>
-        <td style="padding:5px;text-align:right;color:var(--muted)">${f.stockTot!=null?fmtNum(f.stockTot,2)+' '+escH(f.base):'—'}</td>
-      </tr>`).join('')}
-      </tbody></table></div>
-      <div style="font-size:11px;color:var(--muted);margin-top:8px">${aplResumen.nApp||0} aplicación(es) en el período · gasto descontado de ${escH(BODEGA_NOMBRES.constancia)}. El stock mostrado es el total de los 3 predios.</div>`;
+    cuerpo=grupos.map(g=>`
+      <div style="margin-top:12px">
+        <div style="font-weight:700;font-size:13px;color:var(--dark);margin-bottom:4px">${escH(g.label)}</div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead><tr style="border-bottom:2px solid var(--sand)">
+            <th style="padding:4px;text-align:left">Producto</th>
+            <th style="padding:4px;text-align:right">Total</th>
+            <th style="padding:4px;text-align:right">/ha</th>
+            <th style="padding:4px;text-align:right">Costo</th>
+            <th style="padding:4px;text-align:right">Costo/ha</th>
+          </tr></thead><tbody>
+          ${g.filas.map(f=>`<tr style="border-bottom:1px solid var(--sand)">
+            <td style="padding:4px">${escH(f.nombre)}</td>
+            <td style="padding:4px;text-align:right;color:#B45309;font-weight:600">${fmtNum(f.cantidad,2)} ${escH(f.base)}</td>
+            <td style="padding:4px;text-align:right;color:var(--muted)">${f.cantXha!=null?fmtNum(f.cantXha,3)+' '+escH(f.base):'—'}</td>
+            <td style="padding:4px;text-align:right">${f.costo!=null?fmtCLP(f.costo):'—'}</td>
+            <td style="padding:4px;text-align:right;color:var(--muted)">${f.costoXha!=null?fmtCLP(f.costoXha):'—'}</td>
+          </tr>`).join('')}
+          </tbody></table></div>
+        ${g.costoTot>0?`<div style="font-size:11px;color:var(--dark);text-align:right;margin-top:3px"><b>Costo ${escH(g.label)}: ${fmtCLP(g.costoTot)}</b></div>`:''}
+      </div>`).join('');
+    const costoGeneral=grupos.reduce((s,g)=>s+(g.costoTot||0),0);
+    if(costoGeneral>0) cuerpo+=`<div style="border-top:2px solid var(--sand);margin-top:10px;padding-top:6px;font-size:12px;text-align:right"><b>Costo total del período: ${fmtCLP(costoGeneral)}</b></div>`;
+    cuerpo+=`<div style="font-size:11px;color:var(--muted);margin-top:8px">${aplResumen.nApp||0} aplicación(es) en el período · "/ha" = cantidad ÷ hectáreas aplicadas · costo desde el precio unitario de bodega (donde exista).</div>`;
   }
+  const box=document.getElementById('aplBody');
   box.innerHTML=`
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
       <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Desde</label>
@@ -1871,12 +1896,12 @@ function renderResumenForm(){
         <input type="date" value="${aplResumen.hasta}" onchange="aplResumen.hasta=this.value"></div>
       <button class="btn btn-sm" onclick="calcResumen()" style="background:var(--dark);color:#fff">📊 Calcular</button>
     </div>
-    <div style="display:flex;gap:6px;margin-bottom:10px">
+    <div style="display:flex;gap:6px;margin-bottom:4px">
       <button class="btn btn-sm" onclick="resumenAtajo('mes')" style="background:var(--sand);color:var(--dark);font-size:11px;padding:4px 8px">Este mes</button>
       <button class="btn btn-sm" onclick="resumenAtajo('mespasado')" style="background:var(--sand);color:var(--dark);font-size:11px;padding:4px 8px">Mes pasado</button>
       <button class="btn btn-sm" onclick="resumenAtajo('todo')" style="background:var(--sand);color:var(--dark);font-size:11px;padding:4px 8px">Todo</button>
     </div>
-    ${tablaH}
+    ${cuerpo}
   `;
 }
 
@@ -1964,7 +1989,7 @@ async function guardarFoliar(){
     const desc = descuentosFoliar(recetaData, totalLitros);
     const faltan = faltantesStock(desc);
     await db.collection('aplicaciones').add({
-      tipo:'foliar', fecha:aplFol.fecha,
+      tipo:'foliar', fecha:aplFol.fecha, epoca:aplFol.epoca||'',
       receta:recetaData, destinos:destData,
       descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
@@ -1972,7 +1997,7 @@ async function guardarFoliar(){
       createdAt:Date.now()
     });
     await ajustarStockCentral(desc, -1);
-    aplFol={ fecha:todayIso, recetaTxt:'', receta:[], destinos:[{predioId:'',unidad:'',litros:''}] };
+    aplFol={ fecha:todayIso, epoca:'', recetaTxt:'', receta:[], destinos:[{predioId:'',unidad:'',litros:''}] };
     renderFoliarForm();
     renderAplList();
     toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Aplicación registrada · stock descontado');
@@ -2122,9 +2147,10 @@ function renderRiegoForm(){
 
   box.innerHTML=`
     <div class="form-row"><label>Fecha</label><input type="date" value="${aplRie.fecha}" onchange="aplRieSetCampo('fecha',this.value)"></div>
-    <div style="display:flex;gap:6px">
-      <div style="flex:1"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplRieSetCampo('predioId',this.value)">${predOpts(aplRie.predioId)}</select></div>
-      <div style="flex:1"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplRieSetCampo('cultivo',this.value)">${cultOpts}</select></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="flex:1;min-width:100px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplRieSetCampo('predioId',this.value)">${predOpts(aplRie.predioId)}</select></div>
+      <div style="flex:1;min-width:100px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplRieSetCampo('cultivo',this.value)">${cultOpts}</select></div>
+      <div style="flex:1;min-width:100px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época</label><select onchange="aplRieSetCampo('epoca',this.value)">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplRie.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
     </div>
     <div class="form-row" style="margin-top:6px"><label>Capacidad del estanque (L)</label><input type="text" inputmode="decimal" placeholder="Ej: 1000" value="${aplRie.capacidad}" oninput="aplRieSetCampo('capacidad',this.value)"></div>
     <div class="sec-div">Sales cargadas al estanque (kg)</div>
@@ -2172,7 +2198,7 @@ function aplRieSetCampo(campo,val){
   aplRie[campo]=val;
   if(campo==='predioId'){ aplRie.litros={}; renderRiegoForm(); return; }
   if(campo==='capacidad'){ rieRenderCalc(); return; }   // no re-render: mantener foco
-  if(campo==='cultivo'||campo==='fecha'){ return; }
+  if(campo==='cultivo'||campo==='fecha'||campo==='epoca'){ return; }
   renderRiegoForm();
 }
 function aplRieCant(idx,val){ aplRie.cant[idx]=val; rieRenderCalc(); }
@@ -2202,7 +2228,7 @@ async function guardarRiego(){
   try{
     const faltan=faltantesStock(desc);
     await db.collection('aplicaciones').add({
-      tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:aplRie.cultivo,
+      tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:aplRie.cultivo, epoca:aplRie.epoca||'',
       capacidad:cap, sales:salesData, sectores:sectoresData, totalLitros:r.totalLitros,
       descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
@@ -2210,7 +2236,7 @@ async function guardarRiego(){
       createdAt:Date.now()
     });
     if(desc.length) await ajustarStockCentral(desc, -1);
-    aplRie={ fecha:todayIso, predioId:aplRie.predioId, cultivo:'', capacidad:'', cant:{}, litros:{} };
+    aplRie={ fecha:todayIso, predioId:aplRie.predioId, cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{} };
     renderRiegoForm();
     renderAplList();
     let msg='✅ Fertirriego registrado';
