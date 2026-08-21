@@ -1920,9 +1920,14 @@ function haSector(predioId, sector){
   const v=t.sectores[sector]; return (v===undefined||v===null)?null:Number(v);
 }
 
-function fertilizantesBodega(){
-  return productosCache.filter(p=>normNombre(p.categoria||'')==='fertilizante')
-    .sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
+// Lista fija de sales de fertirriego (aparecen siempre, en este orden).
+// Cada una se vincula por nombre a un producto de bodega para descontar stock.
+const FERTIRRIEGO_SALES = ['Nitrato de potasio','Nitrato de calcio','Nitrato de magnesio','Sulfato de magnesio','Fosfato mono amonico','Fosfato mono potasico','Ultrasol multiproposito','Sulfato de potasio','Cloruro de potasio'];
+function salesEstanque(){
+  return FERTIRRIEGO_SALES.map((nombre,i)=>{
+    const prod=matchProducto(nombre);
+    return { idx:i, nombre, productoId:prod?prod.id:'', unidad:(prod&&prod.unidad)||'kg', enBodega:!!prod };
+  });
 }
 
 // Fertirriego por estanque de sales:
@@ -1931,24 +1936,18 @@ function fertilizantesBodega(){
 //  - total aplicado de cada sal = (Σ litros aplicados) × concentración
 function renderRiegoForm(){
   const box=document.getElementById('aplBody');
-  const ferts=fertilizantesBodega();
-  if(!ferts.length){
-    box.innerHTML='<p style="font-size:12px;color:var(--red);padding:8px 0">No hay productos con categoría <b>Fertilizante</b> en la bodega. Clasifícalos en Bodega para poder armar el estanque.</p>';
-    return;
-  }
   const predOpts = pid=>`<option value="">— predio —</option>`+Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
   const cultList = cultivosCache.length ? cultivosCache.map(c=>c.nombre) : ['tomate','pimentón','especialidades'];
   const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===aplRie.cultivo?' selected':''}>${escH(c)}</option>`).join('');
 
-  // Sales (fertilizantes) — aparecen siempre
-  const salesH = ferts.map(p=>{
-    const cant=aplRie.cant[p.id]||'';
-    const u=p.unidad||'kg';
+  // Sales fijas — aparecen siempre; solo se escribe kg
+  const salesH = salesEstanque().map(s=>{
+    const cant=aplRie.cant[s.idx]||'';
     return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
-      <span style="flex:1;font-size:12.5px">${escH(p.nombre)}</span>
-      <input type="text" inputmode="decimal" placeholder="0" value="${cant}" oninput="aplRieCant('${p.id}',this.value)" style="width:66px;text-align:right">
-      <span style="font-size:10.5px;color:var(--muted);width:34px">${escH(u)}</span>
-      <span id="conc_${p.id}" style="font-size:10.5px;color:#2E7D32;width:92px;text-align:right"></span>
+      <span style="flex:1;font-size:12.5px">${escH(s.nombre)}${s.enBodega?'':' <span style="color:#B45309;font-size:10px">(no en bodega)</span>'}</span>
+      <input type="text" inputmode="decimal" placeholder="0" value="${cant}" oninput="aplRieCant(${s.idx},this.value)" style="width:66px;text-align:right">
+      <span style="font-size:10.5px;color:var(--muted);width:22px">${escH(s.unidad)}</span>
+      <span id="conc_${s.idx}" style="font-size:10.5px;color:#2E7D32;width:94px;text-align:right"></span>
     </div>`;
   }).join('');
 
@@ -1976,7 +1975,7 @@ function renderRiegoForm(){
       <div style="flex:1"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplRieSetCampo('cultivo',this.value)">${cultOpts}</select></div>
     </div>
     <div class="form-row" style="margin-top:6px"><label>Capacidad del estanque (L)</label><input type="text" inputmode="decimal" placeholder="Ej: 1000" value="${aplRie.capacidad}" oninput="aplRieSetCampo('capacidad',this.value)"></div>
-    <div class="sec-div">Sales cargadas al estanque</div>
+    <div class="sec-div">Sales cargadas al estanque (kg)</div>
     ${salesH}
     <div class="sec-div">Litros de estanque aplicados por sector</div>
     ${sectoresH}
@@ -1990,11 +1989,11 @@ function calcFertirriego(){
   const cap=num(aplRie.capacidad);
   const totalLitros=Object.values(aplRie.litros).reduce((s,v)=>s+(num(v)||0),0);
   const items=[];
-  fertilizantesBodega().forEach(p=>{
-    const kg=num(aplRie.cant[p.id]);
+  salesEstanque().forEach(s=>{
+    const kg=num(aplRie.cant[s.idx]);
     if(kg>0 && cap>0){
       const concentracion=kg/cap;
-      items.push({productoId:p.id, nombre:p.nombre, unidad:p.unidad||'kg', cantKg:kg, concentracion, totalAplicado:totalLitros*concentracion});
+      items.push({idx:s.idx, productoId:s.productoId, nombre:s.nombre, unidad:s.unidad, cantKg:kg, concentracion, totalAplicado:totalLitros*concentracion, enBodega:s.enBodega});
     }
   });
   return {cap, totalLitros, items};
@@ -2002,17 +2001,17 @@ function calcFertirriego(){
 
 function rieRenderCalc(){
   const r=calcFertirriego();
-  fertilizantesBodega().forEach(p=>{
-    const el=document.getElementById('conc_'+p.id); if(!el) return;
-    const kg=num(aplRie.cant[p.id]);
-    el.textContent = (kg>0 && r.cap>0) ? fmtNum(kg/r.cap,4)+' '+(p.unidad||'kg')+'/L' : '';
+  salesEstanque().forEach(s=>{
+    const el=document.getElementById('conc_'+s.idx); if(!el) return;
+    const kg=num(aplRie.cant[s.idx]);
+    el.textContent = (kg>0 && r.cap>0) ? fmtNum(kg/r.cap,4)+' '+s.unidad+'/L' : '';
   });
   const box=document.getElementById('rieCalc'); if(!box) return;
   if(r.cap>0 && r.totalLitros>0 && r.items.length){
     box.innerHTML=`<div class="sec-div">Total aplicado</div>
       <div style="font-size:11px;color:var(--dark);line-height:1.7">
         <b>${fmtNum(r.totalLitros,0)} L aplicados</b> · estanque ${fmtNum(r.cap,0)} L<br>
-        ${r.items.map(it=>`${escH(it.nombre)}: <b style="color:#B45309">${fmtNum(it.totalAplicado,2)} ${escH(it.unidad)}</b>`).join('<br>')}
+        ${r.items.map(it=>`${escH(it.nombre)}: <b style="color:#B45309">${fmtNum(it.totalAplicado,2)} ${escH(it.unidad)}</b>${it.enBodega?'':' <span style="color:var(--muted);font-size:10px">(no descuenta)</span>'}`).join('<br>')}
       </div>`;
   }else box.innerHTML='';
 }
@@ -2024,7 +2023,7 @@ function aplRieSetCampo(campo,val){
   if(campo==='cultivo'||campo==='fecha'){ return; }
   renderRiegoForm();
 }
-function aplRieCant(productoId,val){ aplRie.cant[productoId]=val; rieRenderCalc(); }
+function aplRieCant(idx,val){ aplRie.cant[idx]=val; rieRenderCalc(); }
 function aplRieLitrosIdx(i,val){
   const secs=sectoresDePredio(aplRie.predioId); const s=secs[i];
   if(s!=null){ aplRie.litros[s]=val; rieRenderCalc(); }
@@ -2044,7 +2043,8 @@ async function guardarRiego(){
     .filter(s=>num(aplRie.litros[s])>0)
     .map(s=>({sector:String(s), litros:num(aplRie.litros[s]), ha:haSector(aplRie.predioId,s)}));
   const salesData=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, cantidadKg:it.cantKg, concentracion:it.concentracion, unidad:it.unidad}));
-  const desc=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.totalAplicado}));
+  const desc=r.items.filter(it=>it.productoId).map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.totalAplicado}));
+  const sinBodega=r.items.filter(it=>!it.productoId).map(it=>it.nombre);
 
   loading(true,'Registrando…');
   try{
@@ -2057,11 +2057,15 @@ async function guardarRiego(){
       registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       createdAt:Date.now()
     });
-    await ajustarStockCentral(desc, -1);
+    if(desc.length) await ajustarStockCentral(desc, -1);
     aplRie={ fecha:todayIso, predioId:aplRie.predioId, cultivo:'', capacidad:'', cant:{}, litros:{} };
     renderRiegoForm();
     renderAplList();
-    toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Fertirriego registrado · stock descontado');
+    let msg='✅ Fertirriego registrado';
+    if(desc.length) msg+=' · stock descontado';
+    if(sinBodega.length) msg+=` · ⚠️ sin descontar (falta en bodega): ${sinBodega.slice(0,3).join(', ')}`;
+    else if(faltan.length) msg+=` · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}`;
+    toast(msg);
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
