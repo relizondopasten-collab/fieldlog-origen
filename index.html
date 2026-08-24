@@ -489,6 +489,12 @@ select:focus,input:focus{border-color:var(--green)}
       <div id="planGrid" class="plan-wrap"></div>
       <div class="plan-hint">💡 El <b>precio unitario</b> y el <b>total</b> se calculan solos. Los cambios no se guardan hasta que pulses "Guardar cambios".</div>
     </div>
+
+    <div class="card">
+      <div class="card-title">⚖️ Conciliación — entregado vs usado por bodega</div>
+      <div class="emp-sub" style="margin-bottom:8px">Compara lo que cada bodega <b>recibió</b> (compras + despachos) con lo que se <b>usó</b> en aplicaciones. Las fechas de entrega y uso no tienen que coincidir; ajusta el rango.</div>
+      <div id="concBody"></div>
+    </div>
   </div>
 
   <!-- APLICACIONES -->
@@ -1772,16 +1778,17 @@ async function guardarViaRiego(){
 
   loading(true,'Registrando…');
   try{
-    const faltan=faltantesStock(desc);
+    const bodDesc=aplVia.predioId||'constancia';
+    const faltan=faltantesStock(desc, bodDesc);
     await db.collection('aplicaciones').add({
-      tipo:'viariego', fecha:aplVia.fecha, predioId:aplVia.predioId, cultivo:aplVia.cultivo, epoca:aplVia.epoca||'',
+      tipo:'viariego', fecha:aplVia.fecha, predioId:aplVia.predioId, cultivo:aplVia.cultivo, epoca:aplVia.epoca||'', bodegaDescuento:bodDesc,
       receta:recetaData, sectores:sectoresData, haTotal:r.haTotal,
       descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
       registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       createdAt:Date.now()
     });
-    await ajustarStockCentral(desc, -1);
+    await ajustarStockBodega(desc, bodDesc, -1);
     aplVia={ fecha:todayIso, predioId:aplVia.predioId, cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
     renderViaRiegoForm();
     renderAplList();
@@ -1927,30 +1934,35 @@ function descuentosRiego(recetaData){
   return recetaData.map(r=>({ productoId:r.productoId, nombre:r.nombre, cantidad:r.cantidad }));
 }
 // Avisa (sin bloquear) si el stock central no alcanza; usa el cache
-function faltantesStock(descuentos){
+function faltantesStock(descuentos, bodega){
+  const bod = bodega || BODEGA_CENTRAL;
   const faltan=[];
   descuentos.forEach(d=>{
     const p=productosCache.find(x=>x.id===d.productoId);
-    const disp=(p&&p.stock)?Number(p.stock[BODEGA_CENTRAL])||0:0;
+    const disp=(p&&p.stock)?Number(p.stock[bod])||0:0;
     if(disp < d.cantidad-1e-9) faltan.push(d.nombre);
   });
   return faltan;
 }
-// Descuenta (signo -1) o devuelve (signo +1) stock de La Constancia
-async function ajustarStockCentral(descuentos, signo){
+// Descuenta (signo -1) o devuelve (signo +1) stock de la bodega del predio donde se aplica.
+// bodega = 'transito' | 'constancia' | 'paradero'. La Constancia usa la Central (misma bodega).
+async function ajustarStockBodega(descuentos, bodega, signo){
+  const bod = bodega || BODEGA_CENTRAL;
   for(const d of descuentos){
     if(!d.productoId || !d.cantidad) continue;
     try{
       await db.collection('productos').doc(d.productoId).update({
-        ['stock.'+BODEGA_CENTRAL]: firebase.firestore.FieldValue.increment(signo*d.cantidad),
+        ['stock.'+bod]: firebase.firestore.FieldValue.increment(signo*d.cantidad),
         updatedAt: Date.now()
       });
       const p=productosCache.find(x=>x.id===d.productoId);
       if(p){ if(!p.stock)p.stock={transito:0,constancia:0,paradero:0};
-        p.stock[BODEGA_CENTRAL]=(Number(p.stock[BODEGA_CENTRAL])||0)+signo*d.cantidad; }
+        p.stock[bod]=(Number(p.stock[bod])||0)+signo*d.cantidad; }
     }catch(e){ /* continuar con los demás */ }
   }
 }
+// Compat: descuento de la Central
+async function ajustarStockCentral(descuentos, signo){ return ajustarStockBodega(descuentos, BODEGA_CENTRAL, signo); }
 
 async function guardarFoliar(){
   if(!isAdmin()){ toast('Solo admin'); return; }
@@ -1976,16 +1988,17 @@ async function guardarFoliar(){
   try{
     const totalLitros = destinos.reduce((s,d)=>s+parseFloat(d.litros),0);
     const desc = descuentosFoliar(recetaData, totalLitros);
-    const faltan = faltantesStock(desc);
+    const bodDesc=aplFol.predioId||'constancia';
+    const faltan = faltantesStock(desc, bodDesc);
     await db.collection('aplicaciones').add({
-      tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'',
+      tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'', bodegaDescuento:bodDesc,
       receta:recetaData, destinos:destData,
       descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
       registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       createdAt:Date.now()
     });
-    await ajustarStockCentral(desc, -1);
+    await ajustarStockBodega(desc, bodDesc, -1);
     aplFol={ fecha:todayIso, predioId:aplFol.predioId, cultivo:'', epoca:'', recetaTxt:'', receta:[], destinos:[{modulo:'',litros:''}] };
     renderFoliarForm();
     renderAplList();
@@ -2051,9 +2064,11 @@ async function delAplicacion(id){
   loading(true,'Eliminando…');
   try{
     const snap=await db.collection('aplicaciones').doc(id).get();
-    const desc=(snap.exists && snap.data().descontado)||[];
+    const dat=snap.exists?snap.data():{};
+    const desc=dat.descontado||[];
+    const bodDev=dat.bodegaDescuento||'constancia';  // viejos → Central (de donde salieron)
     await db.collection('aplicaciones').doc(id).delete();
-    if(desc.length) await ajustarStockCentral(desc, +1);  // devolver
+    if(desc.length) await ajustarStockBodega(desc, bodDev, +1);  // devolver a su bodega
     renderAplList();
     toast('Eliminada · stock devuelto');
   }
@@ -2216,16 +2231,17 @@ async function guardarRiego(){
 
   loading(true,'Registrando…');
   try{
-    const faltan=faltantesStock(desc);
+    const bodDesc=aplRie.predioId||'constancia';
+    const faltan=faltantesStock(desc, bodDesc);
     await db.collection('aplicaciones').add({
-      tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:aplRie.cultivo, epoca:aplRie.epoca||'',
+      tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:aplRie.cultivo, epoca:aplRie.epoca||'', bodegaDescuento:bodDesc,
       capacidad:cap, sales:salesData, sectores:sectoresData, totalLitros:r.totalLitros,
       descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
       registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       createdAt:Date.now()
     });
-    if(desc.length) await ajustarStockCentral(desc, -1);
+    if(desc.length) await ajustarStockBodega(desc, bodDesc, -1);
     aplRie={ fecha:todayIso, predioId:aplRie.predioId, cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{} };
     renderRiegoForm();
     renderAplList();
@@ -2270,7 +2286,9 @@ async function initPlanilla(){
     });
   }catch(e){ grid.innerHTML=`<p style="font-size:12px;color:var(--red);padding:10px">Error: ${escH(e.message)}</p>`; return; }
   renderPlanilla();
+  renderConciliacion();
 }
+var _concInit=1;
 
 function num(v){ if(v==null||v==="")return 0; const n=Number(String(v).replace(",",".")); return isNaN(n)?0:n; }
 function planTotal(p){ return num(p.stock.transito)+num(p.stock.constancia)+num(p.stock.paradero); }
@@ -2414,6 +2432,106 @@ async function planGuardar(){
 // COMPRAS Y DESPACHOS — Fase D2
 // Compra: entra stock a un predio (envases × capacidad) + precio → actualiza costo.
 // Despacho: mueve stock de un predio a otro.
+// ══════════════════════════════════════════════
+// CONCILIACIÓN — entregado (compras+despachos) vs usado (aplicaciones), por bodega
+// ══════════════════════════════════════════════
+let concState = { predio:'', desde: primerDiaMes(), hasta: todayIso, grupos:[], calc:false };
+
+async function calcConciliacion(){
+  const pred=concState.predio, desde=concState.desde||'', hasta=concState.hasta||'';
+  const enRango = f => (!desde||f>=desde)&&(!hasta||f<=hasta);
+  const acc={}; // acc[bodega][productoId] = {nombre, entregado, usado}
+  const cell=(b,pid)=>{ if(!acc[b])acc[b]={}; if(!acc[b][pid])acc[b][pid]={nombre:'',entregado:0,usado:0}; return acc[b][pid]; };
+  try{
+    // Movimientos: compras (entrada) y despachos (entrada al destino, salida del origen)
+    const mov=await db.collection('movimientos').get();
+    mov.docs.forEach(doc=>{
+      const m=doc.data(); if(!enRango(m.fecha||'')) return;
+      if(m.tipo==='compra' && m.predio){ const o=cell(m.predio,m.productoId); o.nombre=m.nombre||o.nombre; o.entregado+=Number(m.total)||0; }
+      else if(m.tipo==='despacho'){
+        if(m.destino){ const oi=cell(m.destino,m.productoId); oi.nombre=m.nombre||oi.nombre; oi.entregado+=Number(m.cantidad)||0; }
+        if(m.origen){ const oo=cell(m.origen,m.productoId); oo.nombre=m.nombre||oo.nombre; oo.entregado-=Number(m.cantidad)||0; }
+      }
+    });
+    // Aplicaciones: uso descontado, atribuido a la bodega de descuento
+    const apl=await db.collection('aplicaciones').get();
+    apl.docs.forEach(doc=>{
+      const a=doc.data(); if(!enRango(a.fecha||'')) return;
+      const bod=a.bodegaDescuento||a.predioId||'constancia';
+      (a.descontado||[]).forEach(d=>{
+        if(!d.productoId) return;
+        const o=cell(bod,d.productoId); o.usado+=Number(d.cantidad)||0;
+        if(!o.nombre){ const p=productosCache.find(x=>x.id===d.productoId); o.nombre=p?p.nombre:d.productoId; }
+      });
+    });
+    // Armar por bodega (todas o la elegida)
+    const orden = pred ? [pred] : ['constancia','transito','paradero'];
+    const grupos=[];
+    orden.forEach(b=>{
+      const m=acc[b]||{};
+      const filas=Object.keys(m).map(pid=>{
+        const o=m[pid];
+        return {nombre:o.nombre||pid, entregado:o.entregado, usado:o.usado, dif:o.entregado-o.usado};
+      }).filter(f=>Math.abs(f.entregado)>1e-9 || Math.abs(f.usado)>1e-9)
+        .sort((a,b)=>Math.abs(a.dif)<1e-9 && Math.abs(b.dif)>=1e-9?1:(a.dif-b.dif) || a.nombre.localeCompare(b.nombre));
+      if(filas.length) grupos.push({bodega:b, label:BODEGA_NOMBRES[b]||b, filas});
+    });
+    concState.grupos=grupos; concState.calc=true;
+  }catch(e){ concState.grupos=[]; concState.calc=true; toast('Error: '+e.message); }
+  renderConciliacion();
+}
+
+function renderConciliacion(){
+  const box=document.getElementById('concBody'); if(!box) return;
+  const predOpts=`<option value="">Todas las bodegas</option>`+['constancia','transito','paradero'].map(b=>`<option value="${b}"${b===concState.predio?' selected':''}>${escH(BODEGA_NOMBRES[b])}</option>`).join('');
+  let cuerpo='';
+  if(!concState.calc){
+    cuerpo='<p style="font-size:12px;color:var(--muted);padding:8px 0">Elige bodega y rango, luego pulsa Calcular.</p>';
+  }else if(!concState.grupos.length){
+    cuerpo='<p style="font-size:12px;color:var(--muted);padding:8px 0">Sin movimientos ni uso en el período seleccionado.</p>';
+  }else{
+    cuerpo=concState.grupos.map(g=>`
+      <div style="margin-top:10px">
+        <div style="font-weight:700;font-size:13px;color:var(--dark);margin-bottom:4px">${escH(g.label)}</div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead><tr style="border-bottom:2px solid var(--sand)">
+            <th style="padding:4px;text-align:left">Producto</th>
+            <th style="padding:4px;text-align:right">Entregado</th>
+            <th style="padding:4px;text-align:right">Usado</th>
+            <th style="padding:4px;text-align:right">Diferencia</th>
+          </tr></thead><tbody>
+          ${g.filas.map(f=>{
+            const neg=f.dif<-1e-9;
+            const cero=Math.abs(f.dif)<1e-9;
+            const col=neg?'#C0392B':(cero?'#2E7D32':'#B45309');
+            const nota=neg?' ⚠':'';
+            return `<tr style="border-bottom:1px solid var(--sand)">
+              <td style="padding:4px">${escH(f.nombre)}</td>
+              <td style="padding:4px;text-align:right">${fmtNum(f.entregado,2)}</td>
+              <td style="padding:4px;text-align:right;color:#B45309">${fmtNum(f.usado,2)}</td>
+              <td style="padding:4px;text-align:right;color:${col};font-weight:600">${fmtNum(f.dif,2)}${nota}</td>
+            </tr>`;
+          }).join('')}
+          </tbody></table></div>
+      </div>`).join('');
+    cuerpo+=`<div style="font-size:11px;color:var(--muted);margin-top:10px">
+      <b>Entregado</b> = compras + despachos recibidos − despachos salientes · <b>Usado</b> = aplicaciones descontadas ·
+      <b>Diferencia</b> = entregado − usado. <span style="color:#2E7D32">0</span> = cuadra · <span style="color:#B45309">positivo</span> = entregado sin usar (queda en bodega) · <span style="color:#C0392B">negativo ⚠</span> = se usó más de lo entregado (revisar un despacho sin registrar).</div>`;
+  }
+  box.innerHTML=`
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
+      <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Bodega</label>
+        <select onchange="concState.predio=this.value">${predOpts}</select></div>
+      <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Desde</label>
+        <input type="date" value="${concState.desde}" onchange="concState.desde=this.value"></div>
+      <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Hasta</label>
+        <input type="date" value="${concState.hasta}" onchange="concState.hasta=this.value"></div>
+      <button class="btn btn-sm" onclick="calcConciliacion()" style="background:var(--dark);color:#fff">⚖️ Calcular</button>
+    </div>
+    ${cuerpo}
+  `;
+}
+
 // Movimientos en colección 'movimientos'. Stock se ajusta con transacción.
 // ══════════════════════════════════════════════
 
