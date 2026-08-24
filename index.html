@@ -360,14 +360,14 @@ select:focus,input:focus{border-color:var(--green)}
       <div class="ptab" data-id="paradero"   onclick="selPredio('paradero')">Paradero 12</div>
     </div>
     <div class="nav">
-      <button class="nb active" onclick="showScr('registro',this)">Registrar</button>
-      <button class="nb"        onclick="showScr('prog',this)">Prog.</button>
-      <button class="nb"        onclick="showScr('avance',this)">Avance</button>
-      <button class="nb"        onclick="showScr('ciclos',this)">Ciclos</button>
+      <button class="nb active" id="btnRegistro" onclick="showScr('registro',this)">Registrar</button>
+      <button class="nb" id="btnProg"   onclick="showScr('prog',this)">Prog.</button>
+      <button class="nb" id="btnAvance" onclick="showScr('avance',this)">Avance</button>
+      <button class="nb" id="btnCiclos" onclick="showScr('ciclos',this)">Ciclos</button>
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
       <button class="nb" id="btnAplic" style="display:none" onclick="showScr('aplic',this)">Aplicaciones</button>
       <button class="nb" id="btnBodega" style="display:none" onclick="showScr('planilla',this)">Bodega</button>
-      <button class="nb"        onclick="showScr('config',this)">Config</button>
+      <button class="nb" id="btnConfig" onclick="showScr('config',this)">Config</button>
     </div>
   </div>
 
@@ -595,7 +595,7 @@ select:focus,input:focus{border-color:var(--green)}
     <!-- resumen predios -->
     <div id="prediosOv"></div>
     <!-- trabajadores del predio activo -->
-    <div class="card">
+    <div class="card" id="wListCard">
       <div class="card-title">👤 Trabajadores — <span id="cfgPLbl" style="text-transform:none;font-style:italic;font-weight:400"></span></div>
       <div id="wList"></div>
       <div class="sec-div">Agregar trabajador</div>
@@ -632,23 +632,32 @@ select:focus,input:focus{border-color:var(--green)}
         <div class="form-row"><label>Nombre visible</label><input type="text" id="nuEmail_name" placeholder="Ej: Sara"></div>
         <div class="form-row"><label>Email</label><input type="email" id="nuEmail" placeholder="sara@origen.cl"></div>
         <div class="form-row"><label>Contraseña inicial</label><input type="password" id="nuPass" placeholder="mínimo 6 caracteres"></div>
-        <div class="form-grid">
-          <div><label>Rol</label>
-            <select id="nuRole">
-              <option value="subjefe">Subjefe</option>
-              <option value="admin">Admin / Gerencia</option>
-            </select>
-          </div>
-          <div><label>Predio</label>
-            <select id="nuPredio">
-              <option value="transito">El Tránsito</option>
-              <option value="constancia">La Constancia</option>
-              <option value="paradero">Paradero 12</option>
-              <option value="todos">Todos (admin)</option>
-            </select>
+        <div class="form-row"><label>Rol</label>
+          <select id="nuRole" onchange="onRoleChange()">
+            <option value="subjefe">Subjefe</option>
+            <option value="jefe">Jefe de predio</option>
+            <option value="admin">Admin / Gerencia</option>
+            <option value="bodeguero">Bodeguero</option>
+            <option value="riego">Riego</option>
+          </select>
+        </div>
+        <div id="nuRoleHint" style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:9px 12px;margin-bottom:9px;font-size:11px;line-height:1.5;color:var(--muted)"></div>
+        <div class="form-row" id="nuPredioRow"><label>Predio</label>
+          <select id="nuPredio">
+            <option value="transito">El Tránsito</option>
+            <option value="constancia">La Constancia</option>
+            <option value="paradero">Paradero 12</option>
+            <option value="todos">Todos los predios</option>
+          </select>
+        </div>
+        <div class="form-row" id="nuPrediosRow" style="display:none"><label>Predios a cargo</label>
+          <div style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;display:flex;flex-direction:column;gap:7px">
+            <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="nuPredioChk" value="transito" style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">El Tránsito</label>
+            <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="nuPredioChk" value="constancia" style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">La Constancia</label>
+            <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="nuPredioChk" value="paradero" style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">Paradero 12</label>
           </div>
         </div>
-        <div class="form-row"><label>Subjefe asignado</label>
+        <div class="form-row" id="nuSubjefeRow"><label>Subjefe asignado</label>
           <select id="nuSubjefe">
             <option value="">— (solo para rol subjefe) —</option>
           </select>
@@ -825,22 +834,82 @@ const loading=(show,txt='Cargando…')=>{
   document.getElementById('loadingText').textContent=txt;
 };
 
-function isAdmin(){return currentProfile&&currentProfile.role==='admin'}
-function canEditPredio(pid){
-  if(isAdmin())return true;
-  return currentProfile&&currentProfile.predioId===pid;
-}
+// ══════════════════════════════════════════════
+// ROLES Y PERMISOS
+// ══════════════════════════════════════════════
+// Roles del sistema. Deben coincidir con las reglas de seguridad de Firestore
+// (ver FIRESTORE-RULES.txt en el repo). Si agregas un rol aquí, agrégalo allá.
+//
+//   admin      → gerencia. Con predios=los 3 ('todos') es superadmin: usuarios,
+//                costos y borrado de datos. Acotado a un predio, manda solo ahí.
+//   jefe       → jefe de predio. Lectura y escritura de campo sobre VARIOS predios.
+//   subjefe    → un predio, y solo ve/edita a sus propios trabajadores.
+//   bodeguero  → bodega (planilla, compras, despachos) + todas las aplicaciones.
+//   riego      → solo aplicaciones de fertirriego y vía riego.
+//
+// El campo canónico de alcance es predios:[]. Se mantiene predioId por
+// compatibilidad con los usuarios creados antes de la v25.
+const ROLES={
+  admin:    'Admin / Gerencia',
+  jefe:     'Jefe de predio',
+  subjefe:  'Subjefe',
+  bodeguero:'Bodeguero',
+  riego:    'Riego'
+};
+const ROLES_CAMPO=['admin','jefe','subjefe'];
+
+function userRole(){return currentProfile&&currentProfile.role||''}
 function userSubjefe(){return currentProfile&&currentProfile.subjefe||''}
+
+// Predios a los que el usuario tiene alcance. Acepta el modelo nuevo (predios[])
+// y el antiguo (predioId, con 'todos' = los tres).
+function userPredios(){
+  if(!currentProfile)return[];
+  if(Array.isArray(currentProfile.predios)&&currentProfile.predios.length)
+    return currentProfile.predios.filter(p=>PRED_ORDER.includes(p));
+  if(currentProfile.predioId==='todos')return PRED_ORDER.slice();
+  return PRED_ORDER.includes(currentProfile.predioId)?[currentProfile.predioId]:[];
+}
+
+function isAdmin(){return userRole()==='admin'}
+function isSuperAdmin(){return isAdmin()&&userPredios().length===PRED_ORDER.length}
+function isJefe(){return userRole()==='jefe'}
+function isSubjefe(){return userRole()==='subjefe'}
+function isBodeguero(){return userRole()==='bodeguero'}
+function isRiego(){return userRole()==='riego'}
+
+// ¿Trabaja por predio (registro, avance, ciclos, programación)?
+function isCampo(){return ROLES_CAMPO.includes(userRole())}
+function canAccessPredio(pid){return isCampo()&&userPredios().includes(pid)}
+function canEditPredio(pid){return canAccessPredio(pid)}
+// ¿Ve a todos los subjefes del predio, o solo a sí mismo?
+function verTodosSubjefes(){return isAdmin()||isJefe()}
+
+function canBodega(){return isAdmin()||isBodeguero()}
+function canAplicaciones(){return isAdmin()||isBodeguero()||isRiego()}
+function canAplicFoliar(){return isAdmin()||isBodeguero()}
+function canManageUsers(){return isSuperAdmin()}
+function canConfigCostos(){return isSuperAdmin()}
+function canManageWorkers(){return isAdmin()}
+function canBorrarDatos(){return isSuperAdmin()}
 
 // Subjefes autorizados a ver informes (además de admin y jefe)
 const SUBJEFES_CON_INFORMES=['Mario Durand','Jorge Guajardo','Claudio Flores'];
 
 function canViewInformes(){
   if(!currentProfile)return false;
-  if(currentProfile.role==='admin')return true;
-  if(currentProfile.role==='jefe')return true;
-  if(currentProfile.role==='subjefe'&&SUBJEFES_CON_INFORMES.includes(currentProfile.subjefe))return true;
+  if(isAdmin()||isJefe())return true;
+  if(isSubjefe()&&SUBJEFES_CON_INFORMES.includes(currentProfile.subjefe))return true;
   return false;
+}
+
+// Pantallas permitidas por rol (defensa por si se navega a mano)
+function canVerPantalla(name){
+  if(['registro','prog','avance','ciclos'].includes(name))return isCampo();
+  if(name==='informes')return canViewInformes();
+  if(name==='aplic')return canAplicaciones();
+  if(name==='planilla'||name==='bodega')return canBodega();
+  return true; // config
 }
 
 function weekDates(){
@@ -888,12 +957,21 @@ auth.onAuthStateChanged(async user=>{
   loading(true,'Cargando perfil…');
   try{
     const snap=await colUsers().doc(user.uid).get();
+    // Antes la app se auto-creaba un perfil admin aquí. Las reglas de Firestore
+    // lo rechazan (y con razón): el primer admin se crea a mano en la Consola de
+    // Firebase, y el resto desde Config → Usuarios.
     if(!snap.exists){
-      // First time: create admin profile automatically
-      currentProfile={email:user.email,nombre:user.email.split('@')[0],role:'admin',predioId:'todos',subjefe:''};
-      await colUsers().doc(user.uid).set(currentProfile);
-    } else {
-      currentProfile=snap.data();
+      rechazarSesion('Tu cuenta existe, pero todavía no está habilitada en FieldLog. Pide al administrador que te asigne un rol.');
+      return;
+    }
+    currentProfile=snap.data();
+    if(!ROLES[userRole()]){
+      rechazarSesion('Tu cuenta tiene un rol no reconocido ("'+(userRole()||'sin rol')+'"). Contacta al administrador.');
+      return;
+    }
+    if(isCampo()&&!userPredios().length){
+      rechazarSesion('Tu cuenta no tiene predios asignados. Contacta al administrador.');
+      return;
     }
     bootApp();
   }catch(e){
@@ -901,6 +979,15 @@ auth.onAuthStateChanged(async user=>{
     toast('Error al cargar perfil: '+e.message);
   }
 });
+
+// Cierra la sesión y explica por qué, en vez de dejar al usuario colgado.
+function rechazarSesion(msg){
+  currentProfile=null;
+  loading(false);
+  const errEl=document.getElementById('loginError');
+  if(errEl){errEl.textContent=msg;errEl.style.display='block'}
+  auth.signOut();
+}
 
 function bootApp(){
   document.getElementById('loginScreen').style.display='none';
@@ -917,9 +1004,20 @@ function bootApp(){
   // Load catálogos (cultivos, módulos) — non-blocking, the app doesn't wait for these
   loadCatalogos();
 
+  // Bodeguero y riego no trabajan por predio: entran directo a su pantalla
+  // y no cargan datos de campo (las reglas tampoco se los permitirían).
+  if(!isCampo()){
+    const ptabs=document.getElementById('ptabs');
+    if(ptabs)ptabs.style.display='none';
+    loading(false);
+    if(canBodega())showScr('planilla',document.getElementById('btnBodega'));
+    else showScr('aplic',document.getElementById('btnAplic'));
+    return;
+  }
+
   // Load data for default predio
-  const startPredio = isAdmin()?'transito':(currentProfile.predioId||'transito');
-  selPredio(startPredio);
+  const preds=userPredios();
+  selPredio(preds.includes(activePred)?activePred:preds[0]);
 }
 
 // Carga los catálogos de Firestore al iniciar la sesión.
@@ -1012,7 +1110,7 @@ function updateCostoCalculadoView(){
 }
 
 async function saveCostosConfig(){
-  if(!isAdmin()){ toast('Solo administradores'); return; }
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
   const sm = parseInt(document.getElementById('cfgSueldoMin').value);
   const be = parseInt(document.getElementById('cfgBonoExtra').value);
   const hs = parseInt(document.getElementById('cfgHorasSemana').value);
@@ -1090,7 +1188,7 @@ function fmtNum(n,dec){
 }
 
 function renderBodega(){
-  if(!isAdmin()) return;
+  if(!canBodega()) return;
   fillCategoriasSelect();
   renderProductosList();
 }
@@ -1147,7 +1245,7 @@ function renderProductosList(){
 }
 
 async function addProducto(){
-  if(!isAdmin()){ toast('Solo administradores'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   const nombre = document.getElementById('pNombre').value.trim();
   const categoria = document.getElementById('pCategoria').value;
   const proveedor = document.getElementById('pProveedor').value.trim();
@@ -1175,7 +1273,7 @@ async function addProducto(){
 }
 
 async function delProducto(id){
-  if(!isAdmin()){ toast('Solo admin'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   const p = productosCache.find(x=>x.id===id);
   if(!p) return;
   const nL = Array.isArray(p.lotes)?p.lotes.length:0;
@@ -1194,7 +1292,7 @@ async function delProducto(id){
 }
 
 async function addCategoriaFito(){
-  if(!isAdmin()){ toast('Solo admin'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   const nombre = (prompt('Nombre de la nueva categoría:')||'').trim();
   if(!nombre) return;
   const existe = categoriasFitoCache.find(c=>normNombre(c)===normNombre(nombre));
@@ -1246,7 +1344,7 @@ function normUnidad(s){
 }
 
 function previewImport(){
-  if(!isAdmin()){ toast('Solo admin'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   const raw = document.getElementById('impText').value;
   const box = document.getElementById('impPreview');
   impParsed = null;
@@ -1347,7 +1445,7 @@ function previewImport(){
 }
 
 async function confirmImport(){
-  if(!isAdmin()){ toast('Solo admin'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   if(!impParsed||!impParsed.grupos.length){ toast('Nada que importar'); return; }
   const {grupos, catsNuevas} = impParsed;
   if(!confirm(`Se importarán ${grupos.length} producto(s). ¿Continuar?`)) return;
@@ -1417,13 +1515,15 @@ let aplResumen = null;  // estado del reporte de gasto
 let aplVia = null;      // estado del formulario vía riego (dosis/ha)
 
 function initAplic(){
-  if(!isAdmin()) return;
-  aplTab='foliar';
+  if(!canAplicaciones()) return;
+  // El rol riego no registra foliares: aplSetTab le oculta esa pestaña.
+  const primeraTab=canAplicFoliar()?'foliar':'riego';
+  aplTab=primeraTab;
   aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], destinos:[{modulo:'',litros:''}] };
   aplRie = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{} };
   aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
   aplResumen = { desde: primerDiaMes(), hasta: todayIso, grupos:[], nApp:0 };
-  loadCiclosAll().then(()=>{ aplSetTab('foliar'); renderAplList(); });
+  loadCiclosAll().then(()=>{ aplSetTab(primeraTab); renderAplList(); });
 }
 
 // Carga ciclos abiertos de TODOS los predios (get puntual, no listener)
@@ -1472,10 +1572,17 @@ function modulosDePredio(predioId){
 }
 
 function aplSetTab(t){
+  if(t==='foliar'&&!canAplicFoliar())t='riego';
   aplTab=t;
   const off='background:var(--sand);color:var(--dark)';
   const map={foliar:'aplTabFoliar', riego:'aplTabRiego', viariego:'aplTabVia', resumen:'aplTabResumen'};
-  Object.keys(map).forEach(k=>{ const b=document.getElementById(map[k]); if(b) b.style.cssText='flex:1;min-width:100px;'+(t===k?'':off); });
+  Object.keys(map).forEach(k=>{
+    const b=document.getElementById(map[k]); if(!b) return;
+    // Ojo: se reescribe cssText completo, así que el ocultamiento por rol
+    // (foliar no disponible para el rol riego) debe reaplicarse aquí.
+    const oculto = (k==='foliar' && !canAplicFoliar());
+    b.style.cssText='flex:1;min-width:100px;'+(t===k?'':off)+(oculto?';display:none':'');
+  });
   if(t==='foliar') renderFoliarForm();
   else if(t==='riego') renderRiegoForm();
   else if(t==='viariego') renderViaRiegoForm();
@@ -1762,7 +1869,7 @@ function viaSetCampo(campo,val){ aplVia[campo]=val; if(campo==='predioId'){ aplV
 function viaToggleSector(i){ const secs=sectoresDePredio(aplVia.predioId); const s=secs[i]; if(s==null) return; aplVia.sectores[s]=!aplVia.sectores[s]; renderViaRiegoForm(); }
 
 async function guardarViaRiego(){
-  if(!isAdmin() && !(currentProfile&&currentProfile.role==='riego')){ toast('Sin permiso'); return; }
+  if(!canAplicaciones()){ toast('Sin permiso'); return; }
   if(!aplVia.receta.length){ toast('⚠️ Escribe la receta y pulsa Interpretar'); return; }
   if(aplVia.receta.some(r=>!r.productoId)){ toast('⚠️ Corrige los productos no reconocidos'); return; }
   if(aplVia.receta.some(r=>r.dosis==null||isNaN(r.dosis)||r.dosis<=0)){ toast('⚠️ Falta dosis en algún producto'); return; }
@@ -1965,7 +2072,7 @@ async function ajustarStockBodega(descuentos, bodega, signo){
 async function ajustarStockCentral(descuentos, signo){ return ajustarStockBodega(descuentos, BODEGA_CENTRAL, signo); }
 
 async function guardarFoliar(){
-  if(!isAdmin()){ toast('Solo admin'); return; }
+  if(!canAplicFoliar()){ toast('Sin permiso'); return; }
   if(!aplFol.receta.length){ toast('⚠️ Escribe la receta y pulsa Interpretar'); return; }
   const sinRec=aplFol.receta.filter(r=>!r.productoId);
   if(sinRec.length){ toast('⚠️ Corrige los productos no reconocidos'); return; }
@@ -2059,7 +2166,7 @@ async function renderAplList(){
 }
 
 async function delAplicacion(id){
-  if(!isAdmin()){ toast('Solo admin'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   if(!confirm('¿Eliminar esta aplicación? Se devolverá el stock descontado.')) return;
   loading(true,'Eliminando…');
   try{
@@ -2213,7 +2320,7 @@ function aplRieLitrosIdx(i,val){
 }
 
 async function guardarRiego(){
-  if(!isAdmin() && !(currentProfile&&currentProfile.role==='riego')){ toast('Sin permiso'); return; }
+  if(!canAplicaciones()){ toast('Sin permiso'); return; }
   const cap=num(aplRie.capacidad);
   if(!(cap>0)){ toast('⚠️ Indica la capacidad del estanque'); return; }
   if(!aplRie.predioId){ toast('⚠️ Elige el predio'); return; }
@@ -2269,7 +2376,7 @@ let planProds = [];      // filas en memoria
 let planFiltroTxt = '';
 
 async function initPlanilla(){
-  if(!isAdmin() && !(currentProfile&&currentProfile.role==='bodeguero')){ toast('Sin permiso'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   const grid=document.getElementById('planGrid');
   grid.innerHTML='<p style="font-size:12px;color:var(--muted);padding:10px">Cargando productos…</p>';
   try{
@@ -2393,7 +2500,7 @@ async function planDelProd(idx){
 function planFiltrar(txt){ planFiltroTxt=txt; renderPlanilla(); }
 
 async function planGuardar(){
-  if(!isAdmin() && !(currentProfile&&currentProfile.role==='bodeguero')){ toast('Sin permiso'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   const pend=planProds.filter(p=>p._dirty||p._new);
   if(!pend.length){ toast('No hay cambios que guardar'); return; }
   // validar nombres
@@ -2582,7 +2689,7 @@ function movCalc(){
 }
 
 async function movCompra(idx){
-  if(!isAdmin() && !(currentProfile&&currentProfile.role==='bodeguero')){ toast('Sin permiso'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   const p=planProds[idx];
   const predio=document.getElementById('mcPredio').value;
   const env=num(document.getElementById('mcEnv').value);
@@ -2623,7 +2730,7 @@ async function movCompra(idx){
 }
 
 async function movDespacho(idx){
-  if(!isAdmin() && !(currentProfile&&currentProfile.role==='bodeguero')){ toast('Sin permiso'); return; }
+  if(!canBodega()){ toast('Sin permiso'); return; }
   const p=planProds[idx];
   const origen=document.getElementById('mdOrigen').value;
   const destino=document.getElementById('mdDestino').value;
@@ -2658,38 +2765,41 @@ async function movDespacho(idx){
 
 
 function applyRoleUI(){
-  // Predio tabs: subjefes only see their predio
+  const preds=userPredios();
+  // Pestañas de predio: solo las asignadas al usuario
   document.querySelectorAll('.ptab').forEach(tab=>{
-    if(!isAdmin()&&tab.dataset.id!==currentProfile.predioId){
-      tab.classList.add('disabled');
-    }
+    tab.classList.toggle('disabled', !preds.includes(tab.dataset.id));
   });
-  // Config: show users section only for admin
-  document.getElementById('usersAdminSection').style.display=isAdmin()?'block':'none';
-  document.getElementById('clearDataBtn').style.display=isAdmin()?'block':'none';
-  // Config: show costos section only for admin
-  const cs = document.getElementById('costosConfigSection');
-  if(cs) cs.style.display=isAdmin()?'block':'none';
-  if(isAdmin()) renderCostosConfig();
-  // Add worker button: only admin
-  document.getElementById('addWBtn').style.display=isAdmin()?'block':'none';
-  // Informes button: admin, jefe, or autorizado
-  const bi=document.getElementById('btnInformes');
-  if(bi)bi.style.display=canViewInformes()?'':'none';
-  const bb=document.getElementById('btnBodega');
-  if(bb)bb.style.display=isAdmin()?'':'none';
-  const ba=document.getElementById('btnAplic');
-  if(ba)ba.style.display=isAdmin()?'':'none';
+  // Botones de navegación según el rol
+  const show=(id,ok)=>{const el=document.getElementById(id);if(el)el.style.display=ok?'':'none'};
+  show('btnRegistro', isCampo());
+  show('btnProg',     isCampo());
+  show('btnAvance',   isCampo());
+  show('btnCiclos',   isCampo());
+  show('btnInformes', canViewInformes());
+  show('btnAplic',    canAplicaciones());
+  show('btnBodega',   canBodega());
+  // Config: secciones restringidas
+  document.getElementById('usersAdminSection').style.display=canManageUsers()?'block':'none';
+  document.getElementById('clearDataBtn').style.display=canBorrarDatos()?'block':'none';
+  const cs=document.getElementById('costosConfigSection');
+  if(cs)cs.style.display=canConfigCostos()?'block':'none';
+  if(canConfigCostos())renderCostosConfig();
+  document.getElementById('addWBtn').style.display=canManageWorkers()?'block':'none';
+  // La tarjeta de trabajadores no aporta nada a bodeguero/riego
+  const wc=document.getElementById('wListCard');
+  if(wc)wc.style.display=isCampo()?'':'none';
 }
 
 // ══════════════════════════════════════════════
 // PREDIO SELECT + DATA LOAD
 // ══════════════════════════════════════════════
 function selPredio(id){
-  if(!isAdmin()&&currentProfile.predioId!==id)return;
+  const preds=userPredios();
+  if(!id||!preds.includes(id))return;
   activePred=id;
   document.querySelectorAll('.ptab').forEach(t=>{
-    t.className='ptab'+(isAdmin()||currentProfile.predioId===t.dataset.id?'':' disabled');
+    t.className='ptab'+(preds.includes(t.dataset.id)?'':' disabled');
     if(t.dataset.id===id)t.classList.add('ptab-'+{transito:'t',constancia:'c',paradero:'p'}[id]);
   });
   loadPredioData(id);
@@ -2811,12 +2921,13 @@ function renderCtx(){['ctx0','ctx2','ctx-prog'].forEach(id=>{const el=document.g
 function populateSels(){
   const p=pD();
   // For subjefes: preselect their group
-  const defSub=isAdmin()?'':userSubjefe();
+  const verTodos=verTodosSubjefes();
+  const defSub=verTodos?'':userSubjefe();
   ['selSub','fS'].forEach(sid=>{
     const sel=document.getElementById(sid);if(!sel)return;
-    sel.innerHTML=`<option value="">${isAdmin()?'Todos':defSub}</option>`+
-      (isAdmin()?p.subjefes.map(s=>`<option value="${s}">${s}</option>`).join(''):'');
-    if(!isAdmin())sel.value=defSub;
+    sel.innerHTML=`<option value="">${verTodos?'Todos':defSub}</option>`+
+      (verTodos?p.subjefes.map(s=>`<option value="${s}">${s}</option>`).join(''):'');
+    if(!verTodos)sel.value=defSub;
   });
   const ns=document.getElementById('nS');
   if(ns)ns.innerHTML=p.subjefes.map(s=>`<option>${s}</option>`).join('');
@@ -2828,7 +2939,7 @@ function populateSels(){
 function onSubChange(){
   // Cuando cambia el subjefe: mostrar selector de cultivo (siempre 3 opciones del catálogo)
   // y actualizar ciclo y trabajador
-  const sub=document.getElementById('selSub').value||(isAdmin()?'':userSubjefe());
+  const sub=document.getElementById('selSub').value||(verTodosSubjefes()?'':userSubjefe());
   const selC=document.getElementById('selCultivo');
   const rowC=document.getElementById('selCultivoRow');
   if(!sub){
@@ -2856,7 +2967,7 @@ function onSubChange(){
 
 // Cuando cambia el cultivo: actualizar el selector de ciclo y el de trabajadores
 function onCultivoChange(){
-  const sub=document.getElementById('selSub').value||(isAdmin()?'':userSubjefe());
+  const sub=document.getElementById('selSub').value||(verTodosSubjefes()?'':userSubjefe());
   const cultivo=document.getElementById('selCultivo').value;
   const selCic=document.getElementById('selCiclo');
   const rowCic=document.getElementById('selCicloRow');
@@ -2901,7 +3012,7 @@ function onCultivoChange(){
 }
 
 function filtW(){
-  const sub=document.getElementById('selSub').value||(isAdmin()?'':userSubjefe());
+  const sub=document.getElementById('selSub').value||(verTodosSubjefes()?'':userSubjefe());
   const sel=document.getElementById('selW');const cur=sel.value;
   // Mostrar todos los trabajadores del subjefe (ya no se filtra por cultivo del trabajador, ese campo se eliminó)
   // Ordenar alfabéticamente por nombre
@@ -3077,7 +3188,7 @@ function renderHoy(){
   const div=document.getElementById('hoy');if(!div)return;
   // filter by date; if subjefe, also by their group
   let entries=rCache.filter(r=>r.fecha===selDate);
-  if(!isAdmin()){const sub=userSubjefe();entries=entries.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
+  if(!verTodosSubjefes()){const sub=userSubjefe();entries=entries.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
   if(!entries.length){div.innerHTML=`<div class="empty"><div class="empty-icon">📝</div><div>Sin entradas para este día</div></div>`;return}
   div.innerHTML=entries.map(e=>eHTML(e)).join('');
 }
@@ -3097,7 +3208,7 @@ function eHTML(e,pred=activePred){
   const labores=e.labores||[{laborId:e.laborId,horas:e.horas||0,mesas:e.mesas||0}];
   const totalH=labores.reduce((s,l)=>s+(l.horas||0),0);
   const totalM=labores.reduce((s,l)=>s+(l.mesas||0),0);
-  const canDel=isAdmin()||(w&&w.subjefe===userSubjefe());
+  const canDel=verTodosSubjefes()||(w&&w.subjefe===userSubjefe());
 
   let reemplazoHTML='';
   if(e.ausente||e.vacaciones){
@@ -3246,7 +3357,7 @@ function renderAvance(){
   const entryH=e=>(e.labores||[{horas:e.horas||0}]).reduce((s,l)=>s+(l.horas||0),0);
   const entryM=e=>(e.labores||[{mesas:e.mesas||0}]).reduce((s,l)=>s+(l.mesas||0),0);
   let todayE=rCache.filter(r=>r.fecha===selDate);
-  if(!isAdmin()){const sub=userSubjefe();todayE=todayE.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
+  if(!verTodosSubjefes()){const sub=userSubjefe();todayE=todayE.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
   const tH=todayE.reduce((s,r)=>s+entryH(r),0),tM=todayE.reduce((s,r)=>s+entryM(r),0);
   document.getElementById('statsRow').innerHTML=`
     <div class="sbox"><div class="sval">${rCache.length}</div><div class="slbl">Total reg.</div></div>
@@ -3255,7 +3366,7 @@ function renderAvance(){
   const wd=weekDates();
   let wRegs=rCache.filter(r=>wd.includes(r.fecha));
   const wMesas=e=>(e.labores||[{mesas:e.mesas||0}]).reduce((s,l)=>s+(l.mesas||0),0);
-  const visWs=isAdmin()?pWs():pWs().filter(w=>w.subjefe===userSubjefe());
+  const visWs=verTodosSubjefes()?pWs():pWs().filter(w=>w.subjefe===userSubjefe());
   const maxM=Math.max(1,...visWs.map(w=>wd.reduce((s,fd)=>s+wRegs.filter(r=>r.workerId===w.id&&r.fecha===fd).reduce((ss,e)=>ss+wMesas(e),0),0)));
   document.getElementById('avW').innerHTML=visWs.length?visWs.map(w=>{
     const tot=wd.reduce((s,fd)=>s+wRegs.filter(r=>r.workerId===w.id&&r.fecha===fd).reduce((ss,e)=>ss+wMesas(e),0),0);
@@ -3276,7 +3387,7 @@ function renderAvance(){
     </tr></thead>
     <tbody>${wd.map((iso,i)=>{
       let dr=rCache.filter(r=>r.fecha===iso);
-      if(!isAdmin()){const sub=userSubjefe();dr=dr.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
+      if(!verTodosSubjefes()){const sub=userSubjefe();dr=dr.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
       const h=dr.reduce((s,r)=>s+entryH(r),0),m=dr.reduce((s,r)=>s+entryM(r),0),isT=iso===selDate;
       return `<tr style="${isT?'background:var(--lime);':''}border-bottom:1px solid var(--sand)">
         <td style="padding:6px 3px;font-weight:${isT?700:400}">${DIAS[i]} ${iso.slice(8)}</td>
@@ -3294,15 +3405,17 @@ function renderAvance(){
 // ══════════════════════════════════════════════
 function renderCiclos(){
   const div=document.getElementById('ciclosContent');div.innerHTML='';
-  const showAll=isAdmin();
-  const subjefes=showAll?pD().subjefes:pD().subjefes.filter(s=>s===userSubjefe()||isAdmin());
+  const showAll=verTodosSubjefes();
+  const misPredios=userPredios();
+  const subjefes=showAll?pD().subjefes:pD().subjefes.filter(s=>s===userSubjefe());
   PRED_ORDER.forEach(pid=>{
-    if(!isAdmin()&&pid!==activePred)return;
+    if(!misPredios.includes(pid))return;
+    if(!showAll&&pid!==activePred)return;
     const p=PREDIOS[pid],pc={transito:'t',constancia:'c',paradero:'p'}[pid];
     const pl=document.createElement('div');pl.className='pred-label';
     pl.innerHTML=`<div class="pred-label-dot" style="background:var(--c-${pc})"></div><span class="pred-label-name" style="color:var(--c-${pc})">${p.nombre}</span>`;
     div.appendChild(pl);
-    const subs=isAdmin()?p.subjefes:p.subjefes.filter(s=>s===userSubjefe());
+    const subs=showAll?p.subjefes:p.subjefes.filter(s=>s===userSubjefe());
     subs.forEach(sub=>{
       const cycles=(ciclosCache[sub]||[]).slice().sort((a,b)=>b.inicio.localeCompare(a.inicio));
       const abiertos=cycles.filter(c=>c.fin===null);
@@ -3609,7 +3722,7 @@ function progNavSem(delta){progWeekOffset+=delta;renderProg();}
 function populateProgSubjefe(){
   const sel=document.getElementById('progSubjefe');if(!sel)return;
   const cur=sel.value;
-  if(!isAdmin()){sel.innerHTML=`<option value="${userSubjefe()}">${userSubjefe()}</option>`;sel.value=userSubjefe();return;}
+  if(!verTodosSubjefes()){sel.innerHTML=`<option value="${userSubjefe()}">${userSubjefe()}</option>`;sel.value=userSubjefe();return;}
   sel.innerHTML=`<option value="">— Seleccionar —</option>`+pD().subjefes.map(s=>`<option value="${s}">${s}</option>`).join('');
   if(!cur&&pD().subjefes.length===1)sel.value=pD().subjefes[0];else sel.value=cur;
 }
@@ -3886,20 +3999,21 @@ async function renderConfig(){
   document.getElementById('wList').innerHTML=(wMap[activePred]||[]).length
     ?(wMap[activePred]).map(w=>`<div class="wrow">
         <div><div class="wn">${w.nombre}</div><div class="wm">${w.codigo||'—'} · ${w.subjefe}${w.cultivo?` · ${CICONS[w.cultivo]||''} ${CNAMES[w.cultivo]||w.cultivo}`:''}${w.plantas?` · ${w.plantas}pl`:''}</div></div>
-        ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="delW('${w.id}')">✕</button>`:''}
+        ${canManageWorkers()?`<button class="btn btn-danger btn-sm" onclick="delW('${w.id}')">✕</button>`:''}
       </div>`).join('')
     :`<div class="empty"><div style="padding:8px 0;font-size:12px">Sin trabajadores</div></div>`;
-  // users (admin only)
-  if(isAdmin()){
+  // users (solo superadmin)
+  if(canManageUsers()){
     loadUsers();
     // populate nuSubjefe
     const allSubs=[...new Set(PRED_ORDER.flatMap(p=>PREDIOS[p].subjefes))];
     document.getElementById('nuSubjefe').innerHTML=`<option value="">— (no aplica) —</option>`+allSubs.map(s=>`<option>${s}</option>`).join('');
+    onRoleChange();
   }
 }
 
 async function addW(){
-  if(!isAdmin()){toast('Solo el administrador puede agregar trabajadores');return}
+  if(!canManageWorkers()){toast('Solo el administrador puede agregar trabajadores');return}
   const n=document.getElementById('nN').value.trim(),c=document.getElementById('nC').value.trim(),s=document.getElementById('nS').value,p=parseInt(document.getElementById('nP').value)||0;
   if(!n){toast('⚠️ Ingresa un nombre');return}
   loading(true,'Guardando…');
@@ -3912,7 +4026,7 @@ async function addW(){
   loading(false);
 }
 async function delW(id){
-  if(!isAdmin()){toast('Solo admin puede eliminar');return}
+  if(!canManageWorkers()){toast('Solo admin puede eliminar');return}
   if(!confirm('¿Eliminar trabajador?'))return;
   loading(true,'Eliminando…');
   try{
@@ -3923,7 +4037,7 @@ async function delW(id){
   loading(false);
 }
 async function clearData(){
-  if(!isAdmin()){toast('Solo admin puede borrar');return}
+  if(!canBorrarDatos()){toast('Solo gerencia puede borrar');return}
   loading(true,'Borrando registros…');
   try{
     const snap=await colRegistros(activePred).get();
@@ -3938,6 +4052,35 @@ async function clearData(){
 // ══════════════════════════════════════════════
 // USER MANAGEMENT (admin only)
 // ══════════════════════════════════════════════
+// Etiqueta legible del alcance de predios de un usuario
+function prediosLabel(u){
+  let ps = Array.isArray(u.predios)&&u.predios.length ? u.predios
+         : (u.predioId==='todos' ? PRED_ORDER.slice() : (u.predioId?[u.predioId]:[]));
+  ps = ps.filter(x=>PREDIOS[x]);
+  if(!ps.length) return 'sin predio';
+  if(ps.length===PRED_ORDER.length) return 'los 3 predios';
+  return ps.map(x=>PREDIOS[x].nombre).join(' + ');
+}
+
+// Muestra u oculta los campos del formulario de usuario según el rol elegido
+function onRoleChange(){
+  const sel=document.getElementById('nuRole'); if(!sel) return;
+  const role=sel.value;
+  const show=(id,ok)=>{const el=document.getElementById(id);if(el)el.style.display=ok?'':'none'};
+  show('nuPredioRow',  role==='admin'||role==='subjefe');
+  show('nuPrediosRow', role==='jefe');
+  show('nuSubjefeRow', role==='subjefe');
+  const hints={
+    admin:'Gerencia. Con "Todos los predios" queda como superadmin: crea usuarios, edita costos y puede borrar registros. Acotado a un predio, manda solo en ese predio.',
+    jefe:'Registra y corrige en los predios que marques, y ve todos los informes. No accede a bodega ni a usuarios.',
+    subjefe:'Trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
+    bodeguero:'Bodega completa (planilla, compras, despachos) y todas las aplicaciones, en los tres predios. No ve registros de labores.',
+    riego:'Solo registra fertirriego y aplicaciones vía riego. No accede a la planilla de bodega.'
+  };
+  const h=document.getElementById('nuRoleHint');
+  if(h)h.textContent=hints[role]||'';
+}
+
 async function loadUsers(){
   try{
     const snap=await colUsers().get();
@@ -3947,21 +4090,35 @@ async function loadUsers(){
     div.innerHTML=usersCache.map(u=>`<div class="user-row">
       <div class="ur-info">
         <div class="ur-name">${u.nombre||u.email}</div>
-        <div class="ur-meta">${u.email} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}">${u.role}</span> · ${u.predioId||'—'} ${u.subjefe?'· '+u.subjefe:''}</div>
+        <div class="ur-meta">${escH(u.email)} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}">${escH(ROLES[u.role]||u.role||'sin rol')}</span> · ${escH(prediosLabel(u))}${u.subjefe?' · '+escH(u.subjefe):''}</div>
       </div>
     </div>`).join('')||'<div style="font-size:12px;color:var(--muted)">Sin usuarios aún</div>';
   }catch(e){console.error(e)}
 }
 
 async function createUser(){
-  if(!isAdmin()){toast('Solo admin puede crear usuarios');return}
+  if(!canManageUsers()){toast('Solo gerencia puede crear usuarios');return}
   const nombre=document.getElementById('nuEmail_name').value.trim();
   const email=document.getElementById('nuEmail').value.trim();
   const pass=document.getElementById('nuPass').value;
   const role=document.getElementById('nuRole').value;
-  const predioId=document.getElementById('nuPredio').value;
-  const subjefe=document.getElementById('nuSubjefe').value;
   if(!email||!pass||pass.length<6){toast('⚠️ Email y contraseña (mín. 6 caracteres) requeridos');return}
+  // Alcance de predios según el rol
+  let predios=[];
+  if(role==='jefe'){
+    predios=[...document.querySelectorAll('.nuPredioChk')].filter(c=>c.checked).map(c=>c.value);
+    if(!predios.length){toast('⚠️ Marca al menos un predio a cargo');return}
+  }else if(role==='bodeguero'||role==='riego'){
+    predios=PRED_ORDER.slice();   // bodega y riego son transversales a los tres predios
+  }else{
+    const pv=document.getElementById('nuPredio').value;
+    if(role==='subjefe'&&pv==='todos'){toast('⚠️ Un subjefe debe tener un solo predio');return}
+    predios = pv==='todos'?PRED_ORDER.slice():[pv];
+  }
+  const subjefe = role==='subjefe' ? document.getElementById('nuSubjefe').value : '';
+  if(role==='subjefe'&&!subjefe){toast('⚠️ Selecciona el subjefe asignado');return}
+  // predioId se mantiene por compatibilidad con los perfiles anteriores a la v25
+  const predioId = predios.length===PRED_ORDER.length ? 'todos' : predios[0];
   loading(true,'Creando usuario…');
   try{
     // Create auth user via Firebase Admin would be ideal, but from client we
@@ -3972,7 +4129,7 @@ async function createUser(){
     await secondApp.auth().signOut();
     secondApp.delete();
     // save profile
-    await colUsers().doc(uid).set({email,nombre:nombre||email.split('@')[0],role,predioId,subjefe,ts:Date.now()});
+    await colUsers().doc(uid).set({email,nombre:nombre||email.split('@')[0],role,predioId,predios,subjefe,ts:Date.now()});
     ['nuEmail_name','nuEmail','nuPass'].forEach(id=>document.getElementById(id).value='');
     loadUsers();
     toast('✅ Usuario creado: '+email);
@@ -4005,12 +4162,8 @@ function initInformes(){
 
   // Predios disponibles según rol
   const selP = document.getElementById('infPredio');
-  let preds = [];
-  if(currentProfile.role==='admin' && currentProfile.predioId==='todos'){
-    preds = PRED_ORDER.slice();
-  } else {
-    preds = [currentProfile.predioId || activePred];
-  }
+  let preds = userPredios();
+  if(!preds.length) preds = [activePred];
   selP.innerHTML = preds.map(p=>`<option value="${p}">${PREDIOS[p].nombre}</option>`).join('');
   if(preds.length>1) selP.innerHTML = `<option value="">Todos</option>` + selP.innerHTML;
   onInfPredioChange();
@@ -4025,7 +4178,7 @@ function onInfPredioChange(){
   let subs = [];
   if(pid) subs = PREDIOS[pid].subjefes.slice();
   else subs = [...new Set(PRED_ORDER.flatMap(p=>PREDIOS[p].subjefes))];
-  if(currentProfile.role==='subjefe'){
+  if(!verTodosSubjefes()){
     subs = [currentProfile.subjefe];
     selS.innerHTML = `<option value="${currentProfile.subjefe}">${currentProfile.subjefe}</option>`;
     selS.disabled = true;
@@ -4944,6 +5097,7 @@ function exportInfPDF(tab){
 // SCREEN SWITCHER
 // ══════════════════════════════════════════════
 function showScr(name,btn){
+  if(!canVerPantalla(name)){toast('Sin permiso para esta sección');return}
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
   document.getElementById('screen-'+name).classList.add('active');
