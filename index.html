@@ -482,8 +482,8 @@ select:focus,input:focus{border-color:var(--green)}
     <div class="card">
       <div class="plan-toolbar">
         <input type="text" id="planBuscar" placeholder="🔍 Buscar producto…" oninput="planFiltrar(this.value)">
-        <button class="btn btn-sm" onclick="planAddProd()" style="background:var(--sand);color:var(--dark)">+ Producto</button>
-        <button class="btn btn-sm btn-primary" onclick="planGuardar()">💾 Guardar cambios</button>
+        <button class="btn btn-sm" id="planAddBtn" onclick="planAddProd()" style="background:var(--sand);color:var(--dark)">+ Producto</button>
+        <button class="btn btn-sm btn-primary" id="planSaveBtn" onclick="planGuardar()">💾 Guardar cambios</button>
       </div>
       <div id="planInfo" class="plan-hint"></div>
       <div id="planGrid" class="plan-wrap"></div>
@@ -885,7 +885,20 @@ function canEditPredio(pid){return canAccessPredio(pid)}
 // ¿Ve a todos los subjefes del predio, o solo a sí mismo?
 function verTodosSubjefes(){return isAdmin()||isJefe()}
 
+// Bodega central: la única que crea productos, edita precios y registra compras.
+// Si algún día la central deja de ser La Constancia, se cambia solo esta constante.
+const BODEGA_CENTRAL='constancia';
+function esBodegaCentral(){return isBodeguero()&&userPredios().includes(BODEGA_CENTRAL)}
+
 function canBodega(){return isAdmin()||isBodeguero()}
+// Catálogo, precios y compras: solo gerencia y la bodega central.
+function canCatalogo(){return isAdmin()||esBodegaCentral()}
+// Despachar: desde las bodegas propias hacia cualquier otra.
+function canDespachar(){return isAdmin()||isBodeguero()}
+// Predios sobre los que el usuario puede operar, en el orden estándar.
+function prediosPermitidos(){const u=userPredios();return PRED_ORDER.filter(x=>u.includes(x))}
+// Registrar una aplicación exige que el predio sea uno de los suyos.
+function canAplicEnPredio(pid){return canAplicaciones()&&userPredios().includes(pid)}
 function canAplicaciones(){return isAdmin()||isBodeguero()||isRiego()}
 function canAplicFoliar(){return isAdmin()||isBodeguero()}
 function canManageUsers(){return isSuperAdmin()}
@@ -1245,7 +1258,7 @@ function renderProductosList(){
 }
 
 async function addProducto(){
-  if(!canBodega()){ toast('Sin permiso'); return; }
+  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
   const nombre = document.getElementById('pNombre').value.trim();
   const categoria = document.getElementById('pCategoria').value;
   const proveedor = document.getElementById('pProveedor').value.trim();
@@ -1273,7 +1286,7 @@ async function addProducto(){
 }
 
 async function delProducto(id){
-  if(!canBodega()){ toast('Sin permiso'); return; }
+  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
   const p = productosCache.find(x=>x.id===id);
   if(!p) return;
   const nL = Array.isArray(p.lotes)?p.lotes.length:0;
@@ -1292,7 +1305,7 @@ async function delProducto(id){
 }
 
 async function addCategoriaFito(){
-  if(!canBodega()){ toast('Sin permiso'); return; }
+  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
   const nombre = (prompt('Nombre de la nueva categoría:')||'').trim();
   if(!nombre) return;
   const existe = categoriasFitoCache.find(c=>normNombre(c)===normNombre(nombre));
@@ -1344,7 +1357,7 @@ function normUnidad(s){
 }
 
 function previewImport(){
-  if(!canBodega()){ toast('Sin permiso'); return; }
+  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
   const raw = document.getElementById('impText').value;
   const box = document.getElementById('impPreview');
   impParsed = null;
@@ -1445,7 +1458,7 @@ function previewImport(){
 }
 
 async function confirmImport(){
-  if(!canBodega()){ toast('Sin permiso'); return; }
+  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
   if(!impParsed||!impParsed.grupos.length){ toast('Nada que importar'); return; }
   const {grupos, catsNuevas} = impParsed;
   if(!confirm(`Se importarán ${grupos.length} producto(s). ¿Continuar?`)) return;
@@ -1529,18 +1542,20 @@ function initAplic(){
 // Carga ciclos abiertos de TODOS los predios (get puntual, no listener)
 async function loadCiclosAll(){
   ciclosAllCache = {};
-  try{
-    for(const pid of Object.keys(PREDIOS)){
-      ciclosAllCache[pid]=[];
-      for(const sub of PREDIOS[pid].subjefes){
+  // Solo los predios del usuario: las reglas niegan los ajenos. El try/catch
+  // va DENTRO del bucle para que un predio sin permiso no aborte los demás.
+  for(const pid of prediosPermitidos()){
+    ciclosAllCache[pid]=[];
+    for(const sub of PREDIOS[pid].subjefes){
+      try{
         const snap = await colCiclos(pid,sub).get();
         snap.docs.forEach(d=>{
           const c={id:d.id,subjefe:sub,...d.data()};
           if(c.fin===null || c.fin===undefined) ciclosAllCache[pid].push(c);
         });
-      }
+      }catch(e){ /* sin permiso o sin ciclos: seguimos con el resto */ }
     }
-  }catch(e){ /* sin ciclos */ }
+  }
 }
 
 // Base de un módulo: "1A"/"1B" -> "1" (para cruzar con ciclos que usan "1")
@@ -1631,7 +1646,7 @@ function renderFoliarForm(){
     box.innerHTML='<p style="font-size:12px;color:var(--red);padding:8px 0">No hay productos cargados. Carga productos en Bodega antes de registrar aplicaciones.</p>';
     return;
   }
-  const predOpts = pid=>`<option value="">— predio —</option>`+Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+  const predOpts = pid=>`<option value="">— predio —</option>`+prediosPermitidos().map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
   const prodOpts = sel=>`<option value="">— elegir producto —</option>`+productosCache.map(x=>`<option value="${x.id}"${x.id===sel?' selected':''}>${escH(x.nombre)}</option>`).join('');
 
   // RECETA INTERPRETADA
@@ -1767,7 +1782,7 @@ function renderViaRiegoForm(){
     box.innerHTML='<p style="font-size:12px;color:var(--red);padding:8px 0">No hay productos cargados. Carga productos en Bodega antes de registrar.</p>';
     return;
   }
-  const predOpts = pid=>`<option value="">— predio —</option>`+Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+  const predOpts = pid=>`<option value="">— predio —</option>`+prediosPermitidos().map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
   const cultList = cultivosCache.length ? cultivosCache.map(c=>c.nombre) : ['tomate','pimentón','especialidades'];
   const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===aplVia.cultivo?' selected':''}>${escH(c)}</option>`).join('');
   const epocaOpts = `<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplVia.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('');
@@ -1870,6 +1885,7 @@ function viaToggleSector(i){ const secs=sectoresDePredio(aplVia.predioId); const
 
 async function guardarViaRiego(){
   if(!canAplicaciones()){ toast('Sin permiso'); return; }
+  if(!canAplicEnPredio(aplVia.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
   if(!aplVia.receta.length){ toast('⚠️ Escribe la receta y pulsa Interpretar'); return; }
   if(aplVia.receta.some(r=>!r.productoId)){ toast('⚠️ Corrige los productos no reconocidos'); return; }
   if(aplVia.receta.some(r=>r.dosis==null||isNaN(r.dosis)||r.dosis<=0)){ toast('⚠️ Falta dosis en algún producto'); return; }
@@ -2027,7 +2043,6 @@ function resumenAtajo(cual){
 }
 
 // ══════════ C3: descuento de stock desde bodega central (La Constancia) ══════════
-const BODEGA_CENTRAL = 'constancia';
 const BODEGA_NOMBRES = {constancia:'Bodega Central (La Constancia)', transito:'Sub bodega El Tránsito', paradero:'Sub bodega Paradero 12'};
 // Consumo foliar en base de stock (L/kg): aStock(dosis,unidad).val × litros/100
 function descuentosFoliar(recetaData, totalLitros){
@@ -2073,6 +2088,7 @@ async function ajustarStockCentral(descuentos, signo){ return ajustarStockBodega
 
 async function guardarFoliar(){
   if(!canAplicFoliar()){ toast('Sin permiso'); return; }
+  if(!canAplicEnPredio(aplFol.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
   if(!aplFol.receta.length){ toast('⚠️ Escribe la receta y pulsa Interpretar'); return; }
   const sinRec=aplFol.receta.filter(r=>!r.productoId);
   if(sinRec.length){ toast('⚠️ Corrige los productos no reconocidos'); return; }
@@ -2225,7 +2241,7 @@ function salesEstanque(){
 //  - total aplicado de cada sal = (Σ litros aplicados) × concentración
 function renderRiegoForm(){
   const box=document.getElementById('aplBody');
-  const predOpts = pid=>`<option value="">— predio —</option>`+Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+  const predOpts = pid=>`<option value="">— predio —</option>`+prediosPermitidos().map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
   const cultList = cultivosCache.length ? cultivosCache.map(c=>c.nombre) : ['tomate','pimentón','especialidades'];
   const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===aplRie.cultivo?' selected':''}>${escH(c)}</option>`).join('');
 
@@ -2321,6 +2337,7 @@ function aplRieLitrosIdx(i,val){
 
 async function guardarRiego(){
   if(!canAplicaciones()){ toast('Sin permiso'); return; }
+  if(!canAplicEnPredio(aplRie.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
   const cap=num(aplRie.capacidad);
   if(!(cap>0)){ toast('⚠️ Indica la capacidad del estanque'); return; }
   if(!aplRie.predioId){ toast('⚠️ Elige el predio'); return; }
@@ -2424,7 +2441,7 @@ function planRow(p, idx){
     <td class="plan-calc" id="pu-${idx}">${pu!=null?('$'+fmtNum(pu,0)):'—'}</td>
     <td><input type="text" value="${escH(p.vencimiento)}" oninput="planSet(${idx},'vencimiento',this.value)" placeholder="—" style="min-width:70px"></td>
     <td><button class="plan-del" onclick="abrirMovProducto(${idx})" title="Compras / despachos" style="color:var(--green)">📦</button></td>
-    <td><button class="plan-del" onclick="planDelProd(${idx})" title="Eliminar">✕</button></td>
+    <td>${canCatalogo()?`<button class="plan-del" onclick="planDelProd(${idx})" title="Eliminar">✕</button>`:''}</td>
   </tr>`;
 }
 
@@ -2445,6 +2462,15 @@ function renderPlanilla(){
     </tr></thead>
     <tbody>${rows||'<tr><td colspan="15" style="padding:16px;color:var(--muted)">Sin productos. Usa "+ Producto" o carga el inventario.</td></tr>'}</tbody>
   </table>`;
+  // Quien no mantiene el catálogo ve la planilla en solo lectura: mueve stock
+  // por despachos y aplicaciones, no editando celdas.
+  if(!canCatalogo()){
+    grid.querySelectorAll('input,select').forEach(el=>{
+      el.disabled=true; el.style.background='transparent'; el.style.color='var(--muted)';
+    });
+  }
+  const ab=document.getElementById('planAddBtn'); if(ab) ab.style.display=canCatalogo()?'':'none';
+  const sb=document.getElementById('planSaveBtn'); if(sb) sb.style.display=canCatalogo()?'':'none';
   planUpdateInfo();
 }
 
@@ -2453,6 +2479,10 @@ function planUpdateInfo(){
   const total=planProds.length;
   const sinUni=planProds.filter(p=>!p.unidad).length;
   const dirty=planProds.filter(p=>p._dirty||p._new).length;
+  if(!canCatalogo()){
+    info.innerHTML=`${total} productos · <b>Solo lectura</b>: el catálogo y los precios los mantiene la bodega central. Usa 📦 para despachar.`;
+    return;
+  }
   info.innerHTML=`${total} productos · ${sinUni>0?`<b style="color:#B45309">${sinUni} sin unidad (kg/L)</b> · `:''}${dirty>0?`<b style="color:var(--green)">${dirty} sin guardar</b>`:'todo guardado'}`;
 }
 
@@ -2500,7 +2530,7 @@ async function planDelProd(idx){
 function planFiltrar(txt){ planFiltroTxt=txt; renderPlanilla(); }
 
 async function planGuardar(){
-  if(!canBodega()){ toast('Sin permiso'); return; }
+  if(!canCatalogo()){ toast('Solo la bodega central edita el catálogo'); return; }
   const pend=planProds.filter(p=>p._dirty||p._new);
   if(!pend.length){ toast('No hay cambios que guardar'); return; }
   // validar nombres
@@ -2647,12 +2677,18 @@ function abrirMovProducto(idx){
   if(!p.id){ toast('⚠️ Guarda el producto antes de registrar movimientos'); return; }
   const uni=p.unidad||'u';
   const predOpts=(sel)=>Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(BODEGA_NOMBRES[k]||PREDIOS[k].nombre)}</option>`).join('');
+  // El origen de un despacho solo puede ser una bodega propia
+  const misBod=prediosPermitidos();
+  const origenOpts=(sel)=>misBod.map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(BODEGA_NOMBRES[k]||PREDIOS[k].nombre)}</option>`).join('');
+  const origenDef=misBod.includes(BODEGA_CENTRAL)?BODEGA_CENTRAL:(misBod[0]||'');
+  const destinoDef=PRED_ORDER.find(k=>k!==origenDef)||'';
   const st=p.stock;
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">📦 ${escH(p.nombre)}</div>
     <div class="modal-sub">Stock: 
       <b>${fmtNum(st.constancia)}</b> Central · <b>${fmtNum(st.transito)}</b> Sub Tránsito · <b>${fmtNum(st.paradero)}</b> Sub Paradero ${escH(uni)}</div>
 
+    ${canCatalogo()?`
     <div class="sec-div">🛒 Registrar compra (entra stock)</div>
     <div class="form-row"><label>Bodega que recibe</label><select id="mcPredio">${predOpts('constancia')}</select></div>
     <div style="display:flex;gap:8px">
@@ -2662,12 +2698,12 @@ function abrirMovProducto(idx){
     <div class="form-row"><label>Precio por envase ($)</label><input type="text" inputmode="decimal" id="mcPrecio" oninput="movCalc()" placeholder="Ej: 50000"></div>
     <div class="form-row"><label>Fecha</label><input type="date" id="mcFecha" value="${todayIso}"></div>
     <div id="mcResumen" style="font-size:12px;color:var(--muted);margin:2px 0 8px"></div>
-    <button class="btn btn-primary" onclick="movCompra(${idx})">Registrar compra</button>
+    <button class="btn btn-primary" onclick="movCompra(${idx})">Registrar compra</button>`:''}
 
     <div class="sec-div" style="margin-top:16px">🔄 Despacho (mover stock entre bodegas)</div>
     <div style="display:flex;gap:8px;align-items:flex-end">
-      <div class="form-row" style="flex:1"><label>Desde</label><select id="mdOrigen">${predOpts('constancia')}</select></div>
-      <div class="form-row" style="flex:1"><label>Hacia</label><select id="mdDestino">${predOpts('transito')}</select></div>
+      <div class="form-row" style="flex:1"><label>Desde</label><select id="mdOrigen">${origenOpts(origenDef)}</select></div>
+      <div class="form-row" style="flex:1"><label>Hacia</label><select id="mdDestino">${predOpts(destinoDef)}</select></div>
     </div>
     <div class="form-row"><label>Cantidad (${escH(uni)})</label><input type="text" inputmode="decimal" id="mdCant" placeholder="Ej: 10"></div>
     <div class="form-row"><label>Fecha</label><input type="date" id="mdFecha" value="${todayIso}"></div>
@@ -2689,7 +2725,7 @@ function movCalc(){
 }
 
 async function movCompra(idx){
-  if(!canBodega()){ toast('Sin permiso'); return; }
+  if(!canCatalogo()){ toast('Solo la bodega central registra compras'); return; }
   const p=planProds[idx];
   const predio=document.getElementById('mcPredio').value;
   const env=num(document.getElementById('mcEnv').value);
@@ -2730,12 +2766,13 @@ async function movCompra(idx){
 }
 
 async function movDespacho(idx){
-  if(!canBodega()){ toast('Sin permiso'); return; }
+  if(!canDespachar()){ toast('Sin permiso'); return; }
   const p=planProds[idx];
   const origen=document.getElementById('mdOrigen').value;
   const destino=document.getElementById('mdDestino').value;
   const cant=num(document.getElementById('mdCant').value);
   const fecha=document.getElementById('mdFecha').value;
+  if(!userPredios().includes(origen)){ toast('⚠️ Solo puedes despachar desde tu bodega'); return; }
   if(origen===destino){ toast('⚠️ El origen y el destino deben ser distintos'); return; }
   if(cant<=0){ toast('⚠️ Indica la cantidad'); return; }
 
@@ -4067,15 +4104,23 @@ function onRoleChange(){
   const sel=document.getElementById('nuRole'); if(!sel) return;
   const role=sel.value;
   const show=(id,ok)=>{const el=document.getElementById(id);if(el)el.style.display=ok?'':'none'};
-  show('nuPredioRow',  role==='admin'||role==='subjefe');
+  // bodeguero y riego ahora son de un predio; solo admin puede ser "todos"
+  const selP=document.getElementById('nuPredio');
+  if(selP){
+    const prev=selP.value;
+    const opts=PRED_ORDER.map(k=>`<option value="${k}">${PREDIOS[k].nombre}${k===BODEGA_CENTRAL&&role==='bodeguero'?' (central)':''}</option>`).join('');
+    selP.innerHTML=opts+(role==='admin'?`<option value="todos">Todos los predios</option>`:'');
+    if([...selP.options].some(o=>o.value===prev)) selP.value=prev;
+  }
+  show('nuPredioRow',  role!=='jefe');
   show('nuPrediosRow', role==='jefe');
   show('nuSubjefeRow', role==='subjefe');
   const hints={
     admin:'Gerencia. Con "Todos los predios" queda como superadmin: crea usuarios, edita costos y puede borrar registros. Acotado a un predio, manda solo en ese predio.',
     jefe:'Registra y corrige en los predios que marques, y ve todos los informes. No accede a bodega ni a usuarios.',
     subjefe:'Trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
-    bodeguero:'Bodega completa (planilla, compras, despachos) y todas las aplicaciones, en los tres predios. No ve registros de labores.',
-    riego:'Solo registra fertirriego y aplicaciones vía riego. No accede a la planilla de bodega.'
+    bodeguero:'Opera la bodega de su predio: consulta la planilla, despacha a otras bodegas y registra aplicaciones. Solo el bodeguero de La Constancia (central) crea productos, edita precios y registra compras.',
+    riego:'Registra fertirriego y aplicaciones vía riego de su predio, que descuentan stock de esa bodega. No edita la planilla ni registra foliares.'
   };
   const h=document.getElementById('nuRoleHint');
   if(h)h.textContent=hints[role]||'';
@@ -4108,11 +4153,9 @@ async function createUser(){
   if(role==='jefe'){
     predios=[...document.querySelectorAll('.nuPredioChk')].filter(c=>c.checked).map(c=>c.value);
     if(!predios.length){toast('⚠️ Marca al menos un predio a cargo');return}
-  }else if(role==='bodeguero'||role==='riego'){
-    predios=PRED_ORDER.slice();   // bodega y riego son transversales a los tres predios
   }else{
     const pv=document.getElementById('nuPredio').value;
-    if(role==='subjefe'&&pv==='todos'){toast('⚠️ Un subjefe debe tener un solo predio');return}
+    if(role!=='admin'&&pv==='todos'){toast('⚠️ Solo un admin puede tener los tres predios');return}
     predios = pv==='todos'?PRED_ORDER.slice():[pv];
   }
   const subjefe = role==='subjefe' ? document.getElementById('nuSubjefe').value : '';
