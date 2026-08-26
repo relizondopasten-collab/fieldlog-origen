@@ -366,6 +366,7 @@ select:focus,input:focus{border-color:var(--green)}
       <button class="nb" id="btnCiclos" onclick="showScr('ciclos',this)">Ciclos</button>
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
       <button class="nb" id="btnAplic" style="display:none" onclick="showScr('aplic',this)">Aplicaciones</button>
+      <button class="nb" id="btnGastos" style="display:none" onclick="showScr('gastos',this)">Gastos</button>
       <button class="nb" id="btnBodega" style="display:none" onclick="showScr('planilla',this)">Bodega</button>
       <button class="nb" id="btnConfig" onclick="showScr('config',this)">Config</button>
     </div>
@@ -510,7 +511,6 @@ select:focus,input:focus{border-color:var(--green)}
         <button class="btn btn-sm" id="aplTabFoliar" onclick="aplSetTab('foliar')" style="flex:1;min-width:100px">🍃 Foliar</button>
         <button class="btn btn-sm" id="aplTabRiego" onclick="aplSetTab('riego')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">🧪 Fertilización</button>
         <button class="btn btn-sm" id="aplTabVia" onclick="aplSetTab('viariego')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">💧 Vía riego</button>
-        <button class="btn btn-sm" id="aplTabResumen" onclick="aplSetTab('resumen')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">📊 Gasto</button>
       </div>
       <div id="aplBody"></div>
     </div>
@@ -518,6 +518,18 @@ select:focus,input:focus{border-color:var(--green)}
     <div class="card">
       <div class="card-title">📋 Últimas aplicaciones</div>
       <div id="aplList"></div>
+    </div>
+  </div>
+
+  <!-- GASTOS -->
+  <div id="screen-gastos" class="screen">
+    <div style="height:10px"></div>
+    <div class="emp-hdr">
+      <div class="emp-name">📊 Gasto en aplicaciones</div>
+      <div class="emp-sub">Consumo y costo de productos por época — foliar, fertirriego y vía riego</div>
+    </div>
+    <div class="card">
+      <div id="gastoBody"></div>
     </div>
   </div>
 
@@ -637,8 +649,10 @@ select:focus,input:focus{border-color:var(--green)}
             <option value="subjefe">Subjefe</option>
             <option value="jefe">Jefe de predio</option>
             <option value="admin">Admin / Gerencia</option>
-            <option value="bodeguero">Bodeguero</option>
-            <option value="riego">Riego</option>
+            <option value="bodeguero">Encargado de bodega</option>
+            <option value="riego">Encargado de riego</option>
+            <option value="foliar">Jefe de desinfecciones</option>
+            <option value="gastos">Informes de gasto</option>
           </select>
         </div>
         <div id="nuRoleHint" style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:9px 12px;margin-bottom:9px;font-size:11px;line-height:1.5;color:var(--muted)"></div>
@@ -650,7 +664,7 @@ select:focus,input:focus{border-color:var(--green)}
             <option value="todos">Todos los predios</option>
           </select>
         </div>
-        <div class="form-row" id="nuPrediosRow" style="display:none"><label>Predios a cargo</label>
+        <div class="form-row" id="nuPrediosRow" style="display:none"><label id="nuPrediosLbl">Predios a cargo</label>
           <div style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;display:flex;flex-direction:column;gap:7px">
             <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="nuPredioChk" value="transito" style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">El Tránsito</label>
             <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="nuPredioChk" value="constancia" style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">La Constancia</label>
@@ -688,9 +702,9 @@ select:focus,input:focus{border-color:var(--green)}
 // STATIC DATA
 // ══════════════════════════════════════════════
 const PREDIOS={
-  transito:  {nombre:'El Tránsito',   jefe:'Marcelo Covarrubias', subjefes:['Marcelo Covarrubias'], cultivos:['tomate']},
-  constancia:{nombre:'La Constancia', jefe:'Marcelo Covarrubias', subjefes:['Sara','José','Roxana'], cultivos:['tomate','especialidades']},
-  paradero:  {nombre:'Paradero 12',   jefe:'Jorge Guajardo',      subjefes:['Jorge Guajardo','Mario Durand'], cultivos:['tomate','pimenton']}
+  transito:  {nombre:'El Tránsito',   jefe:'Claudio Flores',  subjefes:['Marcelo Covarrubias'], cultivos:['tomate']},
+  constancia:{nombre:'La Constancia', jefe:'Katherina',       subjefes:['Sara','José','Roxana'], cultivos:['tomate','especialidades']},
+  paradero:  {nombre:'Paradero 12',   jefe:'Jorge Guajardo',  subjefes:['Jorge Guajardo','Mario Durand'], cultivos:['tomate','pimenton']}
 };
 const CNAMES={tomate:'Tomate',especialidades:'Especialidades',pimenton:'Pimentón'};
 const CICONS={tomate:'🍅',especialidades:'🌶️',pimenton:'🫑'};
@@ -853,10 +867,14 @@ const ROLES={
   admin:    'Admin / Gerencia',
   jefe:     'Jefe de predio',
   subjefe:  'Subjefe',
-  bodeguero:'Bodeguero',
-  riego:    'Riego'
+  bodeguero:'Encargado de bodega',
+  riego:    'Encargado de riego',
+  foliar:   'Jefe de desinfecciones',
+  gastos:   'Informes de gasto'
 };
 const ROLES_CAMPO=['admin','jefe','subjefe'];
+// Roles que pueden cubrir más de un predio a la vez (Gabriela: dos bodegas).
+const ROLES_MULTIPREDIO=['jefe','bodeguero','riego','foliar','gastos'];
 
 function userRole(){return currentProfile&&currentProfile.role||''}
 function userSubjefe(){return currentProfile&&currentProfile.subjefe||''}
@@ -877,6 +895,8 @@ function isJefe(){return userRole()==='jefe'}
 function isSubjefe(){return userRole()==='subjefe'}
 function isBodeguero(){return userRole()==='bodeguero'}
 function isRiego(){return userRole()==='riego'}
+function isFoliar(){return userRole()==='foliar'}
+function isGastos(){return userRole()==='gastos'}
 
 // ¿Trabaja por predio (registro, avance, ciclos, programación)?
 function isCampo(){return ROLES_CAMPO.includes(userRole())}
@@ -890,6 +910,7 @@ function verTodosSubjefes(){return isAdmin()||isJefe()}
 const BODEGA_CENTRAL='constancia';
 function esBodegaCentral(){return isBodeguero()&&userPredios().includes(BODEGA_CENTRAL)}
 
+// Planilla de bodega (stock, compras, despachos, conciliación)
 function canBodega(){return isAdmin()||isBodeguero()}
 // Catálogo, precios y compras: solo gerencia y la bodega central.
 function canCatalogo(){return isAdmin()||esBodegaCentral()}
@@ -899,8 +920,12 @@ function canDespachar(){return isAdmin()||isBodeguero()}
 function prediosPermitidos(){const u=userPredios();return PRED_ORDER.filter(x=>u.includes(x))}
 // Registrar una aplicación exige que el predio sea uno de los suyos.
 function canAplicEnPredio(pid){return canAplicaciones()&&userPredios().includes(pid)}
-function canAplicaciones(){return isAdmin()||isBodeguero()||isRiego()}
-function canAplicFoliar(){return isAdmin()||isBodeguero()}
+// Registro de aplicaciones. El bodeguero ya NO registra: solo ve la planilla.
+function canAplicaciones(){return isAdmin()||isRiego()||isFoliar()}
+function canAplicFoliar(){return isAdmin()||isFoliar()}
+function canAplicRiego(){return isAdmin()||isRiego()}
+// Informe de gasto: gerencia, jefes de predio y el rol de solo-gastos.
+function canVerGastos(){return isAdmin()||isJefe()||isGastos()}
 function canManageUsers(){return isSuperAdmin()}
 function canConfigCostos(){return isSuperAdmin()}
 function canManageWorkers(){return isAdmin()}
@@ -921,6 +946,7 @@ function canVerPantalla(name){
   if(['registro','prog','avance','ciclos'].includes(name))return isCampo();
   if(name==='informes')return canViewInformes();
   if(name==='aplic')return canAplicaciones();
+  if(name==='gastos')return canVerGastos();
   if(name==='planilla'||name==='bodega')return canBodega();
   return true; // config
 }
@@ -1023,8 +1049,9 @@ function bootApp(){
     const ptabs=document.getElementById('ptabs');
     if(ptabs)ptabs.style.display='none';
     loading(false);
-    if(canBodega())showScr('planilla',document.getElementById('btnBodega'));
-    else showScr('aplic',document.getElementById('btnAplic'));
+    if(canBodega())      showScr('planilla',document.getElementById('btnBodega'));
+    else if(canAplicaciones()) showScr('aplic',document.getElementById('btnAplic'));
+    else                 showScr('gastos',document.getElementById('btnGastos'));
     return;
   }
 
@@ -1524,18 +1551,17 @@ async function confirmImport(){
 let aplTab = 'foliar';
 let aplFol = null;   // estado del formulario foliar
 let aplRie = null;   // estado del formulario riego
-let aplResumen = null;  // estado del reporte de gasto
+let aplResumen = null;  // estado del informe de gasto (pantalla Gastos)
 let aplVia = null;      // estado del formulario vía riego (dosis/ha)
 
 function initAplic(){
   if(!canAplicaciones()) return;
-  // El rol riego no registra foliares: aplSetTab le oculta esa pestaña.
+  // Cada rol arranca en la pestaña que le corresponde; aplSetTab oculta el resto.
   const primeraTab=canAplicFoliar()?'foliar':'riego';
   aplTab=primeraTab;
   aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], destinos:[{modulo:'',litros:''}] };
   aplRie = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{} };
   aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
-  aplResumen = { desde: primerDiaMes(), hasta: todayIso, grupos:[], nApp:0 };
   loadCiclosAll().then(()=>{ aplSetTab(primeraTab); renderAplList(); });
 }
 
@@ -1588,20 +1614,21 @@ function modulosDePredio(predioId){
 
 function aplSetTab(t){
   if(t==='foliar'&&!canAplicFoliar())t='riego';
+  if((t==='riego'||t==='viariego')&&!canAplicRiego())t='foliar';
   aplTab=t;
   const off='background:var(--sand);color:var(--dark)';
-  const map={foliar:'aplTabFoliar', riego:'aplTabRiego', viariego:'aplTabVia', resumen:'aplTabResumen'};
+  const map={foliar:'aplTabFoliar', riego:'aplTabRiego', viariego:'aplTabVia'};
   Object.keys(map).forEach(k=>{
     const b=document.getElementById(map[k]); if(!b) return;
     // Ojo: se reescribe cssText completo, así que el ocultamiento por rol
-    // (foliar no disponible para el rol riego) debe reaplicarse aquí.
-    const oculto = (k==='foliar' && !canAplicFoliar());
+    // debe reaplicarse aquí en cada render.
+    const oculto = (k==='foliar' && !canAplicFoliar())
+                || ((k==='riego'||k==='viariego') && !canAplicRiego());
     b.style.cssText='flex:1;min-width:100px;'+(t===k?'':off)+(oculto?';display:none':'');
   });
   if(t==='foliar') renderFoliarForm();
   else if(t==='riego') renderRiegoForm();
   else if(t==='viariego') renderViaRiegoForm();
-  else { renderResumenForm(); calcResumen(); }
 }
 
 // ── Intérprete de recetas (compartido foliar/riego) ──
@@ -1920,13 +1947,37 @@ async function guardarViaRiego(){
   loading(false);
 }
 
-// ══════════ Reporte de gasto por producto (filtro por fechas) ══════════
+// ══════════ Informe de gasto por producto (pantalla propia) ══════════
+// Cada usuario ve solo los predios de su alcance: la consulta a Firestore se
+// hace con where('predioId','==',...) por predio, para que las reglas puedan
+// autorizarla. Filtrar solo en pantalla no serviría: los datos igual viajarían.
+function initGastos(){
+  if(!canVerGastos()) return;
+  if(!aplResumen){
+    aplResumen = { desde: primerDiaMes(), hasta: todayIso, predio:'', grupos:[], nApp:0 };
+  }
+  const mis=prediosPermitidos();
+  if(aplResumen.predio && !mis.includes(aplResumen.predio)) aplResumen.predio='';
+  if(mis.length===1) aplResumen.predio=mis[0];
+  renderResumenForm();
+  calcResumen();
+}
+
 function primerDiaMes(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; }
 
 async function calcResumen(){
+  if(!canVerGastos()){ toast('Sin permiso'); return; }
   const desde=aplResumen.desde||'', hasta=aplResumen.hasta||'';
+  const mis=prediosPermitidos();
+  const objetivo = aplResumen.predio ? [aplResumen.predio] : mis;
   try{
-    const snap=await db.collection('aplicaciones').get();
+    // Una consulta por predio (igualdad), que es lo que las reglas saben autorizar.
+    const partes=[];
+    for(const pid of objetivo){
+      const s=await db.collection('aplicaciones').where('predioId','==',pid).get();
+      partes.push(...s.docs);
+    }
+    const snap={docs:partes};
     // acc[epoca][productoId] = {nombre, base, cantidad, ha, precio}
     const acc={};
     let nApp=0;
@@ -2010,13 +2061,23 @@ function renderResumenForm(){
     if(costoGeneral>0) cuerpo+=`<div style="border-top:2px solid var(--sand);margin-top:10px;padding-top:6px;font-size:12px;text-align:right"><b>Costo total del período: ${fmtCLP(costoGeneral)}</b></div>`;
     cuerpo+=`<div style="font-size:11px;color:var(--muted);margin-top:8px">${aplResumen.nApp||0} aplicación(es) en el período · "/ha" = cantidad ÷ hectáreas aplicadas · costo desde el precio unitario de bodega (donde exista).</div>`;
   }
-  const box=document.getElementById('aplBody');
+  const mis=prediosPermitidos();
+  const predSel = mis.length>1
+    ? `<div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label>
+         <select onchange="aplResumen.predio=this.value;calcResumen()">
+           <option value="">Todos mis predios</option>
+           ${mis.map(k=>`<option value="${k}"${k===aplResumen.predio?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('')}
+         </select></div>`
+    : `<div style="font-size:11px;color:var(--muted);align-self:center">${mis.length?escH(PREDIOS[mis[0]].nombre):'Sin predios asignados'}</div>`;
+  const box=document.getElementById('gastoBody');
+  if(!box) return;
   box.innerHTML=`
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
       <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Desde</label>
         <input type="date" value="${aplResumen.desde}" onchange="aplResumen.desde=this.value"></div>
       <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Hasta</label>
         <input type="date" value="${aplResumen.hasta}" onchange="aplResumen.hasta=this.value"></div>
+      ${predSel}
       <button class="btn btn-sm" onclick="calcResumen()" style="background:var(--dark);color:#fff">📊 Calcular</button>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:4px">
@@ -2135,7 +2196,15 @@ async function renderAplList(){
   if(!box) return;
   box.innerHTML='<p style="font-size:11px;color:var(--muted)">Cargando…</p>';
   try{
-    const snap=await db.collection('aplicaciones').orderBy('createdAt','desc').limit(15).get();
+    // Sin orderBy: se consulta por predio (igualdad) y se ordena en el cliente,
+    // así no hace falta crear un índice compuesto en Firestore.
+    const acumulado=[];
+    for(const pid of prediosPermitidos()){
+      const s=await db.collection('aplicaciones').where('predioId','==',pid).get();
+      acumulado.push(...s.docs);
+    }
+    acumulado.sort((a,b)=>(Number(b.data().createdAt)||0)-(Number(a.data().createdAt)||0));
+    const snap={docs:acumulado.slice(0,15), empty:!acumulado.length};
     if(snap.empty){ box.innerHTML='<p style="font-size:12px;color:var(--muted)">Aún no hay aplicaciones registradas.</p>'; return; }
     box.innerHTML=snap.docs.map(doc=>{
       const a=doc.data();
@@ -2182,7 +2251,7 @@ async function renderAplList(){
 }
 
 async function delAplicacion(id){
-  if(!canBodega()){ toast('Sin permiso'); return; }
+  if(!isAdmin()){ toast('Solo gerencia puede eliminar aplicaciones'); return; }
   if(!confirm('¿Eliminar esta aplicación? Se devolverá el stock descontado.')) return;
   loading(true,'Eliminando…');
   try{
@@ -2591,7 +2660,12 @@ async function calcConciliacion(){
       }
     });
     // Aplicaciones: uso descontado, atribuido a la bodega de descuento
-    const apl=await db.collection('aplicaciones').get();
+    const aplDocs=[];
+    for(const pid of prediosPermitidos()){
+      const s=await db.collection('aplicaciones').where('predioId','==',pid).get();
+      aplDocs.push(...s.docs);
+    }
+    const apl={docs:aplDocs};
     apl.docs.forEach(doc=>{
       const a=doc.data(); if(!enRango(a.fecha||'')) return;
       const bod=a.bodegaDescuento||a.predioId||'constancia';
@@ -2815,6 +2889,7 @@ function applyRoleUI(){
   show('btnCiclos',   isCampo());
   show('btnInformes', canViewInformes());
   show('btnAplic',    canAplicaciones());
+  show('btnGastos',   canVerGastos());
   show('btnBodega',   canBodega());
   // Config: secciones restringidas
   document.getElementById('usersAdminSection').style.display=canManageUsers()?'block':'none';
@@ -4104,23 +4179,28 @@ function onRoleChange(){
   const sel=document.getElementById('nuRole'); if(!sel) return;
   const role=sel.value;
   const show=(id,ok)=>{const el=document.getElementById(id);if(el)el.style.display=ok?'':'none'};
-  // bodeguero y riego ahora son de un predio; solo admin puede ser "todos"
+  // Admin y subjefe eligen un predio; el resto puede cubrir varios.
+  const multi=ROLES_MULTIPREDIO.includes(role);
   const selP=document.getElementById('nuPredio');
-  if(selP){
+  if(selP && !multi){
     const prev=selP.value;
-    const opts=PRED_ORDER.map(k=>`<option value="${k}">${PREDIOS[k].nombre}${k===BODEGA_CENTRAL&&role==='bodeguero'?' (central)':''}</option>`).join('');
+    const opts=PRED_ORDER.map(k=>`<option value="${k}">${PREDIOS[k].nombre}</option>`).join('');
     selP.innerHTML=opts+(role==='admin'?`<option value="todos">Todos los predios</option>`:'');
     if([...selP.options].some(o=>o.value===prev)) selP.value=prev;
   }
-  show('nuPredioRow',  role!=='jefe');
-  show('nuPrediosRow', role==='jefe');
+  const lbl=document.getElementById('nuPrediosLbl');
+  if(lbl) lbl.textContent = role==='bodeguero' ? 'Bodegas a cargo' : 'Predios a cargo';
+  show('nuPredioRow',  !multi);
+  show('nuPrediosRow', multi);
   show('nuSubjefeRow', role==='subjefe');
   const hints={
     admin:'Gerencia. Con "Todos los predios" queda como superadmin: crea usuarios, edita costos y puede borrar registros. Acotado a un predio, manda solo en ese predio.',
     jefe:'Registra y corrige en los predios que marques, y ve todos los informes. No accede a bodega ni a usuarios.',
     subjefe:'Trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
-    bodeguero:'Opera la bodega de su predio: consulta la planilla, despacha a otras bodegas y registra aplicaciones. Solo el bodeguero de La Constancia (central) crea productos, edita precios y registra compras.',
-    riego:'Registra fertirriego y aplicaciones vía riego de su predio, que descuentan stock de esa bodega. No edita la planilla ni registra foliares.'
+    bodeguero:'Solo la Planilla de Bodega de las bodegas que marques: stock, despachos y conciliación. No registra aplicaciones. El de La Constancia (central) además crea productos, edita precios y registra compras.',
+    riego:'Registra fertirriego y vía riego de sus predios. No ve foliares, ni la planilla, ni el informe de gasto.',
+    foliar:'Registra únicamente aplicaciones foliares (desinfecciones) de sus predios. No ve fertirriego, ni la planilla, ni el informe de gasto.',
+    gastos:'Solo el informe de gasto de los predios que marques. Sin acceso a registro de campo, aplicaciones ni bodega. Pensado para quien revisa costos desde fuera del campo.'
   };
   const h=document.getElementById('nuRoleHint');
   if(h)h.textContent=hints[role]||'';
@@ -4150,7 +4230,7 @@ async function createUser(){
   if(!email||!pass||pass.length<6){toast('⚠️ Email y contraseña (mín. 6 caracteres) requeridos');return}
   // Alcance de predios según el rol
   let predios=[];
-  if(role==='jefe'){
+  if(ROLES_MULTIPREDIO.includes(role)){
     predios=[...document.querySelectorAll('.nuPredioChk')].filter(c=>c.checked).map(c=>c.value);
     if(!predios.length){toast('⚠️ Marca al menos un predio a cargo');return}
   }else{
@@ -5155,6 +5235,7 @@ function showScr(name,btn){
   if(name==='bodega')  renderBodega();
   if(name==='planilla') initPlanilla();
   if(name==='aplic')   initAplic();
+  if(name==='gastos')  initGastos();
 }
 
 // ══════════════════════════════════════════════
