@@ -96,8 +96,10 @@ body.wide{max-width:1500px}
 .ptab.disabled{opacity:.35;pointer-events:none}
 
 /* ── NAV ── */
-.nav{display:flex;padding:0 0 11px;gap:4px}
-.nb{flex:1;background:transparent;border:1.5px solid rgba(255,255,255,.12);color:rgba(255,255,255,.4);font-family:'Inter',sans-serif;font-size:9px;font-weight:600;padding:7px 1px;border-radius:8px;cursor:pointer;transition:all .2s;text-transform:uppercase;letter-spacing:.3px}
+/* flex-wrap + min-width: con 9 botones (admin) la barra se desbordaba de la
+   pantalla en el teléfono. Ahora salta a una segunda fila en vez de cortarse. */
+.nav{display:flex;flex-wrap:wrap;padding:0 0 11px;gap:4px}
+.nb{flex:1 1 auto;min-width:62px;background:transparent;border:1.5px solid rgba(255,255,255,.12);color:rgba(255,255,255,.4);font-family:'Inter',sans-serif;font-size:9px;font-weight:600;padding:7px 3px;border-radius:8px;cursor:pointer;transition:all .2s;text-transform:uppercase;letter-spacing:.3px}
 .nb.active{background:var(--green);border-color:var(--green);color:#fff}
 
 /* ── SCREENS ── */
@@ -133,6 +135,86 @@ body.wide{max-width:1500px}
 /* ── FORM ── */
 label{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:.3px}
 select,input[type=number],input[type=text],input[type=date],input[type=email],input[type=password]{width:100%;background:var(--cream);border:1.5px solid var(--sand);border-radius:10px;padding:10px 11px;font-size:14px;font-family:'Inter',sans-serif;color:var(--text);appearance:none;-webkit-appearance:none;outline:none;transition:border-color .2s}
+
+/* ═══════════════════════════════════════════════════════════
+   VISTA DE COMPUTADOR
+   Un solo archivo sirve para móvil y escritorio. La clase la pone
+   aplicarVista() según el ancho de la pantalla, o según lo que el
+   usuario haya forzado con el botón de la barra superior.
+   Todo lo de arriba en esta hoja es la vista móvil (la de siempre);
+   este bloque solo la reescribe cuando hay ancho para ello.
+   ═══════════════════════════════════════════════════════════ */
+body.vista-escritorio{max-width:1400px;padding-bottom:40px}
+body.vista-escritorio.wide{max-width:1600px}
+
+/* Barra superior más holgada */
+body.vista-escritorio .topbar{padding:15px 20px 0}
+body.vista-escritorio .app-title{font-size:20px}
+body.vista-escritorio .app-sub{font-size:9px}
+body.vista-escritorio .user-name{max-width:200px;font-size:12px}
+body.vista-escritorio .ptabs{padding-bottom:10px}
+body.vista-escritorio .ptab{font-size:12.5px;padding:6px 16px}
+body.vista-escritorio .nav{gap:6px;padding-bottom:12px}
+body.vista-escritorio .nb{font-size:11px;padding:9px 6px;letter-spacing:.4px}
+
+/* Las tarjetas se reparten en columnas según el ancho disponible */
+body.vista-escritorio .screen.active{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(420px,1fr));
+  gap:0 16px;
+  align-items:start;
+  padding:0 20px 24px;
+}
+body.vista-escritorio .card{margin-bottom:16px}
+body.vista-escritorio .screen.active > .sp{display:none}
+
+/* Elementos que siempre ocupan el ancho completo */
+body.vista-escritorio .screen.active > .emp-hdr,
+body.vista-escritorio .screen.active > .stats-row,
+body.vista-escritorio .screen.active > .sem-grid,
+body.vista-escritorio .screen.active > #ctx0,
+body.vista-escritorio .screen.active > #ctx2,
+body.vista-escritorio .screen.active > #ctx-prog,
+body.vista-escritorio .screen.active > #infTabsWrap,
+body.vista-escritorio .screen.active > #progContent,
+body.vista-escritorio .screen.active > #progNewBtn,
+body.vista-escritorio .screen.active > #ciclosContent,
+body.vista-escritorio .screen.active > #prediosOv{grid-column:1/-1}
+
+/* Ajustes por pantalla: no todas rinden igual con columnas iguales.
+   Registrar y Aplicaciones quedan mejor como formulario + listado. */
+body.vista-escritorio #screen-registro{grid-template-columns:minmax(380px,440px) 1fr}
+body.vista-escritorio #screen-aplic{grid-template-columns:minmax(420px,1.2fr) minmax(360px,1fr)}
+body.vista-escritorio #screen-informes{grid-template-columns:minmax(360px,420px) 1fr}
+body.vista-escritorio #screen-prog{grid-template-columns:minmax(320px,380px) 1fr}
+body.vista-escritorio #screen-informes > .card:first-of-type{grid-column:1}
+/* Los dos selectores de vista de Gastos no necesitan 1400px */
+body.vista-escritorio .gasto-tabs{max-width:560px}
+
+/* Bodega y Gastos son tablas anchas: una sola columna */
+body.vista-escritorio #screen-planilla > *,
+body.vista-escritorio #screen-gastos > *{grid-column:1/-1}
+
+/* Rejillas internas de los bloques que se generan por JS */
+body.vista-escritorio #ciclosContent,
+body.vista-escritorio #prediosOv,
+body.vista-escritorio #progContent,
+body.vista-escritorio #hoy{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(400px,1fr));
+  gap:0 14px;
+  align-items:start;
+}
+body.vista-escritorio #ciclosContent > .pred-label{grid-column:1/-1}
+
+/* La semana y las estadísticas respiran más */
+body.vista-escritorio .sem-grid{gap:8px}
+body.vista-escritorio .stats-row{gap:12px}
+body.vista-escritorio .emp-hdr{padding:20px}
+
+/* El modal deja de ser una hoja pegada abajo y se centra */
+body.vista-escritorio .overlay{align-items:center;justify-content:center}
+body.vista-escritorio .modal{max-width:620px;border-radius:var(--r);margin:0 auto}
 
 /* ===== PLANILLA BODEGA (escritorio) ===== */
 .plan-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
@@ -351,6 +433,7 @@ select:focus,input:focus{border-color:var(--green)}
           <div class="user-avatar" id="userAvatar">?</div>
           <div class="user-name" id="userName">—</div>
         </div>
+        <button id="btnVista" onclick="toggleVista()" style="background:none;border:none;color:rgba(255,255,255,.45);font-size:15px;cursor:pointer;padding:0 3px" title="Cambiar vista">🖥️</button>
         <button onclick="doLogout()" style="background:none;border:none;color:rgba(255,255,255,.4);font-size:18px;cursor:pointer;padding:0 2px" title="Cerrar sesión">⏻</button>
       </div>
     </div>
@@ -432,7 +515,7 @@ select:focus,input:focus{border-color:var(--green)}
 
   <!-- CICLOS -->
   <div id="screen-ciclos" class="screen">
-    <div style="height:10px"></div>
+    <div class="sp" style="height:10px"></div>
     <div class="card" style="padding:12px 14px 10px">
       <div class="card-title">🌱 Épocas de cultivo</div>
       <p style="font-size:12px;color:var(--muted);line-height:1.5">Abre un ciclo al comenzar una temporada, ciérralo cuando termina. Entre ciclos puede haber días sin cultivo.</p>
@@ -442,7 +525,7 @@ select:focus,input:focus{border-color:var(--green)}
 
   <!-- INFORMES -->
   <div id="screen-informes" class="screen">
-    <div style="height:10px"></div>
+    <div class="sp" style="height:10px"></div>
     <div class="card">
       <div class="card-title">📊 Informes</div>
       <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">Selecciona el periodo y filtros, luego genera los informes. Verás los datos en pantalla con gráficos. La descarga a Excel/PDF se habilitará en la próxima fase.</p>
@@ -475,7 +558,7 @@ select:focus,input:focus{border-color:var(--green)}
   <!-- CONFIG -->
   <!-- PLANILLA BODEGA (escritorio) -->
   <div id="screen-planilla" class="screen">
-    <div style="height:10px"></div>
+    <div class="sp" style="height:10px"></div>
     <div class="emp-hdr">
       <div class="emp-name">📊 Bodega — Planilla</div>
       <div class="emp-sub">Catálogo y stock por predio · pensada para trabajar desde el computador</div>
@@ -500,7 +583,7 @@ select:focus,input:focus{border-color:var(--green)}
 
   <!-- APLICACIONES -->
   <div id="screen-aplic" class="screen">
-    <div style="height:10px"></div>
+    <div class="sp" style="height:10px"></div>
     <div class="emp-hdr">
       <div class="emp-name">💧 Aplicaciones</div>
       <div class="emp-sub">Registro de desinfecciones foliares y aplicaciones vía riego</div>
@@ -523,7 +606,7 @@ select:focus,input:focus{border-color:var(--green)}
 
   <!-- GASTOS -->
   <div id="screen-gastos" class="screen">
-    <div style="height:10px"></div>
+    <div class="sp" style="height:10px"></div>
     <div class="emp-hdr">
       <div class="emp-name">📊 Gasto en aplicaciones</div>
       <div class="emp-sub">Consumo y costo de productos por época — foliar, fertirriego y vía riego</div>
@@ -535,7 +618,7 @@ select:focus,input:focus{border-color:var(--green)}
 
 
   <div id="screen-bodega" class="screen">
-    <div style="height:10px"></div>
+    <div class="sp" style="height:10px"></div>
     <div class="emp-hdr">
       <div class="emp-name">📦 Bodega y Aplicaciones</div>
       <div class="emp-sub">Catálogo de productos fitosanitarios</div>
@@ -599,7 +682,7 @@ select:focus,input:focus{border-color:var(--green)}
 
 
   <div id="screen-config" class="screen">
-    <div style="height:10px"></div>
+    <div class="sp" style="height:10px"></div>
     <div class="emp-hdr">
       <div class="emp-name">Agrícola Origen</div>
       <div class="emp-sub">Sistema de Registro · Tomate Invernadero</div>
@@ -2292,7 +2375,7 @@ function renderResumenForm(){
       <button class="btn btn-sm" onclick="resumenAtajo('temporada')" style="${off};font-size:11px;padding:4px 8px">Últimos 12 meses</button>
       <button class="btn btn-sm" onclick="resumenAtajo('todo')" style="${off};font-size:11px;padding:4px 8px">Todo</button>
     </div>
-    <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+    <div class="gasto-tabs" style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
       <button class="btn btn-sm" onclick="gastoSetVista('temporada')" style="flex:1;min-width:130px;${vista==='temporada'?'':off}">🌱 Por temporada</button>
       <button class="btn btn-sm" onclick="gastoSetVista('mensual')" style="flex:1;min-width:130px;${vista==='mensual'?'':off}">📅 Mensual por tipo</button>
     </div>
@@ -5554,6 +5637,44 @@ function exportInfPDF(tab){
   }
 }
 
+
+// ══════════════════════════════════════════════
+// VISTA: móvil / computador
+// ══════════════════════════════════════════════
+// Un solo archivo que se adapta. Por defecto manda el ancho de la pantalla;
+// el botón de la barra superior permite forzar una vista, y la preferencia se
+// recuerda solo en ese dispositivo (no viaja a Firestore ni afecta a nadie más).
+const ANCHO_ESCRITORIO = 900;
+let vistaForzada = null;
+try{ vistaForzada = localStorage.getItem('fieldlog_vista') || null; }catch(e){ /* modo privado */ }
+
+function vistaEsEscritorio(){
+  if(vistaForzada==='escritorio') return true;
+  if(vistaForzada==='movil') return false;
+  return window.innerWidth >= ANCHO_ESCRITORIO;
+}
+function aplicarVista(){
+  const esc = vistaEsEscritorio();
+  document.body.classList.toggle('vista-escritorio', esc);
+  document.body.classList.toggle('vista-movil', !esc);
+  const b=document.getElementById('btnVista');
+  if(b){
+    b.textContent = esc ? '📱' : '🖥️';
+    b.title = esc ? 'Cambiar a vista móvil' : 'Cambiar a vista de computador';
+  }
+}
+function toggleVista(){
+  const auto = (window.innerWidth >= ANCHO_ESCRITORIO) ? 'escritorio' : 'movil';
+  const nueva = vistaEsEscritorio() ? 'movil' : 'escritorio';
+  // Si la elección coincide con lo que haría el ancho de la pantalla, se vuelve
+  // a modo automático en vez de dejar una preferencia fija.
+  if(nueva===auto){ vistaForzada=null; try{ localStorage.removeItem('fieldlog_vista'); }catch(e){} }
+  else { vistaForzada=nueva; try{ localStorage.setItem('fieldlog_vista', nueva); }catch(e){} }
+  aplicarVista();
+  toast(vistaEsEscritorio() ? '🖥️ Vista de computador' : '📱 Vista móvil');
+}
+window.addEventListener('resize', aplicarVista);
+aplicarVista();
 
 // ══════════════════════════════════════════════
 // SCREEN SWITCHER
