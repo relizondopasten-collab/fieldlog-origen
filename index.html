@@ -808,7 +808,10 @@ let productosCache = [];  // catálogo de productos fitosanitarios
 let categoriasFitoCache = []; // categorías de productos (editables desde la app)
 let terrenoCache = {};    // {predioId: {modulos:{nombre:ha}, sectores:{nombre:ha}}}
 let ciclosAllCache = {};  // {predioId: [{...ciclo, subjefe}]} — ciclos abiertos de TODOS los predios (para aplicaciones)
-const CATEGORIAS_FITO_DEFAULT = ['Insecticida / control polillas','Fungicida','Bioestimulante','Fertilizante','Nematicida','Coadyuvante'];
+// Tipos de producto de bodega. Es la lista que usan la planilla, el catálogo y
+// el informe de gasto mensual. Definida por gerencia (v28).
+const CATEGORIAS_BODEGA = ['Fertilizantes','Bioestimulantes','Fitosanitarios','Desinfectantes','Materiales','Enmiendas','Humectante'];
+const CATEGORIAS_FITO_DEFAULT = CATEGORIAS_BODEGA.slice();
 // Formas de aplicación: se eligen al REGISTRAR la aplicación (Fase C), no en el producto,
 // porque un mismo producto (ej. Serenade) puede aplicarse foliar o vía riego.
 const FORMAS_APLIC = {foliar:'Foliar (desinfección)', riego:'Riego directo', estanque:'Estanque / biodigestor'};
@@ -1584,6 +1587,23 @@ async function loadCiclosAll(){
   }
 }
 
+// Ciclo abierto que corresponde a una aplicación. De aquí sale el AÑO de la
+// temporada que muestra el informe de gasto: se guarda en el documento para no
+// depender de que el ciclo siga abierto cuando se consulte el informe.
+function cicloDeAplicacion(predioId, epoca, cultivo){
+  const lista=(ciclosAllCache[predioId]||[]);
+  return lista.find(c=>c.temporada===epoca && (!cultivo || !c.cultivo || c.cultivo===cultivo))
+      || lista.find(c=>c.temporada===epoca)
+      || null;
+}
+function datosTemporada(predioId, epoca, cultivo){
+  const c=cicloDeAplicacion(predioId, epoca, cultivo);
+  return {
+    cicloId: c ? c.id : null,
+    temporadaAnio: (c && c.inicio) ? Number(String(c.inicio).slice(0,4)) : null
+  };
+}
+
 // Base de un módulo: "1A"/"1B" -> "1" (para cruzar con ciclos que usan "1")
 function moduloBase(m){ const s=String(m); const b=s.replace(/[A-Za-z].*$/,'').trim(); return b||s; }
 
@@ -1932,6 +1952,7 @@ async function guardarViaRiego(){
     const faltan=faltantesStock(desc, bodDesc);
     await db.collection('aplicaciones').add({
       tipo:'viariego', fecha:aplVia.fecha, predioId:aplVia.predioId, cultivo:aplVia.cultivo, epoca:aplVia.epoca||'', bodegaDescuento:bodDesc,
+      ...datosTemporada(aplVia.predioId, aplVia.epoca, aplVia.cultivo),
       receta:recetaData, sectores:sectoresData, haTotal:r.haTotal,
       descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
@@ -1947,14 +1968,41 @@ async function guardarViaRiego(){
   loading(false);
 }
 
-// ══════════ Informe de gasto por producto (pantalla propia) ══════════
+// ══════════ Informe de gasto (pantalla propia) ══════════
 // Cada usuario ve solo los predios de su alcance: la consulta a Firestore se
 // hace con where('predioId','==',...) por predio, para que las reglas puedan
 // autorizarla. Filtrar solo en pantalla no serviría: los datos igual viajarían.
+//
+// El año de la temporada sale del CICLO abierto en ese predio (guardado en la
+// aplicación como temporadaAnio, y deducido por rango de fechas para las
+// aplicaciones anteriores a la v28).
+//
+// Temporadas que cruzan el año calendario (según los ejemplos de gerencia:
+// "Otoño 2026-27", "Invierno 26"):
+const TEMP_CRUZA_ANIO={otono:true, invierno:false, primor:false, trastomate:false, verano:true};
+
+function temporadaLabel(ep, anio){
+  if(!ep) return 'Sin temporada';
+  const nom=TNAMES[ep]||ep;
+  if(anio==null) return `${nom} (sin año)`;
+  return TEMP_CRUZA_ANIO[ep]
+    ? `${nom} ${anio}-${String(anio+1).slice(2)}`
+    : `${nom} ${String(anio).slice(2)}`;
+}
+function temporadaKey(ep, anio){ return `${ep||'_'}|${anio==null?'_':anio}`; }
+
+function primerDiaMes(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; }
+function mesLabel(ym){
+  if(!ym) return '—';
+  const [y,m]=ym.split('-');
+  return `${MESES[Number(m)-1]||m} ${String(y).slice(2)}`;
+}
+
 function initGastos(){
   if(!canVerGastos()) return;
   if(!aplResumen){
-    aplResumen = { desde: primerDiaMes(), hasta: todayIso, predio:'', grupos:[], nApp:0 };
+    aplResumen = { desde: primerDiaMes(), hasta: todayIso, predio:'', vista:'temporada',
+                   temporadas:[], meses:null, nApp:0, calc:false };
   }
   const mis=prediosPermitidos();
   if(aplResumen.predio && !mis.includes(aplResumen.predio)) aplResumen.predio='';
@@ -1963,104 +2011,191 @@ function initGastos(){
   calcResumen();
 }
 
-function primerDiaMes(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; }
+// Ciclos de los predios del usuario (todos, no solo los abiertos): sirven para
+// fechar las aplicaciones ya registradas que no guardaron temporadaAnio.
+let ciclosGastoCache=null;
+async function loadCiclosParaGasto(){
+  if(ciclosGastoCache) return ciclosGastoCache;
+  const out={};
+  for(const pid of prediosPermitidos()){
+    out[pid]=[];
+    for(const sub of PREDIOS[pid].subjefes){
+      try{
+        const snap=await colCiclos(pid,sub).get();
+        snap.docs.forEach(d=>out[pid].push({id:d.id, subjefe:sub, ...d.data()}));
+      }catch(e){ /* sin permiso o sin ciclos */ }
+    }
+  }
+  ciclosGastoCache=out;
+  return out;
+}
+
+// Devuelve {epoca, anio} de una aplicación.
+function temporadaDeAplicacion(a, ciclos){
+  const ep=a.epoca||'';
+  if(!ep) return {epoca:'', anio:null};
+  if(a.temporadaAnio!=null && !isNaN(Number(a.temporadaAnio)))
+    return {epoca:ep, anio:Number(a.temporadaAnio)};
+  const f=a.fecha||'';
+  const lista=(ciclos[a.predioId]||[]);
+  const c=lista.find(c=>c.temporada===ep && c.inicio && c.inicio<=f && (!c.fin || c.fin>=f));
+  if(c) return {epoca:ep, anio:Number(String(c.inicio).slice(0,4))};
+  return {epoca:ep, anio:null};
+}
+
+// Categoría de un producto, normalizada al catálogo vigente.
+function categoriaDe(productoId){
+  const p=productosCache.find(x=>x.id===productoId);
+  const c=(p&&p.categoria||'').trim();
+  if(!c) return 'Sin clasificar';
+  const match=CATEGORIAS_BODEGA.find(k=>normNombre(k)===normNombre(c));
+  return match || c;
+}
 
 async function calcResumen(){
   if(!canVerGastos()){ toast('Sin permiso'); return; }
   const desde=aplResumen.desde||'', hasta=aplResumen.hasta||'';
   const mis=prediosPermitidos();
   const objetivo = aplResumen.predio ? [aplResumen.predio] : mis;
+  loading(true,'Calculando gasto…');
   try{
+    const ciclos=await loadCiclosParaGasto();
     // Una consulta por predio (igualdad), que es lo que las reglas saben autorizar.
-    const partes=[];
+    const docs=[];
     for(const pid of objetivo){
       const s=await db.collection('aplicaciones').where('predioId','==',pid).get();
-      partes.push(...s.docs);
+      docs.push(...s.docs);
     }
-    const snap={docs:partes};
-    // acc[epoca][productoId] = {nombre, base, cantidad, ha, precio}
-    const acc={};
+
+    const temp={};   // temp[key] = {epoca, anio, prod:{}, mod:{}, sec:{}}
+    const mesCat={}; // mesCat[ym][categoria] = costo
+    const mesesSet=new Set(), catsSet=new Set();
     let nApp=0;
-    snap.docs.forEach(doc=>{
+
+    docs.forEach(doc=>{
       const a=doc.data();
       const f=a.fecha||'';
       if(desde && f<desde) return;
       if(hasta && f>hasta) return;
       nApp++;
-      const ep=a.epoca||'';
-      // ha aplicada por esta aplicación
-      let haApp=0;
-      if(a.tipo==='viariego') haApp=Number(a.haTotal)|| (a.sectores||[]).reduce((s,x)=>s+(Number(x.ha)||0),0);
-      else if(a.tipo==='fertirriego') haApp=(a.sectores||[]).reduce((s,x)=>s+(Number(x.ha)||0),0);
-      else haApp=(a.destinos||[]).reduce((s,x)=>s+(Number(x.ha)||0),0);  // foliar
-      // base/nombre por producto desde receta/sales
+
+      const t=temporadaDeAplicacion(a, ciclos);
+      const key=temporadaKey(t.epoca, t.anio);
+      if(!temp[key]) temp[key]={epoca:t.epoca, anio:t.anio, prod:{}, mod:{}, sec:{}};
+      const T=temp[key];
+
+      // Superficie DISTINTA: cada módulo o sector cuenta una sola vez por
+      // temporada, aunque se trate diez veces.
+      const pid=a.predioId||'';
+      (a.destinos||[]).forEach(d=>{
+        if(d.modulo==null||d.modulo==='') return;
+        const ha=(d.ha!=null&&!isNaN(Number(d.ha)))?Number(d.ha):haModulo(pid,d.modulo);
+        if(ha==null||isNaN(ha)) return;
+        if(!T.mod[pid]) T.mod[pid]={};
+        T.mod[pid][String(d.modulo)]=ha;
+      });
+      (a.sectores||[]).forEach(sx=>{
+        if(sx.sector==null||sx.sector==='') return;
+        const ha=(sx.ha!=null&&!isNaN(Number(sx.ha)))?Number(sx.ha):haSector(pid,sx.sector);
+        if(ha==null||isNaN(ha)) return;
+        if(!T.sec[pid]) T.sec[pid]={};
+        T.sec[pid][String(sx.sector)]=ha;
+      });
+
+      // Nombres y unidades base desde la receta
       const baseMap={}, nombreMap={};
-      (a.receta||[]).forEach(r=>{ if(r.productoId){ baseMap[r.productoId]=r.base||(r.unidadStock==='L'?'L':(r.unidadStock==='kg'?'kg':'')); nombreMap[r.productoId]=r.nombre; } });
-      (a.sales||[]).forEach(s=>{ if(s.productoId){ baseMap[s.productoId]=s.unidad||'kg'; nombreMap[s.productoId]=s.nombre; } });
+      (a.receta||[]).forEach(r=>{ if(r.productoId){ baseMap[r.productoId]=r.base||''; nombreMap[r.productoId]=r.nombre; } });
+      (a.sales||[]).forEach(sx=>{ if(sx.productoId){ baseMap[sx.productoId]=sx.unidad||'kg'; nombreMap[sx.productoId]=sx.nombre; } });
+
+      const ym=f.slice(0,7);
       (a.descontado||[]).forEach(d=>{
         if(!d.productoId) return;
-        if(!acc[ep]) acc[ep]={};
-        if(!acc[ep][d.productoId]){
-          const p=productosCache.find(x=>x.id===d.productoId);
-          const precio=(p&&p.precioUnit!=null&&p.precioUnit!=='')?Number(p.precioUnit):null;
-          acc[ep][d.productoId]={ nombre:(p?p.nombre:nombreMap[d.productoId])||d.productoId, base:baseMap[d.productoId]||'', cantidad:0, ha:0, precio };
+        const prod=productosCache.find(x=>x.id===d.productoId);
+        const precio=(prod&&prod.precioUnit!=null&&prod.precioUnit!=='')?Number(prod.precioUnit):null;
+        const cant=Number(d.cantidad)||0;
+        const costo=precio!=null?cant*precio:null;
+
+        if(!T.prod[d.productoId]){
+          T.prod[d.productoId]={
+            nombre:(prod?prod.nombre:nombreMap[d.productoId])||d.productoId,
+            categoria:categoriaDe(d.productoId),
+            base:baseMap[d.productoId]||'', cantidad:0, costo:0, sinPrecio:false
+          };
         }
-        if(!acc[ep][d.productoId].base && baseMap[d.productoId]) acc[ep][d.productoId].base=baseMap[d.productoId];
-        acc[ep][d.productoId].cantidad += Number(d.cantidad)||0;
-        acc[ep][d.productoId].ha += haApp;
+        const P=T.prod[d.productoId];
+        if(!P.base && baseMap[d.productoId]) P.base=baseMap[d.productoId];
+        P.cantidad+=cant;
+        if(costo!=null) P.costo+=costo; else P.sinPrecio=true;
+
+        // Gasto mensual por tipo de producto
+        if(ym && costo!=null){
+          const cat=categoriaDe(d.productoId);
+          mesesSet.add(ym); catsSet.add(cat);
+          if(!mesCat[ym]) mesCat[ym]={};
+          mesCat[ym][cat]=(mesCat[ym][cat]||0)+costo;
+        }
       });
     });
-    // armar grupos ordenados por época (TORDER, luego "sin época")
-    const orden=[...TORDER, ''];
-    const grupos=[];
-    orden.forEach(ep=>{
-      if(!acc[ep]) return;
-      const filas=Object.keys(acc[ep]).map(id=>{
-        const o=acc[ep][id];
-        const cantXha=o.ha>0?o.cantidad/o.ha:null;
-        const costo=o.precio!=null?o.cantidad*o.precio:null;
-        const costoXha=(costo!=null&&o.ha>0)?costo/o.ha:null;
-        return {nombre:o.nombre, base:o.base, cantidad:o.cantidad, ha:o.ha, cantXha, costo, costoXha};
+
+    // ── Armar temporadas ordenadas: año desc, y dentro del año por TORDER ──
+    const temporadas=Object.keys(temp).map(key=>{
+      const T=temp[key];
+      // Módulos y sectores dividen la misma tierra: se toma la mayor de las dos
+      // superficies por predio, no la suma, para no contar la tierra dos veces.
+      let superficie=0;
+      const predios=new Set([...Object.keys(T.mod), ...Object.keys(T.sec)]);
+      predios.forEach(pid=>{
+        const sm=Object.values(T.mod[pid]||{}).reduce((s,v)=>s+v,0);
+        const ss=Object.values(T.sec[pid]||{}).reduce((s,v)=>s+v,0);
+        superficie+=Math.max(sm,ss);
+      });
+      const filas=Object.keys(T.prod).map(id=>{
+        const o=T.prod[id];
+        return {nombre:o.nombre, categoria:o.categoria, base:o.base, cantidad:o.cantidad,
+                costo:o.sinPrecio&&o.costo===0?null:o.costo, sinPrecio:o.sinPrecio,
+                cantXha: superficie>0?o.cantidad/superficie:null,
+                costoXha:(superficie>0&&!(o.sinPrecio&&o.costo===0))?o.costo/superficie:null};
       }).sort((a,b)=>(b.costo||0)-(a.costo||0) || b.cantidad-a.cantidad);
       const costoTot=filas.reduce((s,x)=>s+(x.costo||0),0);
-      grupos.push({ epoca:ep, label: ep?`${TICONS[ep]||''} ${TNAMES[ep]||ep}`:'Sin época', filas, costoTot });
+      return {key, epoca:T.epoca, anio:T.anio, label:temporadaLabel(T.epoca,T.anio),
+              superficie, filas, costoTot, costoXha: superficie>0?costoTot/superficie:null};
+    }).sort((a,b)=>{
+      const aa=a.anio==null?-1:a.anio, bb=b.anio==null?-1:b.anio;
+      if(aa!==bb) return bb-aa;
+      return TORDER.indexOf(a.epoca)-TORDER.indexOf(b.epoca);
     });
-    aplResumen.grupos=grupos; aplResumen.nApp=nApp;
-  }catch(e){ aplResumen.grupos=[]; aplResumen.nApp=0; toast('Error: '+e.message); }
+
+    // ── Armar matriz mensual por categoría ──
+    const meses=[...mesesSet].sort();
+    const cats=CATEGORIAS_BODEGA.filter(c=>catsSet.has(c)).concat([...catsSet].filter(c=>!CATEGORIAS_BODEGA.includes(c)).sort());
+    const totalMes={}, totalCat={};
+    let totalGeneral=0;
+    meses.forEach(m=>{
+      totalMes[m]=0;
+      cats.forEach(c=>{
+        const v=(mesCat[m]||{})[c]||0;
+        totalMes[m]+=v; totalCat[c]=(totalCat[c]||0)+v;
+      });
+      totalGeneral+=totalMes[m];
+    });
+
+    aplResumen.temporadas=temporadas;
+    aplResumen.meses={lista:meses, cats, matriz:mesCat, totalMes, totalCat, total:totalGeneral};
+    aplResumen.nApp=nApp;
+    aplResumen.calc=true;
+  }catch(e){
+    aplResumen.temporadas=[]; aplResumen.meses=null; aplResumen.nApp=0;
+    toast('Error: '+e.message);
+  }
+  loading(false);
   renderResumenForm();
 }
 
+function gastoSetVista(v){ aplResumen.vista=v; renderResumenForm(); }
+
 function renderResumenForm(){
-  const grupos=aplResumen.grupos||[];
-  let cuerpo;
-  if(!grupos.length){
-    cuerpo='<p style="font-size:12px;color:var(--muted);padding:10px 0">Sin gasto registrado en el período. Ajusta las fechas y pulsa Calcular.</p>';
-  }else{
-    cuerpo=grupos.map(g=>`
-      <div style="margin-top:12px">
-        <div style="font-weight:700;font-size:13px;color:var(--dark);margin-bottom:4px">${escH(g.label)}</div>
-        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-          <thead><tr style="border-bottom:2px solid var(--sand)">
-            <th style="padding:4px;text-align:left">Producto</th>
-            <th style="padding:4px;text-align:right">Total</th>
-            <th style="padding:4px;text-align:right">/ha</th>
-            <th style="padding:4px;text-align:right">Costo</th>
-            <th style="padding:4px;text-align:right">Costo/ha</th>
-          </tr></thead><tbody>
-          ${g.filas.map(f=>`<tr style="border-bottom:1px solid var(--sand)">
-            <td style="padding:4px">${escH(f.nombre)}</td>
-            <td style="padding:4px;text-align:right;color:#B45309;font-weight:600">${fmtNum(f.cantidad,2)} ${escH(f.base)}</td>
-            <td style="padding:4px;text-align:right;color:var(--muted)">${f.cantXha!=null?fmtNum(f.cantXha,3)+' '+escH(f.base):'—'}</td>
-            <td style="padding:4px;text-align:right">${f.costo!=null?fmtCLP(f.costo):'—'}</td>
-            <td style="padding:4px;text-align:right;color:var(--muted)">${f.costoXha!=null?fmtCLP(f.costoXha):'—'}</td>
-          </tr>`).join('')}
-          </tbody></table></div>
-        ${g.costoTot>0?`<div style="font-size:11px;color:var(--dark);text-align:right;margin-top:3px"><b>Costo ${escH(g.label)}: ${fmtCLP(g.costoTot)}</b></div>`:''}
-      </div>`).join('');
-    const costoGeneral=grupos.reduce((s,g)=>s+(g.costoTot||0),0);
-    if(costoGeneral>0) cuerpo+=`<div style="border-top:2px solid var(--sand);margin-top:10px;padding-top:6px;font-size:12px;text-align:right"><b>Costo total del período: ${fmtCLP(costoGeneral)}</b></div>`;
-    cuerpo+=`<div style="font-size:11px;color:var(--muted);margin-top:8px">${aplResumen.nApp||0} aplicación(es) en el período · "/ha" = cantidad ÷ hectáreas aplicadas · costo desde el precio unitario de bodega (donde exista).</div>`;
-  }
+  const box=document.getElementById('gastoBody');
+  if(!box) return;
   const mis=prediosPermitidos();
   const predSel = mis.length>1
     ? `<div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label>
@@ -2069,8 +2204,79 @@ function renderResumenForm(){
            ${mis.map(k=>`<option value="${k}"${k===aplResumen.predio?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('')}
          </select></div>`
     : `<div style="font-size:11px;color:var(--muted);align-self:center">${mis.length?escH(PREDIOS[mis[0]].nombre):'Sin predios asignados'}</div>`;
-  const box=document.getElementById('gastoBody');
-  if(!box) return;
+
+  const off='background:var(--sand);color:var(--dark)';
+  const vista=aplResumen.vista||'temporada';
+
+  let cuerpo='';
+  if(!aplResumen.calc){
+    cuerpo='<p style="font-size:12px;color:var(--muted);padding:10px 0">Ajusta el período y pulsa Calcular.</p>';
+  }else if(vista==='temporada'){
+    cuerpo=aplResumen.temporadas.length ? aplResumen.temporadas.map(g=>`
+      <div style="margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px">
+          <div style="font-weight:700;font-size:13.5px;color:var(--dark)">${escH(TICONS[g.epoca]||'')} ${escH(g.label)}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">
+            ${fmtNum(g.superficie,2)} ha · ${fmtCLP(g.costoTot)}${g.costoXha!=null?` · ${fmtCLP(g.costoXha)}/ha`:''}
+          </div>
+        </div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
+          <thead><tr style="border-bottom:2px solid var(--sand)">
+            <th style="padding:4px;text-align:left">Producto</th>
+            <th style="padding:4px;text-align:left">Tipo</th>
+            <th style="padding:4px;text-align:right">Cantidad</th>
+            <th style="padding:4px;text-align:right">Cant./ha</th>
+            <th style="padding:4px;text-align:right">Costo</th>
+            <th style="padding:4px;text-align:right">Costo/ha</th>
+          </tr></thead><tbody>
+          ${g.filas.map(f=>`<tr style="border-bottom:1px solid var(--sand)">
+            <td style="padding:4px">${escH(f.nombre)}</td>
+            <td style="padding:4px;color:var(--muted)">${escH(f.categoria)}</td>
+            <td style="padding:4px;text-align:right;color:#B45309;font-weight:600">${fmtNum(f.cantidad,2)} ${escH(f.base)}</td>
+            <td style="padding:4px;text-align:right;color:var(--muted)">${f.cantXha!=null?fmtNum(f.cantXha,3)+' '+escH(f.base):'—'}</td>
+            <td style="padding:4px;text-align:right">${f.costo!=null?fmtCLP(f.costo):'—'}</td>
+            <td style="padding:4px;text-align:right;color:var(--muted)">${f.costoXha!=null?fmtCLP(f.costoXha):'—'}</td>
+          </tr>`).join('')}
+          </tbody>
+          <tfoot><tr style="border-top:2px solid var(--sand);font-weight:700">
+            <td style="padding:4px" colspan="4">Total ${escH(g.label)} · ${fmtNum(g.superficie,2)} ha</td>
+            <td style="padding:4px;text-align:right">${fmtCLP(g.costoTot)}</td>
+            <td style="padding:4px;text-align:right">${g.costoXha!=null?fmtCLP(g.costoXha):'—'}</td>
+          </tr></tfoot>
+        </table></div>
+      </div>`).join('')
+      : '<p style="font-size:12px;color:var(--muted);padding:10px 0">Sin gasto registrado en el período.</p>';
+    const tot=aplResumen.temporadas.reduce((s,g)=>s+(g.costoTot||0),0);
+    if(tot>0) cuerpo+=`<div style="border-top:2px solid var(--sand);margin-top:12px;padding-top:6px;font-size:12.5px;text-align:right"><b>Costo total del período: ${fmtCLP(tot)}</b></div>`;
+    cuerpo+=`<div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.5">
+      ${aplResumen.nApp||0} aplicación(es) en el período · La superficie cuenta cada módulo o sector <b>una sola vez</b> por temporada, aunque se haya tratado varias veces · Módulos y sectores dividen la misma tierra: se toma la mayor de ambas superficies, no la suma · El costo usa el precio unitario de bodega, donde exista.</div>`;
+  }else{
+    const M=aplResumen.meses;
+    if(!M||!M.lista.length){
+      cuerpo='<p style="font-size:12px;color:var(--muted);padding:10px 0">Sin gasto con precio conocido en el período.</p>';
+    }else{
+      cuerpo=`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px;white-space:nowrap">
+        <thead><tr style="border-bottom:2px solid var(--sand)">
+          <th style="padding:4px;text-align:left">Mes</th>
+          ${M.cats.map(c=>`<th style="padding:4px;text-align:right">${escH(c)}</th>`).join('')}
+          <th style="padding:4px;text-align:right">Total</th>
+        </tr></thead><tbody>
+        ${M.lista.map(m=>`<tr style="border-bottom:1px solid var(--sand)">
+          <td style="padding:4px;font-weight:600">${escH(mesLabel(m))}</td>
+          ${M.cats.map(c=>{const v=(M.matriz[m]||{})[c]||0;return `<td style="padding:4px;text-align:right;${v?'':'color:var(--muted)'}">${v?fmtCLP(v):'—'}</td>`}).join('')}
+          <td style="padding:4px;text-align:right;font-weight:600">${fmtCLP(M.totalMes[m]||0)}</td>
+        </tr>`).join('')}
+        </tbody>
+        <tfoot><tr style="border-top:2px solid var(--sand);font-weight:700">
+          <td style="padding:4px">Total</td>
+          ${M.cats.map(c=>`<td style="padding:4px;text-align:right">${fmtCLP(M.totalCat[c]||0)}</td>`).join('')}
+          <td style="padding:4px;text-align:right">${fmtCLP(M.total||0)}</td>
+        </tr></tfoot>
+      </table></div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.5">Solo se incluyen productos con precio unitario en bodega. Los que no lo tienen aparecen en la vista por temporada con costo "—".</div>`;
+    }
+  }
+
   box.innerHTML=`
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
       <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Desde</label>
@@ -2080,11 +2286,20 @@ function renderResumenForm(){
       ${predSel}
       <button class="btn btn-sm" onclick="calcResumen()" style="background:var(--dark);color:#fff">📊 Calcular</button>
     </div>
-    <div style="display:flex;gap:6px;margin-bottom:4px">
-      <button class="btn btn-sm" onclick="resumenAtajo('mes')" style="background:var(--sand);color:var(--dark);font-size:11px;padding:4px 8px">Este mes</button>
-      <button class="btn btn-sm" onclick="resumenAtajo('mespasado')" style="background:var(--sand);color:var(--dark);font-size:11px;padding:4px 8px">Mes pasado</button>
-      <button class="btn btn-sm" onclick="resumenAtajo('todo')" style="background:var(--sand);color:var(--dark);font-size:11px;padding:4px 8px">Todo</button>
+    <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+      <button class="btn btn-sm" onclick="resumenAtajo('mes')" style="${off};font-size:11px;padding:4px 8px">Este mes</button>
+      <button class="btn btn-sm" onclick="resumenAtajo('mespasado')" style="${off};font-size:11px;padding:4px 8px">Mes pasado</button>
+      <button class="btn btn-sm" onclick="resumenAtajo('temporada')" style="${off};font-size:11px;padding:4px 8px">Últimos 12 meses</button>
+      <button class="btn btn-sm" onclick="resumenAtajo('todo')" style="${off};font-size:11px;padding:4px 8px">Todo</button>
     </div>
+    <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap">
+      <button class="btn btn-sm" onclick="gastoSetVista('temporada')" style="flex:1;min-width:130px;${vista==='temporada'?'':off}">🌱 Por temporada</button>
+      <button class="btn btn-sm" onclick="gastoSetVista('mensual')" style="flex:1;min-width:130px;${vista==='mensual'?'':off}">📅 Mensual por tipo</button>
+    </div>
+    ${aplResumen.calc?`<div style="display:flex;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+      <button class="btn btn-sm btn-secondary" onclick="exportGastoExcel()" style="font-size:11px;padding:5px 9px">📥 Excel</button>
+      <button class="btn btn-sm btn-secondary" onclick="exportGastoPDF()" style="font-size:11px;padding:5px 9px">📄 PDF</button>
+    </div>`:''}
     ${cuerpo}
   `;
 }
@@ -2093,17 +2308,140 @@ function resumenAtajo(cual){
   const d=new Date();
   if(cual==='mes'){ aplResumen.desde=primerDiaMes(); aplResumen.hasta=todayIso; }
   else if(cual==='mespasado'){
-    const y=d.getFullYear(), m=d.getMonth();  // 0-based
+    const y=d.getFullYear(), m=d.getMonth();
     const pm=new Date(y, m-1, 1);
     const pmY=pm.getFullYear(), pmM=String(pm.getMonth()+1).padStart(2,'0');
-    const ult=new Date(y, m, 0).getDate();  // último día del mes pasado
+    const ult=new Date(y, m, 0).getDate();
     aplResumen.desde=`${pmY}-${pmM}-01`;
     aplResumen.hasta=`${pmY}-${pmM}-${String(ult).padStart(2,'0')}`;
+  }else if(cual==='temporada'){
+    const a=new Date(d); a.setMonth(a.getMonth()-12);
+    aplResumen.desde=a.toISOString().slice(0,10); aplResumen.hasta=todayIso;
   }else{ aplResumen.desde='2020-01-01'; aplResumen.hasta='2099-12-31'; }
   calcResumen();
 }
 
-// ══════════ C3: descuento de stock desde bodega central (La Constancia) ══════════
+// ── Encabezado común de los archivos exportados ──
+function gastoMeta(){
+  const mis=prediosPermitidos();
+  const pred = aplResumen.predio ? PREDIOS[aplResumen.predio].nombre
+             : (mis.length>1 ? 'Todos los predios' : (mis.length?PREDIOS[mis[0]].nombre:'—'));
+  return {
+    predio: pred,
+    periodo: `${fD(aplResumen.desde)} a ${fD(aplResumen.hasta)}`,
+    generado: `${fD(todayIso)} · ${(currentProfile&&currentProfile.nombre)||''}`,
+    archivo: `gasto_${(aplResumen.predio||'todos')}_${aplResumen.desde}_${aplResumen.hasta}`
+  };
+}
+
+function exportGastoExcel(){
+  if(!aplResumen||!aplResumen.calc){ toast('Primero pulsa Calcular'); return; }
+  const meta=gastoMeta();
+  const wb=XLSX.utils.book_new();
+
+  // Hoja 1: por temporada
+  const f1=[['GASTO EN APLICACIONES POR TEMPORADA'],
+            ['Predio',meta.predio],['Período',meta.periodo],['Generado',meta.generado],[]];
+  aplResumen.temporadas.forEach(g=>{
+    f1.push([g.label]);
+    f1.push(['Superficie involucrada (ha)', Number(g.superficie.toFixed(2))]);
+    f1.push(['Producto','Tipo','Cantidad','Unidad','Cantidad/ha','Costo','Costo/ha']);
+    g.filas.forEach(f=>f1.push([f.nombre, f.categoria, Number(f.cantidad.toFixed(3)), f.base,
+                                f.cantXha!=null?Number(f.cantXha.toFixed(4)):'',
+                                f.costo!=null?Math.round(f.costo):'',
+                                f.costoXha!=null?Math.round(f.costoXha):'']));
+    f1.push(['TOTAL '+g.label,'','','','',Math.round(g.costoTot), g.costoXha!=null?Math.round(g.costoXha):'']);
+    f1.push([]);
+  });
+  const totGen=aplResumen.temporadas.reduce((s,g)=>s+(g.costoTot||0),0);
+  f1.push(['COSTO TOTAL DEL PERÍODO','','','','',Math.round(totGen)]);
+  const ws1=XLSX.utils.aoa_to_sheet(f1);
+  ws1['!cols']=[{wch:34},{wch:16},{wch:12},{wch:8},{wch:12},{wch:14},{wch:14}];
+  XLSX.utils.book_append_sheet(wb, ws1, 'Por temporada');
+
+  // Hoja 2: mensual por tipo de producto
+  const M=aplResumen.meses;
+  const f2=[['GASTO MENSUAL POR TIPO DE PRODUCTO'],
+            ['Predio',meta.predio],['Período',meta.periodo],['Generado',meta.generado],[]];
+  if(M&&M.lista.length){
+    f2.push(['Mes',...M.cats,'Total']);
+    M.lista.forEach(m=>f2.push([mesLabel(m), ...M.cats.map(c=>Math.round((M.matriz[m]||{})[c]||0)), Math.round(M.totalMes[m]||0)]));
+    f2.push(['TOTAL', ...M.cats.map(c=>Math.round(M.totalCat[c]||0)), Math.round(M.total||0)]);
+  }else{
+    f2.push(['Sin gasto con precio conocido en el período.']);
+  }
+  const ws2=XLSX.utils.aoa_to_sheet(f2);
+  ws2['!cols']=[{wch:16}].concat((M&&M.cats?M.cats:[]).map(()=>({wch:15}))).concat([{wch:15}]);
+  XLSX.utils.book_append_sheet(wb, ws2, 'Mensual por tipo');
+
+  XLSX.writeFile(wb, meta.archivo+'.xlsx');
+  toast('✅ Excel descargado');
+}
+
+function exportGastoPDF(){
+  if(!aplResumen||!aplResumen.calc){ toast('Primero pulsa Calcular'); return; }
+  const meta=gastoMeta();
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({orientation:'landscape', unit:'pt', format:'a4'});
+  const W=doc.internal.pageSize.getWidth();
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Gasto en aplicaciones', 40, 42);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+  doc.text(`Agrícola Origen · ${meta.predio}`, 40, 58);
+  doc.text(`Período: ${meta.periodo}`, 40, 71);
+  doc.text(`Generado: ${meta.generado}`, W-40, 58, {align:'right'});
+
+  let y=88;
+  aplResumen.temporadas.forEach(g=>{
+    doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text(`${g.label}  ·  ${fmtNum(g.superficie,2)} ha  ·  ${fmtCLP(g.costoTot)}${g.costoXha!=null?`  ·  ${fmtCLP(g.costoXha)}/ha`:''}`, 40, y);
+    doc.autoTable({
+      startY:y+6, margin:{left:40,right:40},
+      head:[['Producto','Tipo','Cantidad','Cant./ha','Costo','Costo/ha']],
+      body:g.filas.map(f=>[f.nombre, f.categoria,
+        `${fmtNum(f.cantidad,2)} ${f.base||''}`,
+        f.cantXha!=null?`${fmtNum(f.cantXha,3)} ${f.base||''}`:'—',
+        f.costo!=null?fmtCLP(f.costo):'—',
+        f.costoXha!=null?fmtCLP(f.costoXha):'—']),
+      foot:[['TOTAL '+g.label,'','','',fmtCLP(g.costoTot), g.costoXha!=null?fmtCLP(g.costoXha):'—']],
+      styles:{fontSize:8, cellPadding:3},
+      headStyles:{fillColor:[26,46,31], textColor:255},
+      footStyles:{fillColor:[240,238,232], textColor:20, fontStyle:'bold'},
+      columnStyles:{2:{halign:'right'},3:{halign:'right'},4:{halign:'right'},5:{halign:'right'}}
+    });
+    y=doc.lastAutoTable.finalY+22;
+    if(y>doc.internal.pageSize.getHeight()-90){ doc.addPage(); y=50; }
+  });
+
+  const totGen=aplResumen.temporadas.reduce((s,g)=>s+(g.costoTot||0),0);
+  doc.setFont('helvetica','bold'); doc.setFontSize(11);
+  doc.text(`Costo total del período: ${fmtCLP(totGen)}`, W-40, y, {align:'right'});
+
+  const M=aplResumen.meses;
+  if(M&&M.lista.length){
+    doc.addPage();
+    doc.setFont('helvetica','bold'); doc.setFontSize(13);
+    doc.text('Gasto mensual por tipo de producto', 40, 42);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+    doc.text(`${meta.predio} · ${meta.periodo}`, 40, 58);
+    doc.autoTable({
+      startY:72, margin:{left:40,right:40},
+      head:[['Mes',...M.cats,'Total']],
+      body:M.lista.map(m=>[mesLabel(m), ...M.cats.map(c=>{const v=(M.matriz[m]||{})[c]||0;return v?fmtCLP(v):'—'}), fmtCLP(M.totalMes[m]||0)]),
+      foot:[['TOTAL', ...M.cats.map(c=>fmtCLP(M.totalCat[c]||0)), fmtCLP(M.total||0)]],
+      styles:{fontSize:8, cellPadding:3, halign:'right'},
+      headStyles:{fillColor:[26,46,31], textColor:255, halign:'right'},
+      footStyles:{fillColor:[240,238,232], textColor:20, fontStyle:'bold'},
+      columnStyles:{0:{halign:'left'}}
+    });
+  }
+
+  doc.save(meta.archivo+'.pdf');
+  toast('✅ PDF descargado');
+}
+
+// ══════════ C3: descuento de stock desde la bodega del predio ══════════
 const BODEGA_NOMBRES = {constancia:'Bodega Central (La Constancia)', transito:'Sub bodega El Tránsito', paradero:'Sub bodega Paradero 12'};
 // Consumo foliar en base de stock (L/kg): aStock(dosis,unidad).val × litros/100
 function descuentosFoliar(recetaData, totalLitros){
@@ -2176,6 +2514,7 @@ async function guardarFoliar(){
     const faltan = faltantesStock(desc, bodDesc);
     await db.collection('aplicaciones').add({
       tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'', bodegaDescuento:bodDesc,
+      ...datosTemporada(aplFol.predioId, aplFol.epoca, aplFol.cultivo),
       receta:recetaData, destinos:destData,
       descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
@@ -2428,6 +2767,7 @@ async function guardarRiego(){
     const faltan=faltantesStock(desc, bodDesc);
     await db.collection('aplicaciones').add({
       tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:aplRie.cultivo, epoca:aplRie.epoca||'', bodegaDescuento:bodDesc,
+      ...datosTemporada(aplRie.predioId, aplRie.epoca, aplRie.cultivo),
       capacidad:cap, sales:salesData, sectores:sectoresData, totalLitros:r.totalLitros,
       descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
@@ -2457,7 +2797,6 @@ async function guardarRiego(){
 //     vencimiento, createdAt, updatedAt }
 // Stock separado por predio. Precio unitario y total se calculan solos.
 // ══════════════════════════════════════════════
-const CATEGORIAS_BODEGA = ['Bioestimulante','Fertilizante','Fitosanitario','Materiales'];
 let planProds = [];      // filas en memoria
 let planFiltroTxt = '';
 
