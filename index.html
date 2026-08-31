@@ -5795,16 +5795,25 @@ async function renderEvaluacionesRiego(){
   const pred=activePred;
   if(!pred)return;
 
-  // Cargar ciclos del predio
-  const ciclosSnap=await db.collection('ciclos').doc(pred).collection('subjefes').doc('__ciclos__').get().catch(()=>null);
-  const ciclos=ciclosSnap?.data()?.items||[];
+  // Cargar ciclos del predio (de todos los subjefes)
+  const subjefes=pD()?.subjefes||[];
+  const allCiclos=[];
+
+  for(const sub of subjefes){
+    const ciclosSnap=await db.collection('ciclos').doc(pred).collection('subjefes').doc(sub).collection('cycles').get().catch(()=>null);
+    if(ciclosSnap){
+      ciclosSnap.docs.forEach(doc=>{
+        allCiclos.push({id:doc.id, subjefe:sub, ...doc.data()});
+      });
+    }
+  }
 
   const selCiclo=document.getElementById('evalSelCiclo');
   selCiclo.innerHTML='<option value="">— Seleccionar ciclo —</option>';
-  ciclos.forEach(c=>{
+  allCiclos.forEach(c=>{
     const opt=document.createElement('option');
-    opt.value=c.id||c.cicloId;
-    opt.textContent=c.cultivo+' '+c.id;
+    opt.value=c.id;
+    opt.textContent=(c.cultivo||'Ciclo')+' ('+c.subjefe+')';
     selCiclo.appendChild(opt);
   });
 
