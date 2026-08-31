@@ -391,6 +391,10 @@ select:focus,input:focus{border-color:var(--green)}
 .inf-hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;flex-wrap:wrap}
 .inf-dl{padding:5px 9px;border:1.5px solid var(--sand);background:var(--cream);border-radius:7px;font-size:10px;cursor:pointer;font-family:'Syne',sans-serif;font-weight:600;color:var(--dark);white-space:nowrap}
 .inf-dl:hover{border-color:var(--green)}
+/* Estilos para Evaluación de Riego (v30) */
+.modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}
+.modal-content{background:var(--cream);border-radius:16px;padding:24px;width:100%;max-width:600px;box-shadow:0 10px 40px rgba(0,0,0,.2)}
+body.vista-escritorio .modal-content{max-width:700px}
 </style>
 </head>
 <body>
@@ -450,6 +454,7 @@ select:focus,input:focus{border-color:var(--green)}
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
       <button class="nb" id="btnAplic" style="display:none" onclick="showScr('aplic',this)">Aplicaciones</button>
       <button class="nb" id="btnGastos" style="display:none" onclick="showScr('gastos',this)">Gastos</button>
+      <button class="nb" id="btnEvaluacion" style="display:none" onclick="showScr('evaluacion',this)">Evaluación</button>
       <button class="nb" id="btnBodega" style="display:none" onclick="showScr('planilla',this)">Bodega</button>
       <button class="nb" id="btnConfig" onclick="showScr('config',this)">Config</button>
     </div>
@@ -680,6 +685,16 @@ select:focus,input:focus{border-color:var(--green)}
     </div>
   </div>
 
+  <!-- EVALUACIÓN DE ENCARGADOS DE RIEGO -->
+  <div id="screen-evaluacion" class="screen">
+    <div class="card">
+      <div class="card-title">✅ Evaluación de Encargados de Riego</div>
+      <div class="form-row"><label>Ciclo</label><select id="evalSelCiclo" onchange="actualizarEncargadosEval()"><option value="">— Seleccionar ciclo —</option></select></div>
+      <div class="form-row"><label>Encargado de Riego</label><select id="evalSelEncargado"><option value="">— Seleccionar encargado —</option></select></div>
+      <button class="btn btn-primary" onclick="mostrarModalEvaluacion()">+ Nueva evaluación</button>
+    </div>
+    <div id="evalHistorial"></div>
+  </div>
 
   <div id="screen-config" class="screen">
     <div class="sp" style="height:10px"></div>
@@ -1027,12 +1042,17 @@ function canViewInformes(){
   return false;
 }
 
+function canViewEvaluacion(){
+  return isJefe();
+}
+
 // Pantallas permitidas por rol (defensa por si se navega a mano)
 function canVerPantalla(name){
   if(['registro','prog','avance','ciclos'].includes(name))return isCampo();
   if(name==='informes')return canViewInformes();
   if(name==='aplic')return canAplicaciones();
   if(name==='gastos')return canVerGastos();
+  if(name==='evaluacion')return canViewEvaluacion();
   if(name==='planilla'||name==='bodega')return canBodega();
   return true; // config
 }
@@ -3312,6 +3332,7 @@ function applyRoleUI(){
   show('btnInformes', canViewInformes());
   show('btnAplic',    canAplicaciones());
   show('btnGastos',   canVerGastos());
+  show('btnEvaluacion', canViewEvaluacion());
   show('btnBodega',   canBodega());
   // Config: secciones restringidas
   document.getElementById('usersAdminSection').style.display=canManageUsers()?'block':'none';
@@ -5696,6 +5717,308 @@ function showScr(name,btn){
   if(name==='planilla') initPlanilla();
   if(name==='aplic')   initAplic();
   if(name==='gastos')  initGastos();
+  if(name==='evaluacion')renderEvaluacionesRiego();
+}
+
+// ══════════════════════════════════════════════
+// EVALUACIÓN DE ENCARGADOS DE RIEGO (v30)
+// ══════════════════════════════════════════════
+
+const ITEMS_EVALUACION_RIEGO = [
+  {
+    itemId: 1,
+    nombre: "Riegómetro instalado y funcional",
+    descripcion: "Medir volumen de agua en cada sector de riego para verificar que los emisores entregan correctamente.",
+    momentoAplicacion: "14_dias_post_trasplante",
+    frecuencia: "una_vez",
+    quienChequea: "jefe",
+    instrucciones: "Medir con riegómetro el volumen que llega a cada sector durante 1 minuto. Verificar contra especificación de diseño."
+  },
+  {
+    itemId: 2,
+    nombre: "Tensiómetros instalados y medidos",
+    descripcion: "Colocar a 20 y 40 cm de profundidad. Medir lunes a viernes. Sub Jefe mide CE y pH semanalmente.",
+    momentoAplicacion: "al_abrir_cintas",
+    frecuencia: "semanal",
+    quienChequea: "jefe",
+    instrucciones: "Instalar tensiómetros 30-40 cm entre ellos. Registrar lecturas de presión. Sub Jefe reporta CE y pH."
+  },
+  {
+    itemId: 3,
+    nombre: "Lisímetros de succión instalados",
+    descripcion: "Al menos uno por cada sector de riego, a 30 cm de profundidad. Tomar muestra cada 7 días.",
+    momentoAplicacion: "14_dias_post_trasplante",
+    frecuencia: "una_vez",
+    quienChequea: "jefe",
+    instrucciones: "Cavar e instalar lisímetro a 30 cm. Etiquetar sector. Comprobar que se tomen muestras semanales."
+  },
+  {
+    itemId: 4,
+    nombre: "Revisión de humedad con pala (2x semana)",
+    descripcion: "Revisar humedad en sectores de riego dos veces por semana. Registrar días (ej: lunes y jueves).",
+    momentoAplicacion: "durante_ciclo",
+    frecuencia: "semanal",
+    quienChequea: "jefe",
+    instrucciones: "Excavar 20-30 cm en varios puntos del sector. Verificar que el suelo tenga humedad adecuada. Marcar días de revisión."
+  },
+  {
+    itemId: 5,
+    nombre: "Presión en cintas de riego medida",
+    descripcion: "Medir antes de la plantación para poder dar riegos de pre-plantación. Verificar funcionamiento de reguladores.",
+    momentoAplicacion: "pre_plantacion",
+    frecuencia: "una_vez",
+    quienChequea: "jefe",
+    instrucciones: "Instalar manómetro en línea principal y laterales. Registrar presión en cada sector. Debe estar en rango 0.5-1.5 bar."
+  },
+  {
+    itemId: 6,
+    nombre: "Lavado de cintas y tuberías (cada 30 días)",
+    descripcion: "Lavar con ácido peracético 15% en dosis de 15 L/ha. Debe hacerse cada 30 días durante el cultivo.",
+    momentoAplicacion: "durante_ciclo",
+    frecuencia: "mensual",
+    quienChequea: "jefe",
+    instrucciones: "Primera semana del mes: cerrar sectores, hacer circular ácido peracético 15%, enjuagar. Registrar fecha y producto usado."
+  },
+  {
+    itemId: 7,
+    nombre: "Reparaciones de matrices y tuberías registradas",
+    descripcion: "Registrar cualquier reparación de matrices, sub-matrices o laterales durante el ciclo. Indicar módulo, sector y días de parada.",
+    momentoAplicacion: "durante_ciclo",
+    frecuencia: "evento",
+    quienChequea: "jefe",
+    instrucciones: "Cada vez que se repare: anotar módulo, sector, tipo de daño, días que tomó. Revisar registro cada 2 semanas."
+  }
+];
+
+async function renderEvaluacionesRiego(){
+  const db=firebase.firestore();
+  const pred=activePred;
+  if(!pred)return;
+
+  // Cargar ciclos del predio
+  const ciclosSnap=await db.collection('ciclos').doc(pred).collection('subjefes').doc('__ciclos__').get().catch(()=>null);
+  const ciclos=ciclosSnap?.data()?.items||[];
+
+  const selCiclo=document.getElementById('evalSelCiclo');
+  selCiclo.innerHTML='<option value="">— Seleccionar ciclo —</option>';
+  ciclos.forEach(c=>{
+    const opt=document.createElement('option');
+    opt.value=c.id||c.cicloId;
+    opt.textContent=c.cultivo+' '+c.id;
+    selCiclo.appendChild(opt);
+  });
+
+  // Cargar encargados de riego del predio
+  actualizarEncargadosEval();
+
+  // Cargar historial de evaluaciones
+  await cargarHistorialEval();
+}
+
+async function actualizarEncargadosEval(){
+  const db=firebase.firestore();
+  const pred=activePred;
+
+  const workersSnap=await db.collection('workers').doc(pred).collection('list').get();
+  const workers=[];
+  workersSnap.forEach(doc=>{
+    workers.push({id:doc.id, nombre:doc.data().nombre});
+  });
+
+  const selEncargado=document.getElementById('evalSelEncargado');
+  selEncargado.innerHTML='<option value="">— Seleccionar encargado —</option>';
+  workers.forEach(w=>{
+    const opt=document.createElement('option');
+    opt.value=w.id;
+    opt.textContent=w.nombre;
+    selEncargado.appendChild(opt);
+  });
+}
+
+async function cargarHistorialEval(){
+  const db=firebase.firestore();
+  const pred=activePred;
+
+  const snap=await db.collection('evaluacionesRiego').doc(pred).collection('registros').orderBy('createdAt','desc').get();
+  const evaluaciones=[];
+  snap.forEach(doc=>evaluaciones.push({id:doc.id, ...doc.data()}));
+
+  const historial=document.getElementById('evalHistorial');
+  if(evaluaciones.length===0){
+    historial.innerHTML='<div class="card"><p style="text-align:center;color:var(--muted);font-size:13px">Sin evaluaciones registradas</p></div>';
+    return;
+  }
+
+  historial.innerHTML='<div class="card"><div class="card-title">📋 Historial de Evaluaciones</div><div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr style="border-bottom:1.5px solid var(--sand)"><th style="padding:8px;text-align:left">Fecha</th><th style="padding:8px;text-align:left">Encargado</th><th style="padding:8px;text-align:left">Ciclo</th><th style="padding:8px;text-align:center">Completación</th><th style="padding:8px">Estado</th></tr></thead><tbody>'+
+  evaluaciones.map(e=>`<tr style="border-bottom:1px solid var(--sand)">
+    <td style="padding:8px">${e.fecha}</td>
+    <td style="padding:8px">${e.encargadoNombre}</td>
+    <td style="padding:8px">${e.cultivo}</td>
+    <td style="padding:8px;text-align:center"><strong>${e.itemsCompletados}/${e.totalItems}</strong></td>
+    <td style="padding:8px"><button class="btn btn-sm" onclick="verEvaluacion('${e.id}')" style="font-size:11px;padding:4px 8px">Ver</button></td>
+  </tr>`).join('')+
+  '</tbody></table></div></div>';
+}
+
+function mostrarModalEvaluacion(){
+  const cicloId=document.getElementById('evalSelCiclo').value;
+  const encargadoId=document.getElementById('evalSelEncargado').value;
+
+  if(!cicloId||!encargadoId){
+    toast('Selecciona ciclo y encargado');
+    return;
+  }
+
+  // Crear modal con los 7 items
+  const modal=document.createElement('div');
+  modal.className='modal-overlay';
+  modal.id='evalModal';
+  modal.innerHTML=`
+    <div class="modal-content" style="max-height:85vh;overflow-y:auto;max-width:600px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="font-size:16px;font-weight:700;margin:0">Nueva Evaluación de Riego</h2>
+        <button onclick="cerrarEvalModal()" style="background:none;border:none;font-size:20px;cursor:pointer;padding:0">✕</button>
+      </div>
+
+      <div style="background:var(--lime);border-radius:8px;padding:12px;margin-bottom:16px;font-size:12px">
+        <div><strong>Encargado:</strong> <span id="evalEncNombre"></span></div>
+        <div><strong>Fecha de evaluación:</strong> <input type="date" id="evalFecha" value="${new Date().toISOString().slice(0,10)}" style="width:100%;margin-top:4px;padding:6px;border:1px solid var(--sand);border-radius:4px"></div>
+      </div>
+
+      <div id="evalItemsContainer"></div>
+
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-primary" style="flex:1" onclick="guardarEvaluacion()">Completar y enviar alertas</button>
+        <button class="btn" style="flex:1" onclick="cerrarEvalModal()">Cancelar</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+  document.getElementById('evalEncNombre').textContent=document.getElementById('evalSelEncargado').options[document.getElementById('evalSelEncargado').selectedIndex].text;
+
+  // Cargar items
+  const container=document.getElementById('evalItemsContainer');
+  container.innerHTML=ITEMS_EVALUACION_RIEGO.map((item,idx)=>`
+    <div style="background:var(--cream);border:1.5px solid var(--sand);border-radius:8px;padding:12px;margin-bottom:12px">
+      <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px">
+        <input type="checkbox" id="evalItem${idx}" style="width:16px;height:16px;margin-top:2px;accent-color:var(--green);cursor:pointer">
+        <div style="flex:1">
+          <label for="evalItem${idx}" style="font-weight:600;font-size:13px;cursor:pointer;display:block;margin-bottom:4px">${item.nombre}</label>
+          <p style="font-size:11px;color:var(--muted);margin:4px 0;line-height:1.4">${item.descripcion}</p>
+          <p style="font-size:10px;color:#7A7A7A;margin:4px 0;background:rgba(0,0,0,.02);padding:8px;border-radius:4px;border-left:2px solid var(--green)"><strong>Instrucciones:</strong> ${item.instrucciones}</p>
+        </div>
+      </div>
+      <div style="margin:8px 24px 0 0">
+        <textarea id="evalObs${idx}" placeholder="Observación (opcional)" style="width:100%;padding:6px;border:1px solid var(--sand);border-radius:4px;font-size:11px;font-family:inherit;resize:vertical;min-height:50px"></textarea>
+      </div>
+    </div>
+  `).join('');
+}
+
+function cerrarEvalModal(){
+  const m=document.getElementById('evalModal');
+  if(m)m.remove();
+}
+
+async function guardarEvaluacion(){
+  const db=firebase.firestore();
+  const pred=activePred;
+  const cicloId=document.getElementById('evalSelCiclo').value;
+  const encargadoId=document.getElementById('evalSelEncargado').value;
+  const fecha=document.getElementById('evalFecha').value;
+
+  // Recolectar estado de items
+  const items=[];
+  let completados=0;
+  ITEMS_EVALUACION_RIEGO.forEach((item,idx)=>{
+    const cumple=document.getElementById('evalItem'+idx).checked;
+    const obs=document.getElementById('evalObs'+idx).value;
+    items.push({
+      itemId: item.itemId,
+      nombre: item.nombre,
+      cumple: cumple,
+      observacion: obs,
+      fecha: fecha
+    });
+    if(cumple)completados++;
+  });
+
+  const totalItems=ITEMS_EVALUACION_RIEGO.length;
+  const porcentaje=Math.round((completados/totalItems)*100);
+  const requiereAlerta=porcentaje<80;
+
+  // Guardar en Firestore
+  const evaluacion={
+    fecha: fecha,
+    cicloId: cicloId,
+    cultivo: document.getElementById('evalSelCiclo').options[document.getElementById('evalSelCiclo').selectedIndex].text,
+    encargadoId: encargadoId,
+    encargadoNombre: document.getElementById('evalSelEncargado').options[document.getElementById('evalSelEncargado').selectedIndex].text,
+    evaluadorId: currentProfile.uid,
+    evaluadorNombre: currentProfile.nombre,
+    predioId: pred,
+    estado: 'completada',
+    items: items,
+    totalItems: totalItems,
+    itemsCompletados: completados,
+    porcentajeCompletacion: porcentaje,
+    requiereAlerta: requiereAlerta,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    creadoPor: currentProfile.uid
+  };
+
+  await db.collection('evaluacionesRiego').doc(pred).collection('registros').add(evaluacion);
+
+  // Generar alertas si es necesario
+  if(requiereAlerta){
+    const incumplimientos=items.filter(i=>!i.cumple).map(i=>i.nombre).join(', ');
+    await crearAlertaEvaluacion(db, pred, cicloId, encargadoId, incumplimientos, porcentaje);
+  }
+
+  toast('✓ Evaluación guardada'+(requiereAlerta?' y alerta enviada':''));
+  cerrarEvalModal();
+  renderEvaluacionesRiego();
+}
+
+async function crearAlertaEvaluacion(db, pred, cicloId, encargadoId, incumplimientos, porcentaje){
+  // Calcular destinatarios: Gerencia y otros Jefes
+  const usersSnap=await db.collection('users').get();
+  const destinatarios=[];
+
+  usersSnap.forEach(doc=>{
+    const data=doc.data();
+    // Admin (Gerencia)
+    if(data.role==='admin'){
+      destinatarios.push(doc.id);
+    }
+    // Otros Jefes (coordinación)
+    if(data.role==='jefe'&&data.predioId!==pred){
+      destinatarios.push(doc.id);
+    }
+  });
+
+  const prioridad=porcentaje<60?'alta':'media';
+  const mensaje=`Evaluación de riego en ${PREDIOS.find(p=>p.id===pred)?.nombre||pred} encontró ${7-ITEMS_EVALUACION_RIEGO.filter(i=>items.some(it=>it.itemId===i.itemId&&it.cumple)).length} incumplimientos: ${incumplimientos}`;
+
+  // Guardar alerta
+  await db.collection('evaluacionesRiego').doc(pred).collection('registros').add({
+    tipo: 'evaluacion_incompleta',
+    prioridad: prioridad,
+    mensaje: mensaje,
+    predioOrigen: pred,
+    encargadoId: encargadoId,
+    cicloId: cicloId,
+    destinatarios: destinatarios,
+    leida: destinatarios.map(()=>false),
+    createdAt: new Date()
+  });
+}
+
+function verEvaluacion(evalId){
+  // Placeholder: mostrar detalles de la evaluación
+  toast('Función de ver detalles disponible en v31');
 }
 
 // ══════════════════════════════════════════════
