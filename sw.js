@@ -3,7 +3,7 @@
    Versión cacheada — sube el número cuando publiques
    cambios para forzar la actualización en los celulares.
 ═══════════════════════════════════════════════════ */
-const CACHE_VERSION = 'fieldlog-v30';
+const CACHE_VERSION = 'fieldlog-v31';
 
 // Archivos del "shell" de la app que siempre cacheamos
 const APP_SHELL = [
