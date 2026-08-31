@@ -5824,7 +5824,7 @@ async function renderEvaluacionesRiego(){
   await cargarHistorialEval();
 }
 
-async function actualizarEncargadosEval(){
+async function actualizarEncargadosEval() {   const predioId = document.getElementById('evalRiegoPredioDrop').value;   if (!predioId) {     document.getElementById('evalRiegoEncargadoDrop').innerHTML = '<option value="">Selecciona encargado</option>';     return;   }    try {     const snapshot = await db.collection('workers').doc(predioId).collection('list')       .where('role', '==', 'riego')       .get();          let html = '<option value="">Selecciona encargado</option>';     snapshot.docs.forEach(doc => {       const data = doc.data();       html += `<option value="${doc.id}">${data.name || doc.id}</option>`;     });     document.getElementById('evalRiegoEncargadoDrop').innerHTML = html;   } catch (error) {     console.error('Error cargando encargados:', error);     document.getElementById('evalRiegoEncargadoDrop').innerHTML = '<option value="">Error cargando datos</option>';   } }{
   const db=firebase.firestore();
   const pred=activePred;
 
