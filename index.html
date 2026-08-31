@@ -1043,7 +1043,7 @@ function canViewInformes(){
 }
 
 function canViewEvaluacion(){
-  return isJefe();
+  return isAdmin() || isJefe();
 }
 
 // Pantallas permitidas por rol (defensa por si se navega a mano)
