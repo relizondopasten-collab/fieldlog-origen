@@ -4372,8 +4372,9 @@ function openModalNuevaProg(subjefe,mondayIso){
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">📋 Programación — ${subjefe}</div>
     <div class="modal-sub">Semana del ${fDMY(mondayIso)}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">✅ Los cambios se guardan automáticamente</div>
     <div id="progModalDias"></div>
-    <button class="btn btn-primary" onclick="saveProgModal()">Guardar programación</button>`;
+    <button class="btn btn-primary" onclick="saveProgModal()">Cerrar</button>`;
   renderProgModalDias(progDays,dayNames);
   // Cargar programación existente si la hay
   colProg(activePred,subjefe).doc(mondayIso).get().then(snap=>{
@@ -4463,6 +4464,19 @@ function progTaskFormHTML(dayIso,ti,t={},ciclosDisp=[]){
   </div>`;
 }
 
+// ✅ Auto-Persistencia: Guarda la programación a Firestore sin bloquear la UI
+async function saveProgToFirestore(){
+  if(!window._progEdit) return;
+  const {predioId,subjefe,mondayIso,dias}=window._progEdit;
+  try{
+    await colProg(predioId,subjefe).doc(mondayIso).set({semana:mondayIso,dias,ts:Date.now(),creadoPor:currentUser.uid});
+    console.log('✅ Programación auto-guardada a Firestore');
+  }catch(e){
+    console.error('Error auto-guardando programación:',e);
+    // No mostrar toast aquí para no interrumpir al usuario, solo log
+  }
+}
+
 // Cambia el ciclo de UNA tarea específica y limpia los módulos que ya no apliquen.
 function setTaskCycle(dayIso,ti,cicloId){
   const dia = window._progEdit.dias[dayIso];
@@ -4475,6 +4489,7 @@ function setTaskCycle(dayIso,ti,cicloId){
   const progDays=getProgDays(window._progEdit.mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
   renderProgModalDias(progDays,dayNames);
+  saveProgToFirestore(); // ✅ Auto-guardar
 }
 
 function addProgTask(dayIso){
@@ -4487,6 +4502,7 @@ function addProgTask(dayIso){
   const progDays=getProgDays(window._progEdit.mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
   renderProgModalDias(progDays,dayNames);
+  saveProgToFirestore(); // ✅ Auto-guardar
 }
 function rmProgTask(dayIso,ti){
   const dia = window._progEdit.dias[dayIso];
@@ -4495,11 +4511,13 @@ function rmProgTask(dayIso,ti){
   const progDays=getProgDays(window._progEdit.mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
   renderProgModalDias(progDays,dayNames);
+  saveProgToFirestore(); // ✅ Auto-guardar
 }
 function updPT(dayIso,ti,field,value){
   const dia = window._progEdit.dias[dayIso];
   if(!dia || !dia.labores[ti]) return;
   dia.labores[ti][field]=value;
+  saveProgToFirestore(); // ✅ Auto-guardar
 }
 function togglePTMod(dayIso,ti,modulo,checked){
   const dia = window._progEdit.dias[dayIso];
@@ -4509,16 +4527,15 @@ function togglePTMod(dayIso,ti,modulo,checked){
   const idx = arr.indexOf(modulo);
   if(checked && idx===-1) arr.push(modulo);
   if(!checked && idx>=0) arr.splice(idx,1);
+  saveProgToFirestore(); // ✅ Auto-guardar
 }
 
-async function saveProgModal(){
-  const {predioId,subjefe,mondayIso,dias}=window._progEdit;
-  loading(true,'Guardando programación…');
-  try{
-    await colProg(predioId,subjefe).doc(mondayIso).set({semana:mondayIso,dias,ts:Date.now(),creadoPor:currentUser.uid});
-    closeModal();renderProg();toast('✅ Programación guardada');
-  }catch(e){toast('Error: '+e.message)}
-  loading(false);
+function saveProgModal(){
+  // ✅ Los datos ya están auto-guardados en Firestore
+  // Solo cierra el modal y recarga la vista
+  closeModal();
+  renderProg();
+  toast('✅ Programación guardada');
 }
 
 // ══════════════════════════════════════════════
