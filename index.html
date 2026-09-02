@@ -457,6 +457,7 @@ body.vista-escritorio .modal-content{max-width:700px}
       <button class="nb" id="btnEvaluacion" style="display:none" onclick="showScr('evaluacion',this)">Evaluación</button>
       <button class="nb" id="btnBodega" style="display:none" onclick="showScr('planilla',this)">Bodega</button>
       <button class="nb" id="btnConfig" onclick="showScr('config',this)">Config</button>
+      <button class="nb" id="btnManual" onclick="showScr('manual',this)">Manual<span id="manualDot" style="display:none;width:6px;height:6px;border-radius:50%;background:#D62828;margin-left:3px;vertical-align:top"></span></button>
     </div>
   </div>
 
@@ -533,7 +534,7 @@ body.vista-escritorio .modal-content{max-width:700px}
     <div class="sp" style="height:10px"></div>
     <div class="card">
       <div class="card-title">📊 Informes</div>
-      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">Selecciona el periodo y filtros, luego genera los informes. Verás los datos en pantalla con gráficos. La descarga a Excel/PDF se habilitará en la próxima fase.</p>
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">Selecciona el periodo y filtros, luego genera los informes. Verás los datos en pantalla con gráficos y podrás descargarlos a Excel.</p>
 
       <div class="form-grid">
         <div><label>Desde</label><input type="date" id="infDesde"></div>
@@ -694,6 +695,20 @@ body.vista-escritorio .modal-content{max-width:700px}
       <button class="btn btn-primary" onclick="mostrarModalEvaluacion()">+ Nueva evaluación</button>
     </div>
     <div id="evalHistorial"></div>
+  </div>
+
+  <!-- MANUAL -->
+  <div id="screen-manual" class="screen">
+    <div class="sp" style="height:10px"></div>
+    <div class="emp-hdr">
+      <div class="emp-name">📖 Manual de uso</div>
+      <div class="emp-sub">Cómo se usa FieldLog, paso a paso. Solo aparecen las secciones que tu rol utiliza.</div>
+    </div>
+    <div class="card" style="padding:12px 14px">
+      <input type="text" id="manualBuscar" placeholder="🔍 Buscar en el manual… (ej: ciclo, receta, stock)" oninput="manualBuscarInput()" style="width:100%;padding:10px 12px;border:1.5px solid var(--sand);border-radius:11px;font-family:inherit;font-size:13px">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:7px" id="manualVerLbl"></div>
+    </div>
+    <div id="manualBody"></div>
   </div>
 
   <div id="screen-config" class="screen">
@@ -1054,6 +1069,7 @@ function canVerPantalla(name){
   if(name==='gastos')return canVerGastos();
   if(name==='evaluacion')return canViewEvaluacion();
   if(name==='planilla'||name==='bodega')return canBodega();
+  if(name==='manual')return true; // el manual lo ve todo el mundo
   return true; // config
 }
 
@@ -3344,6 +3360,9 @@ function applyRoleUI(){
   // La tarjeta de trabajadores no aporta nada a bodeguero/riego
   const wc=document.getElementById('wListCard');
   if(wc)wc.style.display=isCampo()?'':'none';
+  // Manual: visible siempre, con aviso si hay una versión nueva sin leer
+  show('btnManual', true);
+  if(typeof manualCheckNuevo==='function')manualCheckNuevo();
 }
 
 // ══════════════════════════════════════════════
@@ -5717,6 +5736,313 @@ aplicarVista();
 // ══════════════════════════════════════════════
 // SCREEN SWITCHER
 // ══════════════════════════════════════════════
+
+// ══════════════════════════════════════════════
+// MANUAL DE USO (v33)
+// ══════════════════════════════════════════════
+// CÓMO SE MANTIENE ESTE MANUAL — leer antes de tocar cualquier pantalla:
+//   1. Si cambias una pantalla, edita la sección correspondiente de
+//      MANUAL_SECCIONES en el mismo commit. El manual es parte del cambio,
+//      no un trámite posterior.
+//   2. Agrega una línea nueva arriba de MANUAL_CAMBIOS con la versión, la
+//      fecha y qué cambió, en palabras que entienda alguien de terreno.
+//   3. Sube MANUAL_VERSION y MANUAL_FECHA.
+//   4. Sube CACHE_VERSION en sw.js (regla de siempre).
+// Cada sección tiene ver:() — la misma función de permisos que usa la app —
+// para que cada usuario vea solo el manual de lo que puede hacer.
+
+const MANUAL_VERSION='v33';
+const MANUAL_FECHA='2026-09-02';
+
+const MANUAL_CAMBIOS=[
+  {v:'v33', f:'02-09-2026', txt:'Se agrega este manual dentro de la app. Cada usuario ve solo las secciones que le corresponden según su rol.'},
+  {v:'v31', f:'01-09-2026', txt:'La programación se guarda sola: ya no hay que apretar "Guardar programación". Los datos quedan en el servidor apenas los escribes.'},
+  {v:'v30', f:'31-08-2026', txt:'Nueva pantalla Evaluación de encargados de riego, con los 7 puntos de control del riego.'},
+  {v:'v29', f:'27-08-2026', txt:'Vista de escritorio (botón 🖥️) para trabajar cómodo desde el computador.'},
+  {v:'v28', f:'26-08-2026', txt:'Informe de gasto en aplicaciones: cuánto producto y cuánta plata se usó por época y por hectárea.'},
+  {v:'v27', f:'26-08-2026', txt:'Roles separados: bodeguero, encargado de riego, jefe de desinfecciones e informes de gasto.'},
+  {v:'v26', f:'24-08-2026', txt:'Bodega por predio: cada predio tiene su propio stock y La Constancia queda como bodega central.'}
+];
+
+const MANUAL_SECCIONES=[
+{
+  id:'inicio', ico:'🚀', tit:'Primeros pasos', ver:()=>true,
+  intro:'Lo mínimo para moverse en FieldLog. Sirve para cualquier rol.',
+  pasos:[
+    'Entra con tu <b>correo y contraseña</b>. Si dice que la cuenta no está habilitada, pídele a gerencia que la cree en Config › Usuarios.',
+    'Arriba verás las pestañas de <b>predio</b>: El Tránsito, La Constancia y Paradero 12. Solo se pueden tocar las que tengas asignadas. Toda la pantalla muestra los datos del predio que esté marcado.',
+    'Abajo del título está la <b>barra de botones</b> (Registrar, Prog., Avance…). Solo aparecen los botones de tu rol; si no ves uno, no es una falla, es que ese rol no lo usa.',
+    'El botón <b>🖥️</b> cambia entre vista de celular y vista de escritorio. En el computador, la de escritorio aprovecha mejor la pantalla.',
+    'El botón <b>⏻</b> cierra la sesión.'
+  ],
+  tips:[
+    'Instálala en el celular: en Chrome, menú ⋮ › "Agregar a pantalla de inicio". Queda como una app más, sin barra del navegador.',
+    'Necesita internet para guardar. Si estás en un invernadero sin señal, anota en papel y registra cuando vuelva la señal.',
+    'Cuando publicamos una versión nueva, cierra la app por completo y vuelve a abrirla para que se actualice.'
+  ]
+},
+{
+  id:'registro', ico:'✍️', tit:'Registrar labores del día', ver:()=>isCampo(),
+  intro:'Aquí se anota, todos los días, qué hizo cada trabajador. Es el dato que después alimenta Avance, Informes y los costos.',
+  pasos:[
+    'Elige arriba el <b>predio</b> y, en la tira de días, la <b>fecha</b> que estás registrando (por defecto es hoy).',
+    'Elige el <b>Subjefe / Encargado</b>. Si eres subjefe, ya viene fijo con tus trabajadores.',
+    'Elige el <b>Cultivo</b> y, cuando corresponda, el <b>Ciclo</b>. Si el ciclo no aparece en la lista, es porque no está abierto: ábrelo primero en la pantalla <b>Ciclos</b>.',
+    'Elige el <b>Trabajador</b>.',
+    'Si el trabajador <b>no vino</b>, marca Trabajador ausente, Licencia médica o Vacaciones. Si hubo alguien que lo reemplazó, elígelo en Reemplazante. Con ausencia, licencia o vacaciones no hace falta cargar labores.',
+    'En <b>Labores del día</b>, elige la labor y anota las <b>horas</b> y las <b>mesas</b>. Con "＋ Agregar labor" puedes cargar hasta 6 labores en una misma entrada.',
+    'Escribe una <b>Observación</b> si hay algo que explicar (una lluvia, una falla, un cambio de sector).',
+    'Aprieta <b>＋ Guardar Entrada</b>. Abajo aparece la lista de lo ya registrado ese día.'
+  ],
+  tips:[
+    'Si un valor se ve raro (más de 10 horas o más de 70 mesas en el día, sumando lo ya registrado), la app pregunta antes de guardar. No es un bloqueo: si el dato es correcto, acepta.',
+    'Se puede hacer más de una entrada por trabajador en el mismo día; se suman.',
+    'Si te equivocaste, borra la entrada en la lista de abajo y vuelve a cargarla. Es mejor eso que dejar el dato malo.'
+  ]
+},
+{
+  id:'prog', ico:'📅', tit:'Programación de la semana', ver:()=>isCampo(),
+  intro:'Lo que se planea hacer cada día de la semana, por subjefe. Después Informes compara esto con lo que realmente se hizo.',
+  pasos:[
+    'Con las flechas <b>‹ ›</b> te mueves de semana. Arriba se ve la semana y su rango de fechas.',
+    'Elige el <b>Subjefe</b>. Cada subjefe tiene su propia programación.',
+    'Abre el día que quieras programar y agrega las <b>tareas</b>: labor, módulos y meta.',
+    'Cierra la ventana cuando termines. <b>No hay que apretar Guardar</b>: desde la v31 cada cambio se guarda solo en el servidor.'
+  ],
+  tips:[
+    'Programa la semana antes que empiece; así la comparación "Programado vs Real" sirve de algo.',
+    'Si cambias algo a mitad de semana, quedará registrado el cambio. No borres la programación vieja para "cuadrarla" con lo hecho: la gracia del informe es ver la diferencia.'
+  ]
+},
+{
+  id:'avance', ico:'📊', tit:'Avance de la semana', ver:()=>isCampo(),
+  intro:'Pantalla de consulta, no se escribe nada. Muestra cómo va la semana en el predio activo.',
+  pasos:[
+    'Arriba, los <b>totales</b> de la semana.',
+    '<b>Avance semanal por trabajador</b>: cuánto lleva cada uno.',
+    '<b>Resumen semana</b>: cómo se reparte el trabajo día a día.',
+    '<b>Top labores del día</b>: en qué se fue el día de hoy.'
+  ],
+  tips:['Si un trabajador aparece en cero y sí trabajó, falta registrarlo en Registrar (o quedó cargado en otro predio o en otra fecha).']
+},
+{
+  id:'ciclos', ico:'🌱', tit:'Ciclos (épocas de cultivo)', ver:()=>isCampo(),
+  intro:'Un ciclo es una temporada de cultivo en unos módulos. Sin el ciclo abierto, el registro diario no deja elegirlo.',
+  pasos:[
+    'Aprieta abrir ciclo al empezar la temporada.',
+    'Indica el <b>cultivo</b>, los <b>módulos</b> y el <b>mes de plantación</b> cuando el cultivo lo pida.',
+    'Cuando la temporada termina, <b>cierra</b> el ciclo. Entre un ciclo y otro puede haber días sin cultivo, y está bien.'
+  ],
+  tips:[
+    'El error más común del registro diario ("no aparece el ciclo") se arregla acá.',
+    'No abras dos ciclos para los mismos módulos al mismo tiempo: los informes por ciclo quedan repartidos y no cuadran.'
+  ]
+},
+{
+  id:'informes', ico:'📈', tit:'Informes', ver:()=>canViewInformes(),
+  intro:'Los cinco informes de trabajo, con gráficos y descarga a Excel.',
+  pasos:[
+    'Elige <b>Desde</b> y <b>Hasta</b>, el <b>Predio</b> y el <b>Subjefe</b> (o "Todos").',
+    'Aprieta <b>🔄 Generar informes</b>.',
+    'Cambia entre las pestañas: <b>Prog vs Real</b>, <b>Por ciclo</b>, <b>Trabajadores</b>, <b>Labores</b> e <b>Inconsistencias</b>.',
+    'Con <b>📥 Descargar Excel completo</b> bajas las 5 hojas en un solo archivo.'
+  ],
+  tips:[
+    'Parte siempre por <b>Inconsistencias</b>: ahí salen los datos que no cuadran (días sin registro, horas fuera de rango, labores sin ciclo). Corregir eso primero hace que el resto de los informes sirva.',
+    'Los costos por hora salen de lo que esté cargado en Config › Costos del personal. Si el sueldo mínimo cambió y no se actualizó ahí, los pesos van a estar malos.'
+  ]
+},
+{
+  id:'aplic-foliar', ico:'🍃', tit:'Aplicaciones — Foliar', ver:()=>canAplicFoliar(),
+  intro:'Registro de las desinfecciones foliares. Lo que registres acá descuenta stock de la bodega.',
+  pasos:[
+    'En Aplicaciones, entra a la pestaña <b>🍃 Foliar</b>.',
+    'Pon la <b>Fecha</b>, el <b>Predio</b>, el <b>Cultivo</b> y la <b>Época</b>.',
+    'Escribe la <b>receta tal como la anotas en terreno</b>, con dosis por 100 L de agua. Ejemplo: <i>Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + ácido cítrico 30 g</i>.',
+    'La app trata de reconocer cada producto en la bodega. El que quede en amarillo con "no reconocí", elígelo a mano de la lista.',
+    'Marca los <b>módulos aplicados</b> y anota el <b>mojamiento en litros</b> de cada uno.',
+    'Aprieta <b>Registrar aplicación</b>. Abajo, en "Últimas aplicaciones", queda el respaldo.'
+  ],
+  tips:[
+    'El mojamiento es la base del cálculo: si va mal, el descuento de stock y el informe de gasto quedan mal.',
+    'Si no aparece un producto para elegir, primero hay que cargarlo en Bodega.',
+    'Registra el mismo día. Una aplicación anotada tres días después casi siempre pierde el detalle de los módulos.'
+  ]
+},
+{
+  id:'aplic-riego', ico:'💧', tit:'Aplicaciones — Fertilización y Vía riego', ver:()=>canAplicRiego(),
+  intro:'Fertirriego (sales al estanque) y aplicaciones vía riego (receta por hectárea). También descuentan stock.',
+  pasos:[
+    '<b>🧪 Fertilización:</b> fecha, predio, cultivo y época. Anota la <b>capacidad del estanque</b> en litros, las <b>sales cargadas</b> en kilos y, por cada sector, los <b>litros de estanque aplicados</b>. Aprieta "Registrar fertirriego".',
+    '<b>💧 Vía riego:</b> fecha, predio, cultivo y época. Escribe la <b>receta con dosis por hectárea</b> (ejemplo: <i>Ultraferro 2 kg + Zincfull 1 L + Serenade 2 L</i>), marca los <b>sectores aplicados</b> y aprieta "Registrar vía riego".',
+    'Igual que en foliar: el producto que la app no reconozca hay que elegirlo a mano antes de guardar.'
+  ],
+  tips:[
+    'Los litros por sector son los que reparten el consumo entre sectores. Si pones el total en un solo sector, el gasto por hectárea queda deformado.',
+    'Los sectores salen de la superficie cargada en el predio. Si falta un sector, avisa a gerencia para que lo agregue.'
+  ]
+},
+{
+  id:'gastos', ico:'💰', tit:'Informe de gasto en aplicaciones', ver:()=>canVerGastos(),
+  intro:'Cuánto producto y cuánta plata se usó en foliares, fertirriego y vía riego.',
+  pasos:[
+    'Elige el <b>predio</b> (o "Todos mis predios").',
+    'Elige el <b>período</b>: Este mes, Mes pasado, Últimos 12 meses, o Desde/Hasta a mano.',
+    'Aprieta <b>Calcular</b>.',
+    'La tabla muestra, por producto: <b>cantidad</b>, <b>cantidad por hectárea</b>, <b>costo</b> y <b>costo por hectárea</b>, más el total del período.'
+  ],
+  tips:[
+    'Los pesos salen del precio cargado en Bodega. Un producto sin precio suma cantidad pero no suma costo, y por eso el total puede quedar corto.',
+    'La cifra por hectárea depende de la superficie cargada de módulos y sectores. Si esa superficie está desactualizada, el costo por hectárea también.'
+  ]
+},
+{
+  id:'evaluacion', ico:'✅', tit:'Evaluación de encargados de riego', ver:()=>canViewEvaluacion(),
+  intro:'Checklist de los 7 puntos de control del riego, por ciclo y por encargado.',
+  pasos:[
+    'Elige el <b>Ciclo</b> y el <b>Encargado de riego</b>.',
+    'Aprieta <b>+ Nueva evaluación</b>.',
+    'Revisa en terreno y marca los ítems que están cumplidos. Cada uno trae la instrucción de cómo se chequea.',
+    'Escribe una <b>observación</b> en los que no estén cumplidos: sin eso, la evaluación no sirve para corregir.',
+    'Aprieta <b>Completar y enviar alertas</b>. La evaluación queda en el historial de abajo.'
+  ],
+  tips:[
+    'Los 7 puntos: riegómetro, tensiómetros, lisímetros, revisión de humedad con pala (2 veces por semana), presión en cintas, lavado de cintas cada 30 días y reparaciones registradas.',
+    'Hay ítems que son de una vez (al trasplante o antes de plantar) y otros que se repiten cada semana o cada mes. Evalúa según el momento del ciclo, no marques todo por costumbre.'
+  ]
+},
+{
+  id:'bodega', ico:'📦', tit:'Bodega — planilla y conciliación', ver:()=>canBodega(),
+  intro:'Stock por bodega, precios y comparación entre lo entregado y lo usado. Está pensada para trabajarla desde el computador.',
+  pasos:[
+    'Busca el producto con el <b>🔍 buscador</b> de arriba.',
+    'Edita las celdas directamente en la planilla.',
+    'Aprieta <b>💾 Guardar cambios</b>. <b>Ojo:</b> mientras no lo aprietes, nada queda guardado.',
+    'El <b>precio unitario</b> y el <b>total</b> se calculan solos; no los escribas a mano.',
+    'Abajo, en <b>Conciliación</b>, compara lo que cada bodega recibió (compras + despachos) con lo que se usó en aplicaciones. Ajusta el rango de fechas: la entrega y el uso no tienen por qué caer el mismo mes.'
+  ],
+  tips:[
+    'Una diferencia grande en conciliación casi siempre es una aplicación sin registrar, o registrada en el predio equivocado.',
+    'La bodega central es <b>La Constancia</b>: desde ahí se crean productos, se editan precios y se registran las compras.',
+    'Usa la vista de escritorio (botón 🖥️) para esta pantalla; en el celular la planilla queda apretada.'
+  ]
+},
+{
+  id:'config', ico:'⚙️', tit:'Config — trabajadores, costos y usuarios', ver:()=>true,
+  intro:'Los datos base del sistema. Cada uno ve solo las tarjetas que le corresponden.',
+  pasos:[
+    '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes.',
+    '<b>Costos del personal</b> (gerencia con todos los predios): sueldo mínimo mensual, bono o extra fijo y jornada semanal. De ahí sale el costo por hora de los informes; actualízalo cuando cambie el sueldo mínimo legal.',
+    '<b>Usuarios del sistema</b> (gerencia con todos los predios): se crea un acceso por persona, con su correo, una contraseña inicial que tú le entregas, el rol y los predios. Al elegir el rol, la app explica en una línea qué podrá hacer esa persona.'
+  ],
+  tips:['Pídele a cada persona que cambie la contraseña inicial. Las cuentas compartidas hacen imposible saber quién registró qué.']
+},
+{
+  id:'roles', ico:'🔐', tit:'Qué puede hacer cada rol', ver:()=>true,
+  intro:'Si no ves un botón, mira acá antes de reportarlo como falla.',
+  pasos:[
+    '<b>Admin / Gerencia:</b> con "Todos los predios" es superadmin: crea usuarios, edita costos y puede borrar registros. Acotado a un predio, manda solo en ese predio.',
+    '<b>Jefe de predio:</b> registra y corrige en sus predios y ve todos los informes. No entra a bodega ni a usuarios.',
+    '<b>Subjefe:</b> trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
+    '<b>Encargado de bodega:</b> solo la planilla de bodega de las bodegas que tenga a cargo: stock, despachos y conciliación. No registra aplicaciones. El de La Constancia, además, crea productos, edita precios y registra compras.',
+    '<b>Encargado de riego:</b> registra fertirriego y vía riego de sus predios. No ve foliares, ni la planilla, ni el informe de gasto.',
+    '<b>Jefe de desinfecciones:</b> registra solo aplicaciones foliares de sus predios.',
+    '<b>Informes de gasto:</b> solo el informe de gasto de los predios asignados, sin acceso a campo, aplicaciones ni bodega.'
+  ],
+  tips:['Los permisos también están puestos en el servidor, no solo en los botones. Si algo no corresponde a tu rol, no se guarda aunque se intente.']
+},
+{
+  id:'problemas', ico:'🛠️', tit:'Problemas frecuentes', ver:()=>true,
+  intro:'Lo que más se pregunta, con la solución corta.',
+  pasos:[
+    '<b>"No me aparece el ciclo al registrar."</b> El ciclo no está abierto. Ábrelo en Ciclos y vuelve a Registrar.',
+    '<b>"No veo un botón que antes veía."</b> Depende del rol y de los predios asignados. Revisa la sección "Qué puede hacer cada rol".',
+    '<b>"La app no se actualizó."</b> Ciérrala del todo (en el celular, sácala de las apps abiertas) y vuelve a abrirla. En el computador, Ctrl+Shift+R.',
+    '<b>"Se me perdió la programación."</b> Desde la v31 se guarda sola en el servidor. Si no aparece, revisa que estés en la misma semana, el mismo subjefe y el mismo predio.',
+    '<b>"Me avisa valores inusuales."</b> Es solo un aviso por posible error de tipeo (más de 10 horas o más de 70 mesas en el día). Si el dato es correcto, acepta.',
+    '<b>"Cuenta no habilitada."</b> El usuario no está creado en Config › Usuarios. Lo crea gerencia.',
+    '<b>"Estoy sin señal."</b> La app necesita internet para guardar. Anota en papel y registra al volver la señal.'
+  ],
+  tips:['Si el problema no está acá, anota qué pantalla era, qué apretaste y qué decía el mensaje. Con eso se arregla rápido; sin eso, no.']
+}
+];
+
+function manualNorm(s){return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')}
+
+function renderManual(){
+  const box=document.getElementById('manualBody'); if(!box)return;
+  const q=manualNorm((document.getElementById('manualBuscar')||{}).value||'');
+  const visibles=MANUAL_SECCIONES.filter(s=>{try{return s.ver()}catch(e){return false}});
+  const match=s=>{
+    if(!q)return true;
+    const txt=manualNorm([s.tit,s.intro,...(s.pasos||[]),...(s.tips||[])].join(' ').replace(/<[^>]+>/g,''));
+    return txt.includes(q);
+  };
+  const secs=visibles.filter(match);
+
+  let h='';
+  if(!secs.length){
+    h='<div class="card"><p style="font-size:12.5px;color:var(--muted)">No hay nada del manual que diga «'+escH(q)+'». Prueba con otra palabra.</p></div>';
+  }
+  secs.forEach(s=>{
+    const abierta = !!q || manualAbiertas.has(s.id);
+    h+=`<div class="card" style="padding:0;overflow:hidden">
+      <button onclick="manualToggle('${s.id}')" style="width:100%;background:none;border:none;text-align:left;padding:13px 14px;cursor:pointer;display:flex;align-items:center;gap:8px">
+        <span style="font-size:16px">${s.ico}</span>
+        <span style="flex:1;font-family:'Syne',sans-serif;font-size:13px;font-weight:700;color:var(--dark)">${s.tit}</span>
+        <span style="color:var(--muted);font-size:13px">${abierta?'▾':'▸'}</span>
+      </button>
+      <div style="display:${abierta?'block':'none'};padding:0 14px 13px">
+        <p style="font-size:12.5px;color:var(--muted);line-height:1.55;margin:0 0 10px">${s.intro}</p>
+        <ol style="margin:0 0 4px;padding-left:18px;font-size:12.5px;line-height:1.65;color:var(--text)">
+          ${(s.pasos||[]).map(p=>`<li style="margin-bottom:6px">${p}</li>`).join('')}
+        </ol>
+        ${(s.tips||[]).length?`<div style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;margin-top:10px">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--dark);margin-bottom:5px">Ojo con esto</div>
+          ${s.tips.map(t=>`<div style="font-size:12px;line-height:1.55;color:var(--muted);margin-bottom:4px">• ${t}</div>`).join('')}
+        </div>`:''}
+      </div>
+    </div>`;
+  });
+
+  // Novedades (siempre al final, no se filtra por búsqueda)
+  if(!q){
+    h+=`<div class="card">
+      <div class="card-title">🆕 Novedades</div>
+      ${MANUAL_CAMBIOS.map(c=>`<div style="display:flex;gap:8px;margin-bottom:8px">
+        <span style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--green);font-weight:700;min-width:30px">${c.v}</span>
+        <div style="flex:1;font-size:12px;line-height:1.5;color:var(--text)">${c.txt}<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px">${c.f}</div></div>
+      </div>`).join('')}
+      <div style="font-size:11px;color:var(--muted);line-height:1.5;border-top:1.5px solid var(--sand);padding-top:8px;margin-top:4px">
+        Este manual vive dentro de la app y se actualiza junto con cada cambio. Si algo acá no coincide con lo que ves en pantalla, avisa: significa que quedó una sección sin actualizar.
+      </div>
+    </div>`;
+  }
+  box.innerHTML=h;
+  try{localStorage.setItem('fieldlog_manual_visto',MANUAL_VERSION)}catch(e){}
+  const dot=document.getElementById('manualDot'); if(dot)dot.style.display='none';
+}
+
+let manualAbiertas=new Set();
+function manualToggle(id){
+  if(manualAbiertas.has(id))manualAbiertas.delete(id); else manualAbiertas.add(id);
+  renderManual();
+}
+function manualBuscarInput(){ renderManual(); }
+
+// Punto rojo en el botón Manual cuando hay una versión que el usuario no ha visto
+function manualCheckNuevo(){
+  let visto=null; try{visto=localStorage.getItem('fieldlog_manual_visto')}catch(e){}
+  const dot=document.getElementById('manualDot');
+  if(dot)dot.style.display=(visto===MANUAL_VERSION)?'none':'inline-block';
+}
+
+function initManual(){
+  const lbl=document.getElementById('manualVerLbl');
+  if(lbl)lbl.textContent='Manual '+MANUAL_VERSION+' · actualizado el '+MANUAL_FECHA.split('-').reverse().join('-');
+  renderManual();
+}
+
 function showScr(name,btn){
   if(!canVerPantalla(name)){toast('Sin permiso para esta sección');return}
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -5735,6 +6061,7 @@ function showScr(name,btn){
   if(name==='aplic')   initAplic();
   if(name==='gastos')  initGastos();
   if(name==='evaluacion')renderEvaluacionesRiego();
+  if(name==='manual')  initManual();
 }
 
 // ══════════════════════════════════════════════
