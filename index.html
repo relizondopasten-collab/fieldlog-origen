@@ -592,10 +592,10 @@ body.vista-escritorio .modal-content{max-width:700px}
     <div class="sp" style="height:10px"></div>
     <div class="emp-hdr">
       <div class="emp-name">💧 Aplicaciones</div>
-      <div class="emp-sub">Registro de desinfecciones foliares y aplicaciones vía riego</div>
+      <div class="emp-sub" id="aplSub">Registro de desinfecciones foliares y aplicaciones vía riego</div>
     </div>
 
-    <div class="card">
+    <div class="card" id="aplFormCard">
       <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
         <button class="btn btn-sm" id="aplTabFoliar" onclick="aplSetTab('foliar')" style="flex:1;min-width:100px">🍃 Foliar</button>
         <button class="btn btn-sm" id="aplTabRiego" onclick="aplSetTab('riego')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">🧪 Fertilización</button>
@@ -688,7 +688,11 @@ body.vista-escritorio .modal-content{max-width:700px}
 
   <!-- EVALUACIÓN DE ENCARGADOS DE RIEGO -->
   <div id="screen-evaluacion" class="screen">
-    <div class="card">
+    <div class="card" id="evalPredCard" style="display:none">
+      <div class="card-title">📍 Predio</div>
+      <div class="form-row" style="margin:0"><select id="evalPredSel" onchange="evalCambiaPredio()"></select></div>
+    </div>
+    <div class="card" id="evalNuevaCard">
       <div class="card-title">✅ Evaluación de Encargados de Riego</div>
       <div class="form-row"><label>Ciclo</label><select id="evalSelCiclo" onchange="actualizarEncargadosEval()"><option value="">— Seleccionar ciclo —</option></select></div>
       <div class="form-row"><label>Encargado de Riego</label><select id="evalSelEncargado"><option value="">— Seleccionar encargado —</option></select></div>
@@ -766,6 +770,7 @@ body.vista-escritorio .modal-content{max-width:700px}
             <option value="riego">Encargado de riego</option>
             <option value="foliar">Jefe de desinfecciones</option>
             <option value="gastos">Informes de gasto</option>
+            <option value="bpa">Asesor BPA (solo lectura)</option>
           </select>
         </div>
         <div id="nuRoleHint" style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:9px 12px;margin-bottom:9px;font-size:11px;line-height:1.5;color:var(--muted)"></div>
@@ -986,11 +991,12 @@ const ROLES={
   bodeguero:'Encargado de bodega',
   riego:    'Encargado de riego',
   foliar:   'Jefe de desinfecciones',
-  gastos:   'Informes de gasto'
+  gastos:   'Informes de gasto',
+  bpa:      'Asesor BPA (solo lectura)'
 };
 const ROLES_CAMPO=['admin','jefe','subjefe'];
 // Roles que pueden cubrir más de un predio a la vez (Gabriela: dos bodegas).
-const ROLES_MULTIPREDIO=['jefe','bodeguero','riego','foliar','gastos'];
+const ROLES_MULTIPREDIO=['jefe','bodeguero','riego','foliar','gastos','bpa'];
 
 function userRole(){return currentProfile&&currentProfile.role||''}
 function userSubjefe(){return currentProfile&&currentProfile.subjefe||''}
@@ -1013,6 +1019,8 @@ function isBodeguero(){return userRole()==='bodeguero'}
 function isRiego(){return userRole()==='riego'}
 function isFoliar(){return userRole()==='foliar'}
 function isGastos(){return userRole()==='gastos'}
+// Asesor de Buenas Prácticas: solo lectura de aplicaciones y evaluaciones.
+function isBpa(){return userRole()==='bpa'}
 
 // ¿Trabaja por predio (registro, avance, ciclos, programación)?
 function isCampo(){return ROLES_CAMPO.includes(userRole())}
@@ -1038,6 +1046,8 @@ function prediosPermitidos(){const u=userPredios();return PRED_ORDER.filter(x=>u
 function canAplicEnPredio(pid){return canAplicaciones()&&userPredios().includes(pid)}
 // Registro de aplicaciones. El bodeguero ya NO registra: solo ve la planilla.
 function canAplicaciones(){return isAdmin()||isRiego()||isFoliar()}
+// Ver la pantalla de aplicaciones (registrar o solo mirar). El BPA solo mira.
+function canVerAplic(){return canAplicaciones()||isBpa()}
 function canAplicFoliar(){return isAdmin()||isFoliar()}
 function canAplicRiego(){return isAdmin()||isRiego()}
 // Informe de gasto: gerencia, jefes de predio y el rol de solo-gastos.
@@ -1058,6 +1068,10 @@ function canViewInformes(){
 }
 
 function canViewEvaluacion(){
+  return isAdmin() || isJefe() || isBpa();
+}
+// Crear o modificar una evaluación. El BPA solo lee el historial.
+function canEditEvaluacion(){
   return isAdmin() || isJefe();
 }
 
@@ -1065,7 +1079,7 @@ function canViewEvaluacion(){
 function canVerPantalla(name){
   if(['registro','prog','avance','ciclos'].includes(name))return isCampo();
   if(name==='informes')return canViewInformes();
-  if(name==='aplic')return canAplicaciones();
+  if(name==='aplic')return canVerAplic();
   if(name==='gastos')return canVerGastos();
   if(name==='evaluacion')return canViewEvaluacion();
   if(name==='planilla'||name==='bodega')return canBodega();
@@ -1127,7 +1141,8 @@ auth.onAuthStateChanged(async user=>{
     }
     currentProfile=snap.data();
     if(!ROLES[userRole()]){
-      rechazarSesion('Tu cuenta tiene un rol no reconocido ("'+(userRole()||'sin rol')+'"). Contacta al administrador.');
+      rechazarSesion('Tu cuenta tiene un rol no reconocido ("'+(userRole()||'sin rol')+'"). '
+        +'Los roles válidos son: '+Object.keys(ROLES).join(', ')+'. Contacta al administrador.');
       return;
     }
     if(isCampo()&&!userPredios().length){
@@ -1171,9 +1186,10 @@ function bootApp(){
     const ptabs=document.getElementById('ptabs');
     if(ptabs)ptabs.style.display='none';
     loading(false);
-    if(canBodega())      showScr('planilla',document.getElementById('btnBodega'));
-    else if(canAplicaciones()) showScr('aplic',document.getElementById('btnAplic'));
-    else                 showScr('gastos',document.getElementById('btnGastos'));
+    if(canBodega())            showScr('planilla',document.getElementById('btnBodega'));
+    else if(canVerAplic())     showScr('aplic',document.getElementById('btnAplic'));
+    else if(canVerGastos())    showScr('gastos',document.getElementById('btnGastos'));
+    else if(canViewEvaluacion())showScr('evaluacion',document.getElementById('btnEvaluacion'));
     return;
   }
 
@@ -1677,7 +1693,18 @@ let aplResumen = null;  // estado del informe de gasto (pantalla Gastos)
 let aplVia = null;      // estado del formulario vía riego (dosis/ha)
 
 function initAplic(){
-  if(!canAplicaciones()) return;
+  if(!canVerAplic()) return;
+  const formCard=document.getElementById('aplFormCard');
+  const sub=document.getElementById('aplSub');
+  // Solo lectura (BPA): sin formularios, solo el listado de lo registrado.
+  if(!canAplicaciones()){
+    if(formCard)formCard.style.display='none';
+    if(sub)sub.textContent='Consulta de las aplicaciones registradas en tus predios';
+    renderAplList();
+    return;
+  }
+  if(formCard)formCard.style.display='';
+  if(sub)sub.textContent='Registro de desinfecciones foliares y aplicaciones vía riego';
   // Cada rol arranca en la pestaña que le corresponde; aplSetTab oculta el resto.
   const primeraTab=canAplicFoliar()?'foliar':'riego';
   aplTab=primeraTab;
@@ -2701,7 +2728,7 @@ async function renderAplList(){
             <div style="font-size:12px;color:var(--dark);font-weight:600;margin:2px 0">${receta}</div>
             <div style="font-size:11px;color:var(--muted)">${sub}</div>
           </div>
-          <button class="btn btn-danger btn-sm" onclick="delAplicacion('${doc.id}')">✕</button>
+          ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="delAplicacion('${doc.id}')">✕</button>`:''}
         </div>
       </div>`;
     }).join('');
@@ -3346,7 +3373,7 @@ function applyRoleUI(){
   show('btnAvance',   isCampo());
   show('btnCiclos',   isCampo());
   show('btnInformes', canViewInformes());
-  show('btnAplic',    canAplicaciones());
+  show('btnAplic',    canVerAplic());
   show('btnGastos',   canVerGastos());
   show('btnEvaluacion', canViewEvaluacion());
   show('btnBodega',   canBodega());
@@ -4654,6 +4681,17 @@ function prediosLabel(u){
 }
 
 // Muestra u oculta los campos del formulario de usuario según el rol elegido
+const ROLE_HINTS={
+  admin:'Gerencia. Con "Todos los predios" queda como superadmin: crea usuarios, edita costos y puede borrar registros. Acotado a un predio, manda solo en ese predio.',
+  jefe:'Registra y corrige en los predios que marques, y ve todos los informes. No accede a bodega ni a usuarios.',
+  subjefe:'Trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
+  bodeguero:'Solo la Planilla de Bodega de las bodegas que marques: stock, despachos y conciliación. No registra aplicaciones. El de La Constancia (central) además crea productos, edita precios y registra compras.',
+  riego:'Registra fertirriego y vía riego de sus predios. No ve foliares, ni la planilla, ni el informe de gasto.',
+  foliar:'Registra únicamente aplicaciones foliares (desinfecciones) de sus predios. No ve fertirriego, ni la planilla, ni el informe de gasto.',
+  gastos:'Solo el informe de gasto de los predios que marques. Sin acceso a registro de campo, aplicaciones ni bodega. Pensado para quien revisa costos desde fuera del campo.',
+  bpa:'Asesor de Buenas Prácticas. Solo lectura: ve las aplicaciones registradas y el historial de evaluaciones de riego de los predios que marques. No registra ni modifica nada.'
+  };
+
 function onRoleChange(){
   const sel=document.getElementById('nuRole'); if(!sel) return;
   const role=sel.value;
@@ -4672,17 +4710,8 @@ function onRoleChange(){
   show('nuPredioRow',  !multi);
   show('nuPrediosRow', multi);
   show('nuSubjefeRow', role==='subjefe');
-  const hints={
-    admin:'Gerencia. Con "Todos los predios" queda como superadmin: crea usuarios, edita costos y puede borrar registros. Acotado a un predio, manda solo en ese predio.',
-    jefe:'Registra y corrige en los predios que marques, y ve todos los informes. No accede a bodega ni a usuarios.',
-    subjefe:'Trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
-    bodeguero:'Solo la Planilla de Bodega de las bodegas que marques: stock, despachos y conciliación. No registra aplicaciones. El de La Constancia (central) además crea productos, edita precios y registra compras.',
-    riego:'Registra fertirriego y vía riego de sus predios. No ve foliares, ni la planilla, ni el informe de gasto.',
-    foliar:'Registra únicamente aplicaciones foliares (desinfecciones) de sus predios. No ve fertirriego, ni la planilla, ni el informe de gasto.',
-    gastos:'Solo el informe de gasto de los predios que marques. Sin acceso a registro de campo, aplicaciones ni bodega. Pensado para quien revisa costos desde fuera del campo.'
-  };
   const h=document.getElementById('nuRoleHint');
-  if(h)h.textContent=hints[role]||'';
+  if(h)h.textContent=ROLE_HINTS[role]||'';
 }
 
 async function loadUsers(){
@@ -4691,13 +4720,112 @@ async function loadUsers(){
     usersCache=snap.docs.map(d=>({uid:d.id,...d.data()}));
     const div=document.getElementById('usersList');
     if(!div)return;
-    div.innerHTML=usersCache.map(u=>`<div class="user-row">
+    div.innerHTML=usersCache.map(u=>{
+      const propio = currentUser && u.uid===currentUser.uid;
+      const rolMalo = !ROLES[u.role];
+      return `<div class="user-row">
       <div class="ur-info">
         <div class="ur-name">${u.nombre||u.email}</div>
-        <div class="ur-meta">${escH(u.email)} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}">${escH(ROLES[u.role]||u.role||'sin rol')}</span> · ${escH(prediosLabel(u))}${u.subjefe?' · '+escH(u.subjefe):''}</div>
+        <div class="ur-meta">${escH(u.email)} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}" ${rolMalo?'style="background:#FEE2E2;color:var(--red)"':''}>${escH(ROLES[u.role]||((u.role||'sin rol')+' ⚠'))}</span> · ${escH(prediosLabel(u))}${u.subjefe?' · '+escH(u.subjefe):''}</div>
       </div>
-    </div>`).join('')||'<div style="font-size:12px;color:var(--muted)">Sin usuarios aún</div>';
+      ${propio?'':`<button class="btn btn-sm" onclick="openUserEdit('${u.uid}')" style="background:var(--sand);color:var(--dark);width:auto;padding:6px 10px">✏️</button>`}
+    </div>`}).join('')||'<div style="font-size:12px;color:var(--muted)">Sin usuarios aún</div>';
   }catch(e){console.error(e)}
+}
+
+// ══════════════════════════════════════════════
+// EDITOR DE USUARIOS (v34)
+// ══════════════════════════════════════════════
+// Antes, corregir el rol o los predios de alguien obligaba a entrar a la
+// consola de Firebase. Las reglas ya permiten que un superadmin escriba en
+// /users, así que lo que faltaba era la interfaz.
+// No se puede editar la propia cuenta: es la forma más fácil de dejarse fuera.
+
+function openUserEdit(uid){
+  if(!canManageUsers()){ toast('Solo gerencia puede editar usuarios'); return; }
+  const u=usersCache.find(x=>x.uid===uid);
+  if(!u){ toast('Usuario no encontrado'); return; }
+  if(currentUser && uid===currentUser.uid){ toast('No puedes editar tu propia cuenta'); return; }
+  window._userEdit={uid};
+
+  const roleOpts=Object.keys(ROLES).map(r=>`<option value="${r}"${r===u.role?' selected':''}>${escH(ROLES[r])}</option>`).join('')
+    + (ROLES[u.role]?'':`<option value="${escH(u.role||'')}" selected>${escH(u.role||'sin rol')} (inválido)</option>`);
+  const allSubs=[...new Set(PRED_ORDER.flatMap(k=>PREDIOS[k].subjefes))];
+  const subOpts=`<option value="">— (no aplica) —</option>`+allSubs.map(x=>`<option${x===u.subjefe?' selected':''}>${escH(x)}</option>`).join('');
+  const preds=Array.isArray(u.predios)&&u.predios.length ? u.predios
+            : (u.predioId==='todos'?PRED_ORDER.slice():(u.predioId?[u.predioId]:[]));
+  const chk=PRED_ORDER.map(k=>`<label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="euPredioChk" value="${k}"${preds.includes(k)?' checked':''} style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">${escH(PREDIOS[k].nombre)}</label>`).join('');
+
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">✏️ Editar usuario</div>
+    <div class="modal-sub">${escH(u.email||'')}</div>
+    <div class="form-row"><label>Nombre visible</label><input type="text" id="euNombre" value="${escH(u.nombre||'')}"></div>
+    <div class="form-row"><label>Rol</label><select id="euRole" onchange="euRoleChange()">${roleOpts}</select></div>
+    <div id="euRoleHint" style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:9px 12px;margin-bottom:9px;font-size:11px;line-height:1.5;color:var(--muted)"></div>
+    <div class="form-row" id="euPredioRow"><label>Predio</label><select id="euPredio"></select></div>
+    <div class="form-row" id="euPrediosRow" style="display:none"><label id="euPrediosLbl">Predios a cargo</label>
+      <div style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;display:flex;flex-direction:column;gap:7px">${chk}</div>
+    </div>
+    <div class="form-row" id="euSubjefeRow" style="display:none"><label>Subjefe asignado</label><select id="euSubjefe">${subOpts}</select></div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:9px">El cambio se aplica la próxima vez que esa persona inicie sesión. Si está con la app abierta, tiene que cerrar sesión y volver a entrar.</div>
+    <button class="btn btn-primary" onclick="saveUserEdit()">Guardar cambios</button>
+    <button class="btn btn-secondary" style="margin-top:6px" onclick="closeModal()">Cancelar</button>`;
+
+  euRoleChange(u.predioId);
+  document.getElementById('overlay').classList.add('open');
+}
+
+function euRoleChange(predioIdActual){
+  const sel=document.getElementById('euRole'); if(!sel)return;
+  const role=sel.value;
+  const show=(id,ok)=>{const el=document.getElementById(id);if(el)el.style.display=ok?'':'none'};
+  const multi=ROLES_MULTIPREDIO.includes(role);
+  const selP=document.getElementById('euPredio');
+  if(selP && !multi){
+    const prev=(typeof predioIdActual==='string'?predioIdActual:selP.value);
+    selP.innerHTML=PRED_ORDER.map(k=>`<option value="${k}">${escH(PREDIOS[k].nombre)}</option>`).join('')
+      +(role==='admin'?`<option value="todos">Todos los predios</option>`:'');
+    if([...selP.options].some(o=>o.value===prev)) selP.value=prev;
+  }
+  const lbl=document.getElementById('euPrediosLbl');
+  if(lbl) lbl.textContent = role==='bodeguero' ? 'Bodegas a cargo' : 'Predios a cargo';
+  show('euPredioRow',  !multi);
+  show('euPrediosRow', multi);
+  show('euSubjefeRow', role==='subjefe');
+  const h=document.getElementById('euRoleHint');
+  if(h)h.textContent=ROLE_HINTS[role]||'Rol no reconocido: esta persona no va a poder entrar hasta que se le asigne uno válido.';
+}
+
+async function saveUserEdit(){
+  if(!canManageUsers()){ toast('Sin permiso'); return; }
+  const uid=window._userEdit&&window._userEdit.uid; if(!uid)return;
+  const u=usersCache.find(x=>x.uid===uid)||{};
+  const role=document.getElementById('euRole').value;
+  if(!ROLES[role]){ toast('⚠️ Elige un rol válido'); return; }
+  const nombre=document.getElementById('euNombre').value.trim();
+  let predios=[];
+  if(ROLES_MULTIPREDIO.includes(role)){
+    predios=[...document.querySelectorAll('.euPredioChk')].filter(c=>c.checked).map(c=>c.value);
+    if(!predios.length){ toast('⚠️ Marca al menos un predio a cargo'); return; }
+  }else{
+    const pv=document.getElementById('euPredio').value;
+    if(role!=='admin'&&pv==='todos'){ toast('⚠️ Solo un admin puede tener los tres predios'); return; }
+    predios = pv==='todos'?PRED_ORDER.slice():[pv];
+  }
+  const subjefe = role==='subjefe' ? document.getElementById('euSubjefe').value : '';
+  if(role==='subjefe'&&!subjefe){ toast('⚠️ Selecciona el subjefe asignado'); return; }
+  const predioId = predios.length===PRED_ORDER.length ? 'todos' : predios[0];
+  loading(true,'Guardando…');
+  try{
+    await colUsers().doc(uid).update({
+      nombre: nombre || u.nombre || (u.email||'').split('@')[0],
+      role, predios, predioId, subjefe
+    });
+    closeModal();
+    await loadUsers();
+    toast('✅ Usuario actualizado');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
 }
 
 async function createUser(){
@@ -5751,10 +5879,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v33';
-const MANUAL_FECHA='2026-09-02';
+const MANUAL_VERSION='v34';
+const MANUAL_FECHA='2026-09-03';
 
 const MANUAL_CAMBIOS=[
+  {v:'v34', f:'03-09-2026', txt:'Gerencia ya puede corregir el rol y los predios de un usuario desde Config › Usuarios, con el lápiz ✏️. Antes había que entrar a la consola de Firebase. Se agrega el rol Asesor BPA, de solo lectura.'},
   {v:'v33', f:'02-09-2026', txt:'Se agrega este manual dentro de la app. Cada usuario ve solo las secciones que le corresponden según su rol.'},
   {v:'v31', f:'01-09-2026', txt:'La programación se guarda sola: ya no hay que apretar "Guardar programación". Los datos quedan en el servidor apenas los escribes.'},
   {v:'v30', f:'31-08-2026', txt:'Nueva pantalla Evaluación de encargados de riego, con los 7 puntos de control del riego.'},
@@ -5897,7 +6026,7 @@ const MANUAL_SECCIONES=[
   ]
 },
 {
-  id:'evaluacion', ico:'✅', tit:'Evaluación de encargados de riego', ver:()=>canViewEvaluacion(),
+  id:'evaluacion', ico:'✅', tit:'Evaluación de encargados de riego', ver:()=>canEditEvaluacion(),
   intro:'Checklist de los 7 puntos de control del riego, por ciclo y por encargado.',
   pasos:[
     'Elige el <b>Ciclo</b> y el <b>Encargado de riego</b>.',
@@ -5909,6 +6038,19 @@ const MANUAL_SECCIONES=[
   tips:[
     'Los 7 puntos: riegómetro, tensiómetros, lisímetros, revisión de humedad con pala (2 veces por semana), presión en cintas, lavado de cintas cada 30 días y reparaciones registradas.',
     'Hay ítems que son de una vez (al trasplante o antes de plantar) y otros que se repiten cada semana o cada mes. Evalúa según el momento del ciclo, no marques todo por costumbre.'
+  ]
+},
+{
+  id:'bpa', ico:'🌿', tit:'Consulta BPA (solo lectura)', ver:()=>isBpa(),
+  intro:'Tu cuenta es de consulta: puedes revisar lo que se registró, pero no modificarlo. Nada de lo que hagas acá cambia datos.',
+  pasos:[
+    'En <b>Aplicaciones</b> ves la lista de las aplicaciones registradas en tus predios: fecha, quién la registró, receta, módulos o sectores y litros. No aparece el formulario de registro porque tu rol no registra.',
+    'En <b>Evaluación</b> eliges el predio arriba y ves el <b>historial de evaluaciones de riego</b>: fecha, encargado, ciclo y cuántos de los 7 puntos estaban cumplidos. Con "Ver" abres el detalle de cada una.',
+    'Si necesitas un dato que no aparece, pídeselo al jefe del predio o a gerencia: ellos sí pueden registrar y corregir.'
+  ],
+  tips:[
+    'No ves Registrar, Prog., Avance, Ciclos, Informes, Gastos ni Bodega: tu rol no tiene acceso a esos datos, ni en la app ni en el servidor.',
+    'Solo ves los predios que gerencia te asignó.'
   ]
 },
 {
@@ -5933,9 +6075,14 @@ const MANUAL_SECCIONES=[
   pasos:[
     '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes.',
     '<b>Costos del personal</b> (gerencia con todos los predios): sueldo mínimo mensual, bono o extra fijo y jornada semanal. De ahí sale el costo por hora de los informes; actualízalo cuando cambie el sueldo mínimo legal.',
-    '<b>Usuarios del sistema</b> (gerencia con todos los predios): se crea un acceso por persona, con su correo, una contraseña inicial que tú le entregas, el rol y los predios. Al elegir el rol, la app explica en una línea qué podrá hacer esa persona.'
+    '<b>Usuarios del sistema</b> (gerencia con todos los predios): se crea un acceso por persona, con su correo, una contraseña inicial que tú le entregas, el rol y los predios. Al elegir el rol, la app explica en una línea qué podrá hacer esa persona.',
+    '<b>Corregir un usuario:</b> en la lista, el lápiz ✏️ abre la edición de rol, predios y nombre. El cambio se aplica la próxima vez que esa persona inicie sesión. Si tiene la app abierta, debe cerrar sesión y volver a entrar.'
   ],
-  tips:['Pídele a cada persona que cambie la contraseña inicial. Las cuentas compartidas hacen imposible saber quién registró qué.']
+  tips:[
+    'Pídele a cada persona que cambie la contraseña inicial. Las cuentas compartidas hacen imposible saber quién registró qué.',
+    'Tu propia cuenta no se puede editar desde acá, a propósito: es la forma más fácil de dejarse fuera del sistema.',
+    'Un rol en rojo en la lista significa que ese usuario tiene un rol inválido y no va a poder entrar hasta que lo corrijas con el lápiz.'
+  ]
 },
 {
   id:'roles', ico:'🔐', tit:'Qué puede hacer cada rol', ver:()=>true,
@@ -5947,7 +6094,8 @@ const MANUAL_SECCIONES=[
     '<b>Encargado de bodega:</b> solo la planilla de bodega de las bodegas que tenga a cargo: stock, despachos y conciliación. No registra aplicaciones. El de La Constancia, además, crea productos, edita precios y registra compras.',
     '<b>Encargado de riego:</b> registra fertirriego y vía riego de sus predios. No ve foliares, ni la planilla, ni el informe de gasto.',
     '<b>Jefe de desinfecciones:</b> registra solo aplicaciones foliares de sus predios.',
-    '<b>Informes de gasto:</b> solo el informe de gasto de los predios asignados, sin acceso a campo, aplicaciones ni bodega.'
+    '<b>Informes de gasto:</b> solo el informe de gasto de los predios asignados, sin acceso a campo, aplicaciones ni bodega.',
+    '<b>Asesor BPA:</b> solo lectura. Ve las aplicaciones registradas y el historial de evaluaciones de riego de sus predios. No registra ni modifica nada.'
   ],
   tips:['Los permisos también están puestos en el servidor, no solo en los botones. Si algo no corresponde a tu rol, no se guarda aunque se intente.']
 },
@@ -5961,6 +6109,7 @@ const MANUAL_SECCIONES=[
     '<b>"Se me perdió la programación."</b> Desde la v31 se guarda sola en el servidor. Si no aparece, revisa que estés en la misma semana, el mismo subjefe y el mismo predio.',
     '<b>"Me avisa valores inusuales."</b> Es solo un aviso por posible error de tipeo (más de 10 horas o más de 70 mesas en el día). Si el dato es correcto, acepta.',
     '<b>"Cuenta no habilitada."</b> El usuario no está creado en Config › Usuarios. Lo crea gerencia.',
+    '<b>"Rol no reconocido."</b> El rol guardado no existe en el sistema (pasa cuando la cuenta se creó a mano). Gerencia lo corrige en Config › Usuarios con el lápiz ✏️.',
     '<b>"Estoy sin señal."</b> La app necesita internet para guardar. Anota en papel y registra al volver la señal.'
   ],
   tips:['Si el problema no está acá, anota qué pantalla era, qué apretaste y qué decía el mensaje. Con eso se arregla rápido; sin eso, no.']
@@ -6134,9 +6283,43 @@ const ITEMS_EVALUACION_RIEGO = [
   }
 ];
 
+// Predio activo para la pantalla de Evaluación. Los roles de campo usan la
+// pestaña de arriba; los que no tienen pestañas (BPA) usan su propio selector.
+let evalPredSelId='';
+function evalPredActivo(){
+  if(isCampo()) return activePred;
+  if(!evalPredSelId){ const ps=prediosPermitidos(); evalPredSelId=ps[0]||''; }
+  return evalPredSelId;
+}
+function evalCambiaPredio(){
+  evalPredSelId=document.getElementById('evalPredSel').value;
+  renderEvaluacionesRiego();
+}
+
 async function renderEvaluacionesRiego(){
   const db=firebase.firestore();
-  const pred=activePred;
+  // Selector de predio propio para los roles sin pestañas de predio
+  const predCard=document.getElementById('evalPredCard');
+  if(predCard){
+    if(isCampo()){ predCard.style.display='none'; }
+    else{
+      predCard.style.display='';
+      const sel=document.getElementById('evalPredSel');
+      const ps=prediosPermitidos();
+      if(!evalPredSelId) evalPredSelId=ps[0]||'';
+      sel.innerHTML=ps.map(k=>`<option value="${k}"${k===evalPredSelId?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+    }
+  }
+  // Solo lectura (BPA): sin selectores de ciclo/encargado, solo el historial.
+  const nuevaCard=document.getElementById('evalNuevaCard');
+  if(!canEditEvaluacion()){
+    if(nuevaCard)nuevaCard.style.display='none';
+    await cargarHistorialEval();
+    return;
+  }
+  if(nuevaCard)nuevaCard.style.display='';
+
+  const pred=evalPredActivo();
   if(!pred)return;
 
   // Cargar ciclos del predio (de todos los subjefes)
@@ -6170,7 +6353,7 @@ async function renderEvaluacionesRiego(){
 
 async function actualizarEncargadosEval(){
   const db=firebase.firestore();
-  const pred=activePred;
+  const pred=evalPredActivo();
 
   const workersSnap=await db.collection('workers').doc(pred).collection('list').get();
   const workers=[];
@@ -6190,7 +6373,9 @@ async function actualizarEncargadosEval(){
 
 async function cargarHistorialEval(){
   const db=firebase.firestore();
-  const pred=activePred;
+  const pred=evalPredActivo();
+  const historialBox=document.getElementById('evalHistorial');
+  if(!pred){ if(historialBox)historialBox.innerHTML='<div class="card"><p style="text-align:center;color:var(--muted);font-size:13px">Sin predio seleccionado</p></div>'; return; }
 
   const snap=await db.collection('evaluacionesRiego').doc(pred).collection('registros').orderBy('createdAt','desc').get();
   const evaluaciones=[];
@@ -6217,6 +6402,7 @@ function mostrarModalEvaluacion(){
   const cicloId=document.getElementById('evalSelCiclo').value;
   const encargadoId=document.getElementById('evalSelEncargado').value;
 
+  if(!canEditEvaluacion()){ toast('Tu rol es de solo lectura'); return; }
   if(!cicloId||!encargadoId){
     toast('Selecciona ciclo y encargado');
     return;
@@ -6275,8 +6461,9 @@ function cerrarEvalModal(){
 }
 
 async function guardarEvaluacion(){
+  if(!canEditEvaluacion()){ toast('Tu rol es de solo lectura'); return; }
   const db=firebase.firestore();
-  const pred=activePred;
+  const pred=evalPredActivo();
   const cicloId=document.getElementById('evalSelCiclo').value;
   const encargadoId=document.getElementById('evalSelEncargado').value;
   const fecha=document.getElementById('evalFecha').value;
