@@ -1723,7 +1723,7 @@ function initAplic(){
   const primeraTab=canAplicFoliar()?'foliar':'riego';
   aplTab=primeraTab;
   aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], destinos:[{modulo:'',litros:''}] };
-  aplRie = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{} };
+  aplRie = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{}, prodSel:{} };
   aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
   loadCiclosAll().then(()=>{ aplSetTab(primeraTab); renderAplList(); });
 }
@@ -1812,7 +1812,9 @@ function aplSetTab(t){
 }
 
 // ── Intérprete de recetas (compartido foliar/riego) ──
-function claveProd(s){ return normNombre(s).replace(/[^a-z0-9]/g,''); }
+// v36 · Se ignoran los conectores "de/del/la/el" antes de comparar: el catálogo
+// de bodega escribe "NITRATO CALCIO" y el formulario "Nitrato de calcio".
+function claveProd(s){ return normNombre(s).replace(/\b(de|del|la|el|los|las)\b/g,' ').replace(/[^a-z0-9]/g,''); }
 // Convierte dosis+unidad escrita a base de stock (L o kg)
 function aStock(dosis, unidad){
   const u=(unidad||'').toLowerCase();
@@ -1823,13 +1825,21 @@ function aStock(dosis, unidad){
   return {val:dosis, base:''};
 }
 // Busca producto en bodega por nombre (exacto o aproximado, ignorando espacios/acentos)
+// v36 · Un producto puede traer un arreglo `alias` con los nombres antiguos o
+// abreviados con que bodega lo escribía antes de normalizar el catálogo. Se
+// consideran igual que el nombre, para que las recetas viejas sigan calzando.
+function clavesProd(p){
+  const ks=[claveProd(p.nombre)];
+  (Array.isArray(p.alias)?p.alias:[]).forEach(a=>{ const k=claveProd(a); if(k) ks.push(k); });
+  return ks.filter(Boolean);
+}
 function matchProducto(nombreTxt){
   const clave=claveProd(nombreTxt);
   if(!clave) return null;
-  let p=productosCache.find(x=>claveProd(x.nombre)===clave);
+  let p=productosCache.find(x=>clavesProd(x).includes(clave));
   if(p) return p;
   if(clave.length>=4){
-    p=productosCache.find(x=>{ const k=claveProd(x.nombre); return k.length>=4 && (clave.includes(k)||k.includes(clave)); });
+    p=productosCache.find(x=>clavesProd(x).some(k=>k.length>=4 && (clave.includes(k)||k.includes(clave))));
   }
   return p||null;
 }
@@ -2105,6 +2115,10 @@ async function guardarViaRiego(){
   const recetaData=aplVia.receta.map(x=>{ const cv=aStock(x.dosis,x.unidad); return {productoId:x.productoId, nombre:x.nombre, unidad:x.unidad, dosis:x.dosis, base:cv.base}; });
   const sectoresData=r.secs.map(s=>({sector:String(s), ha:haSector(aplVia.predioId,s)}));
   const desc=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.cantidad}));
+  // v36 · calcVia() ignora los productos que no se reconocieron en bodega; se dejan
+  // anotados en el documento para que la omisión sea visible después.
+  const sinDescontar=aplVia.receta.filter(x=>!x.productoId)
+    .map(x=>({nombre:x.nombre||x.txt||'', cantidadCargada:x.dosis, unidad:x.unidad||'', motivo:'sin producto de bodega'}));
 
   loading(true,'Registrando…');
   try{
@@ -2113,8 +2127,8 @@ async function guardarViaRiego(){
     await db.collection('aplicaciones').add({
       tipo:'viariego', fecha:aplVia.fecha, predioId:aplVia.predioId, cultivo:aplVia.cultivo, epoca:aplVia.epoca||'', bodegaDescuento:bodDesc,
       ...datosTemporada(aplVia.predioId, aplVia.epoca, aplVia.cultivo),
-      receta:recetaData, sectores:sectoresData, haTotal:r.haTotal,
-      descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
+      receta:recetaData, sectores:sectoresData, haTotal:r.haTotal, sinDescontar,
+      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
       registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       createdAt:Date.now()
@@ -2669,14 +2683,16 @@ async function guardarFoliar(){
   loading(true,'Registrando…');
   try{
     const totalLitros = destinos.reduce((s,d)=>s+parseFloat(d.litros),0);
-    const desc = descuentosFoliar(recetaData, totalLitros);
+    const desc = descuentosFoliar(recetaData, totalLitros).filter(d=>d.productoId);
+    const sinDescontar = recetaData.filter(r=>!r.productoId)
+      .map(r=>({nombre:r.nombre||'', cantidadCargada:r.dosis, unidad:r.unidad||'', motivo:'sin producto de bodega'}));
     const bodDesc=aplFol.predioId||'constancia';
     const faltan = faltantesStock(desc, bodDesc);
     await db.collection('aplicaciones').add({
       tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'', bodegaDescuento:bodDesc,
       ...datosTemporada(aplFol.predioId, aplFol.epoca, aplFol.cultivo),
-      receta:recetaData, destinos:destData,
-      descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
+      receta:recetaData, destinos:destData, sinDescontar,
+      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
       registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       createdAt:Date.now()
@@ -2735,12 +2751,18 @@ async function renderAplList(){
         sub=(a.destinos||[]).map(d=>`mód ${escH(d.modulo||d.unidad||'')}: ${fmtNum(d.litros,0)}L`).join(' · ');
         totalTxt=`${escH(predF)}${a.cultivo?' · '+escH(a.cultivo):''}${a.epoca?' · '+(TNAMES[a.epoca]||a.epoca):''} · ${fmtNum(totalAgua,0)}L de agua`;
       }
+      // v36 · aviso persistente de lo que se aplicó sin descontar de bodega
+      const sd=(a.sinDescontar||[]);
+      const sdH = sd.length ? `<div style="background:#FEF3C7;border-radius:6px;padding:4px 8px;margin-top:4px;font-size:10.5px;color:#B45309">
+        ⚠️ No se descontó de bodega: ${sd.map(x=>`${escH(x.nombre)}${x.cantidadCargada!=null?' '+fmtNum(x.cantidadCargada)+escH(x.unidad||''):''}`).join(' · ')}
+      </div>` : '';
       return `<div style="padding:8px 0;border-bottom:1px solid var(--sand)">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
           <div style="flex:1">
             <div style="font-size:11px;color:var(--muted)">${etiqueta} ${escH(fD(a.fecha))} · ${escH(a.registradoPorNombre||'')} · ${totalTxt}</div>
             <div style="font-size:12px;color:var(--dark);font-weight:600;margin:2px 0">${receta}</div>
             <div style="font-size:11px;color:var(--muted)">${sub}</div>
+            ${sdH}
           </div>
           ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="delAplicacion('${doc.id}')">✕</button>`:''}
         </div>
@@ -2794,13 +2816,74 @@ function haSector(predioId, sector){
 }
 
 // Lista fija de sales de fertirriego (aparecen siempre, en este orden).
-// Cada una se vincula por nombre a un producto de bodega para descontar stock.
-const FERTIRRIEGO_SALES = ['Nitrato de potasio','Nitrato de calcio','Nitrato de magnesio','Sulfato de magnesio','Fosfato mono amonico','Fosfato mono potasico','Ultrasol multiproposito','Sulfato de potasio','Cloruro de potasio'];
+// Cada una se vincula a un producto de bodega para descontar stock.
+//
+// v36 — Antes esto era una lista de nombres y el vínculo se hacía solo por
+// matchProducto(nombre). Bodega escribe los productos abreviados ("N. POTASIO",
+// "S. MAGNESIO"), así que 7 de las 9 sales no enlazaban y se aplicaban sin
+// descontar stock. Ahora cada sal trae sus alias tal como aparecen en el
+// catálogo, y el usuario puede corregir el vínculo a mano en el formulario.
+const FERTIRRIEGO_SALES = [
+  {nombre:'Nitrato de potasio',      alias:['N. POTASIO','N POTASIO','NITRATO POTASIO','NITRATO DE POTASIO','KNO3']},
+  {nombre:'Nitrato de calcio',       alias:['N. CALCIO','N CALCIO','NITRATO CALCIO']},
+  {nombre:'Nitrato de magnesio',     alias:['N. MAGNESIO','N MAGNESIO','NITRATO MAGNESIO']},
+  {nombre:'Sulfato de magnesio',     alias:['S. MAGNESIO','S MAGNESIO','SULFATO MAGNESIO','SAL DE EPSOM']},
+  {nombre:'Fosfato mono amonico',    alias:['MONOAMONICO','M. AMONICO','M AMONICO','FOSFATO MONOAMONICO','MAP']},
+  {nombre:'Fosfato mono potasico',   alias:['MONOPOTASICO','M. POTASICO','M POTASICO','FOSFATO MONOPOTASICO','MKP']},
+  {nombre:'Ultrasol multiproposito', alias:['ULTRASOL MULTIPROPOSITO','MULTIPROPOSITO']},
+  {nombre:'Sulfato de potasio',      alias:['SULFATO POTASIO','S. POTASIO','S POTASIO','S POTASICO','S. POTASICO']},
+  {nombre:'Cloruro de potasio',      alias:['CLORURO POTASIO','C. POTASIO','KCL']}
+];
+
+// Todos los productos del catálogo que corresponden a una sal (por nombre o alias).
+// Devuelve una lista porque el catálogo tiene el mismo producto cargado más de
+// una vez con nombres distintos; en ese caso se prefiere el que tenga stock en
+// la bodega desde la que se va a descontar.
+function candidatosSal(sal, bodega){
+  const claves=[sal.nombre].concat(sal.alias||[]).map(claveProd).filter(Boolean);
+  let hits=productosCache.filter(p=>clavesProd(p).some(k=>claves.includes(k)));
+  if(!hits.length){ const p=matchProducto(sal.nombre); if(p) hits=[p]; }
+  if(hits.length>1){
+    // Desempate estable: 1) el que tenga stock disponible en esa bodega,
+    // 2) el que calce exacto con el nombre completo de la sal, 3) el nombre más específico.
+    const st=p=>(bodega && p.stock && Number(p.stock[bodega]))||0;
+    const exacto=p=>clavesProd(p).includes(claveProd(sal.nombre))?1:0;
+    hits=hits.slice().sort((a,b)=>{
+      const pa=st(a)>0?1:0, pb=st(b)>0?1:0;
+      if(pa!==pb) return pb-pa;
+      if(pa===1 && st(a)!==st(b)) return st(b)-st(a);
+      if(exacto(a)!==exacto(b)) return exacto(b)-exacto(a);
+      return String(b.nombre||'').length-String(a.nombre||'').length;
+    });
+  }
+  return hits;
+}
+
 function salesEstanque(){
-  return FERTIRRIEGO_SALES.map((nombre,i)=>{
-    const prod=matchProducto(nombre);
-    return { idx:i, nombre, productoId:prod?prod.id:'', unidad:(prod&&prod.unidad)||'kg', enBodega:!!prod };
+  const bodega=(aplRie&&aplRie.predioId)||'';
+  return FERTIRRIEGO_SALES.map((sal,i)=>{
+    const cands=candidatosSal(sal, bodega);
+    // Override manual del usuario (selector del formulario) por sobre lo detectado
+    const manual=(aplRie&&aplRie.prodSel&&aplRie.prodSel[i])||'';
+    const elegido = manual ? productosCache.find(p=>p.id===manual) : cands[0];
+    return {
+      idx:i, nombre:sal.nombre,
+      productoId: elegido?elegido.id:'',
+      productoNombre: elegido?elegido.nombre:'',
+      unidad:(elegido&&elegido.unidad)||'kg',
+      enBodega:!!elegido,
+      manual:!!manual,
+      ambiguo: !manual && cands.length>1,
+      candidatos:cands
+    };
   });
+}
+
+// El usuario elige a mano con qué producto de bodega se descuenta una sal.
+function aplRieProd(idx, productoId){
+  if(!aplRie.prodSel) aplRie.prodSel={};
+  if(productoId) aplRie.prodSel[idx]=productoId; else delete aplRie.prodSel[idx];
+  renderRiegoForm();
 }
 
 // Fertirriego por estanque de sales:
@@ -2814,13 +2897,32 @@ function renderRiegoForm(){
   const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===aplRie.cultivo?' selected':''}>${escH(c)}</option>`).join('');
 
   // Sales fijas — aparecen siempre; solo se escribe kg
+  // v36 · cada sal muestra con qué producto de bodega se va a descontar y
+  // permite corregirlo a mano. Solo se despliega si hay kilos cargados o si
+  // el vínculo automático falló, para no llenar la pantalla de selectores.
+  const prodOpts = sel => `<option value="">— sin descontar —</option>` +
+    productosCache.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')))
+      .map(p=>`<option value="${p.id}"${p.id===sel?' selected':''}>${escH(p.nombre)}</option>`).join('');
   const salesH = salesEstanque().map(s=>{
     const cant=aplRie.cant[s.idx]||'';
-    return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
-      <span style="flex:1;font-size:12.5px">${escH(s.nombre)}${s.enBodega?'':' <span style="color:#B45309;font-size:10px">(no en bodega)</span>'}</span>
-      <input type="text" inputmode="decimal" placeholder="0" value="${cant}" oninput="aplRieCant(${s.idx},this.value)" style="width:66px;text-align:right">
-      <span style="font-size:10.5px;color:var(--muted);width:22px">${escH(s.unidad)}</span>
-      <span id="conc_${s.idx}" style="font-size:10.5px;color:#2E7D32;width:94px;text-align:right"></span>
+    const cargada=num(cant)>0;
+    const aviso = s.enBodega
+      ? (s.ambiguo?` <span style="color:#B45309;font-size:10px" title="El catálogo tiene más de un producto con este nombre">(revisar: ${s.candidatos.length} productos)</span>`:'')
+      : ' <span style="color:var(--red);font-size:10px;font-weight:700">(no descuenta stock)</span>';
+    const linea = (cargada||!s.enBodega)
+      ? `<div style="display:flex;gap:6px;align-items:center;margin:0 0 6px 0;padding-left:2px">
+           <span style="font-size:10px;color:var(--muted);white-space:nowrap">↳ descuenta de</span>
+           <select onchange="aplRieProd(${s.idx},this.value)" style="flex:1;font-size:11px;padding:3px 5px">${prodOpts(s.productoId)}</select>
+         </div>`
+      : '';
+    return `<div style="margin-bottom:5px">
+      <div style="display:flex;gap:6px;align-items:center">
+        <span style="flex:1;font-size:12.5px">${escH(s.nombre)}${aviso}</span>
+        <input type="text" inputmode="decimal" placeholder="0" value="${cant}" oninput="aplRieCant(${s.idx},this.value)" style="width:66px;text-align:right">
+        <span style="font-size:10.5px;color:var(--muted);width:22px">${escH(s.unidad)}</span>
+        <span id="conc_${s.idx}" style="font-size:10.5px;color:#2E7D32;width:94px;text-align:right"></span>
+      </div>
+      ${linea}
     </div>`;
   }).join('');
 
@@ -2867,7 +2969,7 @@ function calcFertirriego(){
     const kg=num(aplRie.cant[s.idx]);
     if(kg>0 && cap>0){
       const concentracion=kg/cap;
-      items.push({idx:s.idx, productoId:s.productoId, nombre:s.nombre, unidad:s.unidad, cantKg:kg, concentracion, totalAplicado:totalLitros*concentracion, enBodega:s.enBodega});
+      items.push({idx:s.idx, productoId:s.productoId, nombre:s.nombre, productoNombre:s.productoNombre, unidad:s.unidad, cantKg:kg, concentracion, totalAplicado:totalLitros*concentracion, enBodega:s.enBodega});
     }
   });
   return {cap, totalLitros, items};
@@ -2897,7 +2999,13 @@ function aplRieSetCampo(campo,val){
   if(campo==='cultivo'||campo==='fecha'||campo==='epoca'){ return; }
   renderRiegoForm();
 }
-function aplRieCant(idx,val){ aplRie.cant[idx]=val; rieRenderCalc(); }
+function aplRieCant(idx,val){
+  const antes=num(aplRie.cant[idx])>0;
+  aplRie.cant[idx]=val;
+  // Si la sal pasó de vacía a cargada (o al revés), hay que redibujar para
+  // mostrar u ocultar el selector de producto. Si no, solo recalcular (mantiene el foco).
+  if(antes !== (num(val)>0)) renderRiegoForm(); else rieRenderCalc();
+}
 function aplRieLitrosIdx(i,val){
   const secs=sectoresDePredio(aplRie.predioId); const s=secs[i];
   if(s!=null){ aplRie.litros[s]=val; rieRenderCalc(); }
@@ -2917,9 +3025,13 @@ async function guardarRiego(){
   const sectoresData=Object.keys(aplRie.litros)
     .filter(s=>num(aplRie.litros[s])>0)
     .map(s=>({sector:String(s), litros:num(aplRie.litros[s]), ha:haSector(aplRie.predioId,s)}));
-  const salesData=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, cantidadKg:it.cantKg, concentracion:it.concentracion, unidad:it.unidad}));
+  const salesData=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, productoNombre:it.productoNombre||'', cantidadKg:it.cantKg, concentracion:it.concentracion, unidad:it.unidad}));
   const desc=r.items.filter(it=>it.productoId).map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.totalAplicado}));
-  const sinBodega=r.items.filter(it=>!it.productoId).map(it=>it.nombre);
+  // v36 · Lo que se aplicó pero no salió de bodega queda escrito en el documento,
+  // no solo en un toast que se va en 3 segundos.
+  const sinDescontar=r.items.filter(it=>!it.productoId)
+    .map(it=>({nombre:it.nombre, cantidadCargada:it.cantKg, cantidadAplicada:it.totalAplicado, unidad:it.unidad, motivo:'sin producto de bodega'}));
+  const sinBodega=sinDescontar.map(it=>it.nombre);
 
   loading(true,'Registrando…');
   try{
@@ -2928,14 +3040,14 @@ async function guardarRiego(){
     await db.collection('aplicaciones').add({
       tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:aplRie.cultivo, epoca:aplRie.epoca||'', bodegaDescuento:bodDesc,
       ...datosTemporada(aplRie.predioId, aplRie.epoca, aplRie.cultivo),
-      capacidad:cap, sales:salesData, sectores:sectoresData, totalLitros:r.totalLitros,
-      descontado: desc.map(d=>({productoId:d.productoId, cantidad:d.cantidad})),
+      capacidad:cap, sales:salesData, sectores:sectoresData, totalLitros:r.totalLitros, sinDescontar,
+      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
       registradoPor:currentUser.uid,
       registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       createdAt:Date.now()
     });
     if(desc.length) await ajustarStockBodega(desc, bodDesc, -1);
-    aplRie={ fecha:todayIso, predioId:aplRie.predioId, cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{} };
+    aplRie={ fecha:todayIso, predioId:aplRie.predioId, cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{}, prodSel:{} };
     renderRiegoForm();
     renderAplList();
     let msg='✅ Fertirriego registrado';
@@ -5906,10 +6018,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v35';
+const MANUAL_VERSION='v36';
 const MANUAL_FECHA='2026-09-06';
 
 const MANUAL_CAMBIOS=[
+  {v:'v36', f:'06-09-2026', txt:'Fertirriego: las sales ahora sí descuentan de bodega. Antes, siete de las nueve sales no calzaban con el nombre del producto en el catálogo y se aplicaban sin descontar. Además, bajo cada sal se ve de qué producto se descuenta y se puede corregir a mano, y si algo queda sin descontar el aviso queda escrito en la aplicación.'},
   {v:'v35', f:'06-09-2026', txt:'Cada entrada guarda el nombre del trabajador al momento de registrarla. Antes, si se borraba a alguien de la lista del predio, sus registros viejos quedaban sin nombre. Ahora el histórico se mantiene aunque el trabajador ya no esté; en esos casos aparece la marca (histórico).'},
   {v:'v34', f:'03-09-2026', txt:'Gerencia ya puede corregir el rol y los predios de un usuario desde Config › Usuarios, con el lápiz ✏️. Antes había que entrar a la consola de Firebase. Se agrega el rol Asesor BPA, de solo lectura.'},
   {v:'v33', f:'02-09-2026', txt:'Se agrega este manual dentro de la app. Cada usuario ve solo las secciones que le corresponden según su rol.'},
@@ -6032,12 +6145,15 @@ const MANUAL_SECCIONES=[
   intro:'Fertirriego (sales al estanque) y aplicaciones vía riego (receta por hectárea). También descuentan stock.',
   pasos:[
     '<b>🧪 Fertilización:</b> fecha, predio, cultivo y época. Anota la <b>capacidad del estanque</b> en litros, las <b>sales cargadas</b> en kilos y, por cada sector, los <b>litros de estanque aplicados</b>. Aprieta "Registrar fertirriego".',
+    'Al cargar kilos en una sal aparece abajo <b>"↳ descuenta de"</b> con el producto de bodega elegido. Revísalo: si dice <b>— sin descontar —</b> o el producto no es el correcto, elígelo tú de la lista. Lo que quede sin producto se aplica igual, pero <b>no sale de bodega</b>.',
     '<b>💧 Vía riego:</b> fecha, predio, cultivo y época. Escribe la <b>receta con dosis por hectárea</b> (ejemplo: <i>Ultraferro 2 kg + Zincfull 1 L + Serenade 2 L</i>), marca los <b>sectores aplicados</b> y aprieta "Registrar vía riego".',
     'Igual que en foliar: el producto que la app no reconozca hay que elegirlo a mano antes de guardar.'
   ],
   tips:[
     'Los litros por sector son los que reparten el consumo entre sectores. Si pones el total en un solo sector, el gasto por hectárea queda deformado.',
-    'Los sectores salen de la superficie cargada en el predio. Si falta un sector, avisa a gerencia para que lo agregue.'
+    'Los sectores salen de la superficie cargada en el predio. Si falta un sector, avisa a gerencia para que lo agregue.',
+    'Si una sal aparece con <b>"revisar: 2 productos"</b>, es que el catálogo tiene ese producto cargado más de una vez. Se elige el que tenga stock en tu predio, pero conviene avisar a gerencia para que junte las entradas repetidas.',
+    'Cuando algo se aplica sin descontar, queda un aviso amarillo en "Últimas aplicaciones". No es un error de la app: es para que bodega lo regularice.'
   ]
 },
 {
