@@ -963,6 +963,20 @@ const fD   = iso=>{const[y,m,d]=iso.split('-');return`${d}/${m}/${y}`};
 const fDMY = iso=>{if(!iso)return'—';const[y,m,d]=iso.split('-');return`${d}/${m}/${y.slice(2)}`};
 const pD   = ()=>PREDIOS[activePred];
 const pWs  = ()=>wMap[activePred]||[];
+
+// ── v35 · Nombre histórico del trabajador ──────────────────────────────
+// Desde v35 cada entrada guarda workerNombre/workerSubjefe al crearse, así
+// el registro conserva a quién correspondía aunque el trabajador se borre
+// o se renombre después en /workers. wDe() resuelve primero contra el
+// maestro (dato vivo) y cae al nombre congelado en la entrada.
+// El flag _histor marca que el trabajador ya no está en el maestro.
+function wDe(e, pred){
+  const lista = (pred && pred!==activePred) ? (wMap[pred]||[]) : pWs();
+  const w = lista.find(x=>x.id===e.workerId);
+  if(w) return w;
+  if(e.workerNombre) return {id:e.workerId, nombre:e.workerNombre, subjefe:e.workerSubjefe||'', _histor:true};
+  return null;
+}
 const toast= msg=>{const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800)};
 const loading=(show,txt='Cargando…')=>{
   document.getElementById('loadingOverlay').style.display=show?'flex':'none';
@@ -3789,13 +3803,13 @@ function renderHoy(){
   const div=document.getElementById('hoy');if(!div)return;
   // filter by date; if subjefe, also by their group
   let entries=rCache.filter(r=>r.fecha===selDate);
-  if(!verTodosSubjefes()){const sub=userSubjefe();entries=entries.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
+  if(!verTodosSubjefes()){const sub=userSubjefe();entries=entries.filter(r=>{const w=wDe(r);return w&&w.subjefe===sub});}
   if(!entries.length){div.innerHTML=`<div class="empty"><div class="empty-icon">📝</div><div>Sin entradas para este día</div></div>`;return}
   div.innerHTML=entries.map(e=>eHTML(e)).join('');
 }
 
 function eHTML(e,pred=activePred){
-  const w=pWs().find(x=>x.id===e.workerId);
+  const w=wDe(e,pred);
   const pc={transito:'t',constancia:'c',paradero:'p'}[pred];
   // Si el registro guardó un cicloId específico, usarlo. Si no, deducir por fecha (legacy).
   let ciclo=null;
@@ -3814,7 +3828,8 @@ function eHTML(e,pred=activePred){
   let reemplazoHTML='';
   if(e.ausente||e.vacaciones){
     const esSin=e.reemplazoWorkerId==='reemplazo';const esOtro=e.reemplazoWorkerId==='otro';
-    const rw=(!esOtro&&e.reemplazoWorkerId)?(wMap[e.reemplazoPredioId]||[]).find(x=>x.id===e.reemplazoWorkerId):null;
+    let rw=(!esOtro&&e.reemplazoWorkerId)?(wMap[e.reemplazoPredioId]||[]).find(x=>x.id===e.reemplazoWorkerId):null;
+    if(!rw&&!esOtro&&e.reemplazoNombre)rw={nombre:e.reemplazoNombre};
     const bgColor=e.vacaciones?'#FEF3C7':'#FEE2E2';
     const txtColor=e.vacaciones?'#D97706':'var(--red)';
     const icono=e.vacaciones?'🌴 Vacaciones':'⚠️ Ausente';
@@ -3841,7 +3856,7 @@ function eHTML(e,pred=activePred){
     <div class="ehdr">
       <div>
         <div class="ename" style="${(e.ausente||e.vacaciones)?'color:var(--muted);text-decoration:line-through':''}">${w?w.nombre:'—'}</div>
-        <div class="emeta">${w?`👤 ${w.subjefe} · `:''}${fD(e.fecha)}</div>
+        <div class="emeta">${w?`👤 ${w.subjefe}${w._histor?' <span title="Trabajador ya no está en la lista del predio; nombre guardado en el registro" style="color:var(--muted)">(histórico)</span>':''} · `:''}${fD(e.fecha)}</div>
       </div>
       ${canDel?`<button class="del-btn" onclick="delEntry('${e.id}')">✕</button>`:''}
     </div>
@@ -3925,8 +3940,19 @@ async function guardar(){
   }
   loading(true,'Guardando…');
   try{
-    const data = {fecha:selDate,workerId:wId,labores,obs,cultivo:cultivoReg,
-      ausente:ausente||false,licencia:document.getElementById('chkLicencia').checked||false,vacaciones:vacaciones||false,reemplazoPredioId,reemplazoWorkerId,
+    // v35 · Congelar el nombre del trabajador dentro de la entrada.
+    // El maestro /workers cambia (se renombra o se borra gente entre temporadas);
+    // el registro histórico no debe depender de él.
+    const wSel = pWs().find(x=>x.id===wId) || {};
+    let reemplazoNombre = null;
+    if(reemplazoWorkerId && reemplazoWorkerId!=='reemplazo' && reemplazoWorkerId!=='otro'){
+      const rwSel = (wMap[reemplazoPredioId]||[]).find(x=>x.id===reemplazoWorkerId);
+      if(rwSel) reemplazoNombre = rwSel.nombre;
+    }
+    const data = {fecha:selDate,workerId:wId,
+      workerNombre:wSel.nombre||'',workerSubjefe:wSel.subjefe||'',
+      labores,obs,cultivo:cultivoReg,
+      ausente:ausente||false,licencia:document.getElementById('chkLicencia').checked||false,vacaciones:vacaciones||false,reemplazoPredioId,reemplazoWorkerId,reemplazoNombre,
       ts:Date.now(),creadoPor:currentUser.uid};
     if(cicloIdReg) data.cicloId = cicloIdReg;
     await colRegistros(activePred).add(data);
@@ -3958,7 +3984,7 @@ function renderAvance(){
   const entryH=e=>(e.labores||[{horas:e.horas||0}]).reduce((s,l)=>s+(l.horas||0),0);
   const entryM=e=>(e.labores||[{mesas:e.mesas||0}]).reduce((s,l)=>s+(l.mesas||0),0);
   let todayE=rCache.filter(r=>r.fecha===selDate);
-  if(!verTodosSubjefes()){const sub=userSubjefe();todayE=todayE.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
+  if(!verTodosSubjefes()){const sub=userSubjefe();todayE=todayE.filter(r=>{const w=wDe(r);return w&&w.subjefe===sub});}
   const tH=todayE.reduce((s,r)=>s+entryH(r),0),tM=todayE.reduce((s,r)=>s+entryM(r),0);
   document.getElementById('statsRow').innerHTML=`
     <div class="sbox"><div class="sval">${rCache.length}</div><div class="slbl">Total reg.</div></div>
@@ -3988,7 +4014,7 @@ function renderAvance(){
     </tr></thead>
     <tbody>${wd.map((iso,i)=>{
       let dr=rCache.filter(r=>r.fecha===iso);
-      if(!verTodosSubjefes()){const sub=userSubjefe();dr=dr.filter(r=>{const w=pWs().find(x=>x.id===r.workerId);return w&&w.subjefe===sub});}
+      if(!verTodosSubjefes()){const sub=userSubjefe();dr=dr.filter(r=>{const w=wDe(r);return w&&w.subjefe===sub});}
       const h=dr.reduce((s,r)=>s+entryH(r),0),m=dr.reduce((s,r)=>s+entryM(r),0),isT=iso===selDate;
       return `<tr style="${isT?'background:var(--lime);':''}border-bottom:1px solid var(--sand)">
         <td style="padding:6px 3px;font-weight:${isT?700:400}">${DIAS[i]} ${iso.slice(8)}</td>
@@ -4371,7 +4397,7 @@ async function renderProg(){
     }
     const dayName=progDayName(mondayIso,dayIso);
     const isToday=dayIso===todayIso;
-    let realEntries=rCache.filter(r=>r.fecha===dayIso&&pWs().some(w=>w.id===r.workerId&&w.subjefe===subjefe));
+    let realEntries=rCache.filter(r=>{const w=wDe(r);return r.fecha===dayIso&&w&&w.subjefe===subjefe});
     const card=document.createElement('div');card.className='prog-day-card';
     if(isToday)card.style.boxShadow='0 0 0 2px var(--green),0 2px 12px rgba(0,0,0,.10)';
     let tasksHTML=tasks.length?tasks.map((t,i)=>{
@@ -4949,7 +4975,8 @@ async function cargarYRenderInformes(){
         const snap = await colRegistros(pid).where('fecha','>=',desde).where('fecha','<=',hasta).get();
         snap.forEach(d=>{
           const r = d.data();
-          const w = (workers[pid]||{})[r.workerId] || {};
+          const w = (workers[pid]||{})[r.workerId] ||
+            (r.workerNombre ? {nombre:r.workerNombre, subjefe:r.workerSubjefe||'', _histor:true} : {});
           if(subjefeSel && w.subjefe !== subjefeSel) return;
           registros.push({ ...r, _id:d.id, _predio:pid, _worker:w });
         });
@@ -5879,10 +5906,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v34';
-const MANUAL_FECHA='2026-09-03';
+const MANUAL_VERSION='v35';
+const MANUAL_FECHA='2026-09-06';
 
 const MANUAL_CAMBIOS=[
+  {v:'v35', f:'06-09-2026', txt:'Cada entrada guarda el nombre del trabajador al momento de registrarla. Antes, si se borraba a alguien de la lista del predio, sus registros viejos quedaban sin nombre. Ahora el histórico se mantiene aunque el trabajador ya no esté; en esos casos aparece la marca (histórico).'},
   {v:'v34', f:'03-09-2026', txt:'Gerencia ya puede corregir el rol y los predios de un usuario desde Config › Usuarios, con el lápiz ✏️. Antes había que entrar a la consola de Firebase. Se agrega el rol Asesor BPA, de solo lectura.'},
   {v:'v33', f:'02-09-2026', txt:'Se agrega este manual dentro de la app. Cada usuario ve solo las secciones que le corresponden según su rol.'},
   {v:'v31', f:'01-09-2026', txt:'La programación se guarda sola: ya no hay que apretar "Guardar programación". Los datos quedan en el servidor apenas los escribes.'},
@@ -5926,7 +5954,8 @@ const MANUAL_SECCIONES=[
   tips:[
     'Si un valor se ve raro (más de 10 horas o más de 70 mesas en el día, sumando lo ya registrado), la app pregunta antes de guardar. No es un bloqueo: si el dato es correcto, acepta.',
     'Se puede hacer más de una entrada por trabajador en el mismo día; se suman.',
-    'Si te equivocaste, borra la entrada en la lista de abajo y vuelve a cargarla. Es mejor eso que dejar el dato malo.'
+    'Si te equivocaste, borra la entrada en la lista de abajo y vuelve a cargarla. Es mejor eso que dejar el dato malo.',
+    'Desde la v35 la entrada guarda el nombre del trabajador tal como estaba ese día. Si después se saca a esa persona de la lista del predio, sus registros viejos siguen mostrando su nombre, con la marca <b>(histórico)</b>. Por eso ya no hay problema en depurar la lista de trabajadores entre temporadas.'
   ]
 },
 {
