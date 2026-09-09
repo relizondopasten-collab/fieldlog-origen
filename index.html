@@ -1049,9 +1049,17 @@ const BODEGA_CENTRAL='constancia';
 function esBodegaCentral(){return isBodeguero()&&userPredios().includes(BODEGA_CENTRAL)}
 
 // Planilla de bodega (stock, compras, despachos, conciliación)
-function canBodega(){return isAdmin()||isBodeguero()}
-// Catálogo, precios y compras: solo gerencia y la bodega central.
-function canCatalogo(){return isAdmin()||esBodegaCentral()}
+// v37 · Las jefaturas de predio entran a CONSULTAR el inventario. Ven la
+// planilla completa pero en solo lectura: canCatalogo() las deja fuera, así que
+// las celdas quedan deshabilitadas y no aparecen los botones de guardar,
+// agregar producto ni movimientos.
+function canBodega(){return isAdmin()||isBodeguero()||isJefe()}
+// Catálogo, precios y stock de la planilla.
+// v37 · Antes esto era solo la bodega central. Ahora los dos bodegueros
+// (Gabriela y Nicolás) corrigen directamente nombres, cantidades y precios.
+function canCatalogo(){return isAdmin()||isBodeguero()}
+// Registrar compras (entrada de stock con precio): sigue siendo de la central.
+function canComprar(){return isAdmin()||esBodegaCentral()}
 // Despachar: desde las bodegas propias hacia cualquier otra.
 function canDespachar(){return isAdmin()||isBodeguero()}
 // Predios sobre los que el usuario puede operar, en el orden estándar.
@@ -1060,8 +1068,21 @@ function prediosPermitidos(){const u=userPredios();return PRED_ORDER.filter(x=>u
 function canAplicEnPredio(pid){return canAplicaciones()&&userPredios().includes(pid)}
 // Registro de aplicaciones. El bodeguero ya NO registra: solo ve la planilla.
 function canAplicaciones(){return isAdmin()||isRiego()||isFoliar()}
-// Ver la pantalla de aplicaciones (registrar o solo mirar). El BPA solo mira.
-function canVerAplic(){return canAplicaciones()||isBpa()}
+// Ver la pantalla de aplicaciones (registrar, corregir o solo mirar).
+// v37 · Se suman las jefaturas de predio (solo mirar) y los bodegueros
+// (mirar y corregir lo que ya está registrado).
+function canVerAplic(){return canAplicaciones()||isBpa()||isJefe()||isBodeguero()}
+// v37 · Quién puede corregir una aplicación ya registrada.
+// Gerencia y bodega corrigen cualquiera; el encargado de riego o de foliar solo
+// las que él mismo registró, y solo dentro de sus predios.
+function canEditAplicTodas(){return isAdmin()||isBodeguero()}
+function canEditAplic(a){
+  if(!a) return false;
+  if(canEditAplicTodas()) return true;
+  if(!canAplicaciones()) return false;
+  if(!userPredios().includes(a.predioId)) return false;
+  return !!(currentUser && a.registradoPor===currentUser.uid);
+}
 function canAplicFoliar(){return isAdmin()||isFoliar()}
 function canAplicRiego(){return isAdmin()||isRiego()}
 // Informe de gasto: gerencia, jefes de predio y el rol de solo-gastos.
@@ -1437,7 +1458,7 @@ function renderProductosList(){
 }
 
 async function addProducto(){
-  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
+  if(!canCatalogo()){ toast('Solo bodega o gerencia'); return; }
   const nombre = document.getElementById('pNombre').value.trim();
   const categoria = document.getElementById('pCategoria').value;
   const proveedor = document.getElementById('pProveedor').value.trim();
@@ -1465,7 +1486,7 @@ async function addProducto(){
 }
 
 async function delProducto(id){
-  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
+  if(!canCatalogo()){ toast('Solo bodega o gerencia'); return; }
   const p = productosCache.find(x=>x.id===id);
   if(!p) return;
   const nL = Array.isArray(p.lotes)?p.lotes.length:0;
@@ -1484,7 +1505,7 @@ async function delProducto(id){
 }
 
 async function addCategoriaFito(){
-  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
+  if(!canCatalogo()){ toast('Solo bodega o gerencia'); return; }
   const nombre = (prompt('Nombre de la nueva categoría:')||'').trim();
   if(!nombre) return;
   const existe = categoriasFitoCache.find(c=>normNombre(c)===normNombre(nombre));
@@ -1536,7 +1557,7 @@ function normUnidad(s){
 }
 
 function previewImport(){
-  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
+  if(!canCatalogo()){ toast('Solo bodega o gerencia'); return; }
   const raw = document.getElementById('impText').value;
   const box = document.getElementById('impPreview');
   impParsed = null;
@@ -1637,7 +1658,7 @@ function previewImport(){
 }
 
 async function confirmImport(){
-  if(!canCatalogo()){ toast('Solo la bodega central'); return; }
+  if(!canCatalogo()){ toast('Solo bodega o gerencia'); return; }
   if(!impParsed||!impParsed.grupos.length){ toast('Nada que importar'); return; }
   const {grupos, catsNuevas} = impParsed;
   if(!confirm(`Se importarán ${grupos.length} producto(s). ¿Continuar?`)) return;
@@ -1705,16 +1726,32 @@ let aplFol = null;   // estado del formulario foliar
 let aplRie = null;   // estado del formulario riego
 let aplResumen = null;  // estado del informe de gasto (pantalla Gastos)
 let aplVia = null;      // estado del formulario vía riego (dosis/ha)
+// v37 · Aplicación que se está corrigiendo, o null si se está registrando una
+// nueva: {id, tipo, doc, descontado:[], bodega}. `descontado` y `bodega` son los
+// del documento ORIGINAL: al guardar se devuelve ese stock antes de descontar
+// el nuevo, para que una corrección no deje el inventario torcido.
+let aplEdit = null;
+
+function aplResetForms(){
+  aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], litros:{} };
+  aplRie = { fecha: todayIso, predioId:'', epoca:'', estanques:estanquesPorDefecto('') };
+  aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
+  aplEdit = null;
+}
 
 function initAplic(){
   if(!canVerAplic()) return;
   const formCard=document.getElementById('aplFormCard');
   const sub=document.getElementById('aplSub');
-  // Solo lectura (BPA): sin formularios, solo el listado de lo registrado.
+  aplResetForms();
+  // Sin permiso para registrar (BPA, jefaturas y bodega): sin formulario a la
+  // vista. Bodega igual puede corregir: el ✏️ del listado abre el formulario.
   if(!canAplicaciones()){
     if(formCard)formCard.style.display='none';
-    if(sub)sub.textContent='Consulta de las aplicaciones registradas en tus predios';
-    renderAplList();
+    if(sub)sub.textContent = canEditAplicTodas()
+      ? 'Consulta de las aplicaciones registradas · con ✏️ puedes corregir una'
+      : 'Consulta de las aplicaciones registradas en tus predios';
+    loadCiclosAll().then(()=>renderAplList());
     return;
   }
   if(formCard)formCard.style.display='';
@@ -1722,10 +1759,19 @@ function initAplic(){
   // Cada rol arranca en la pestaña que le corresponde; aplSetTab oculta el resto.
   const primeraTab=canAplicFoliar()?'foliar':'riego';
   aplTab=primeraTab;
-  aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], destinos:[{modulo:'',litros:''}] };
-  aplRie = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{}, prodSel:{} };
-  aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
   loadCiclosAll().then(()=>{ aplSetTab(primeraTab); renderAplList(); });
+}
+
+// v37 · Botón de guardar de los tres formularios. En modo corrección cambia el
+// texto y aparece el botón para salirse sin guardar.
+function aplBotonGuardar(fn, texto){
+  if(aplEdit){
+    return `<div style="display:flex;gap:6px;margin-top:12px">
+      <button class="btn btn-primary" style="flex:1" onclick="${fn}">💾 Guardar cambios</button>
+      <button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" onclick="aplCancelarEdicion()">Cancelar</button>
+    </div>`;
+  }
+  return `<button class="btn btn-primary" style="margin-top:12px" onclick="${fn}">${escH(texto)}</button>`;
 }
 
 // Carga ciclos abiertos de TODOS los predios (get puntual, no listener)
@@ -1755,6 +1801,18 @@ function cicloDeAplicacion(predioId, epoca, cultivo){
   return lista.find(c=>c.temporada===epoca && (!cultivo || !c.cultivo || c.cultivo===cultivo))
       || lista.find(c=>c.temporada===epoca)
       || null;
+}
+// v37 · Al corregir un registro, si el ciclo ya se cerró (o el usuario que
+// corrige —bodega— no tiene permiso para leer ciclos), datosTemporada()
+// devolvería null y borraría el año de temporada del documento original.
+// Este envoltorio conserva lo que ya estaba guardado.
+function datosTemporadaEdit(predioId, epoca, cultivo){
+  const d=datosTemporada(predioId, epoca, cultivo);
+  if(aplEdit && aplEdit.doc){
+    if(d.cicloId==null && aplEdit.doc.cicloId!=null) d.cicloId=aplEdit.doc.cicloId;
+    if(d.temporadaAnio==null && aplEdit.doc.temporadaAnio!=null) d.temporadaAnio=aplEdit.doc.temporadaAnio;
+  }
+  return d;
 }
 function datosTemporada(predioId, epoca, cultivo){
   const c=cicloDeAplicacion(predioId, epoca, cultivo);
@@ -1793,8 +1851,13 @@ function modulosDePredio(predioId){
 }
 
 function aplSetTab(t){
-  if(t==='foliar'&&!canAplicFoliar())t='riego';
-  if((t==='riego'||t==='viariego')&&!canAplicRiego())t='foliar';
+  // v37 · Al corregir se abre la pestaña del tipo del registro, aunque el
+  // usuario (bodega) no tenga permiso para registrar de ese tipo, y se ocultan
+  // las otras dos: no se cambia de tipo a mitad de una corrección.
+  if(!aplEdit){
+    if(t==='foliar'&&!canAplicFoliar())t='riego';
+    if((t==='riego'||t==='viariego')&&!canAplicRiego())t='foliar';
+  }
   aplTab=t;
   const off='background:var(--sand);color:var(--dark)';
   const map={foliar:'aplTabFoliar', riego:'aplTabRiego', viariego:'aplTabVia'};
@@ -1802,8 +1865,9 @@ function aplSetTab(t){
     const b=document.getElementById(map[k]); if(!b) return;
     // Ojo: se reescribe cssText completo, así que el ocultamiento por rol
     // debe reaplicarse aquí en cada render.
-    const oculto = (k==='foliar' && !canAplicFoliar())
-                || ((k==='riego'||k==='viariego') && !canAplicRiego());
+    const oculto = aplEdit ? (k!==t)
+      : ((k==='foliar' && !canAplicFoliar())
+      || ((k==='riego'||k==='viariego') && !canAplicRiego()));
     b.style.cssText='flex:1;min-width:100px;'+(t===k?'':off)+(oculto?';display:none':'');
   });
   if(t==='foliar') renderFoliarForm();
@@ -1898,26 +1962,32 @@ function renderFoliarForm(){
   const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===aplFol.cultivo?' selected':''}>${escH(c)}</option>`).join('');
 
   // MÓDULOS del predio elegido + mojamiento
-  const mods = aplFol.predioId ? modulosDePredio(aplFol.predioId) : [];
-  let destH = aplFol.destinos.map((d,i)=>{
-    const modOpts = `<option value="">— módulo —</option>`+mods.map(m=>{
-      const ha=haModulo(aplFol.predioId,m);
-      return `<option value="${escH(m)}"${m===d.modulo?' selected':''}>Mód ${escH(m)}${ha!==null?` (${ha} ha)`:''}</option>`;
-    }).join('');
-    return `<div style="border:1px solid var(--sand);border-radius:9px;padding:8px;margin-bottom:8px;background:var(--cream)">
-      <div style="display:flex;gap:6px;align-items:center">
-        <select onchange="aplFolSet('destinos',${i},'modulo',this.value)" style="flex:1"${aplFol.predioId?'':' disabled'}>${modOpts}</select>
-        <label style="font-size:11px;color:var(--muted);white-space:nowrap">Mojam. (L):</label>
-        <input type="text" inputmode="decimal" placeholder="2000" value="${d.litros}" oninput="aplFolSet('destinos',${i},'litros',this.value)" style="width:90px">
-        ${aplFol.destinos.length>1?`<button class="btn btn-danger btn-sm" onclick="aplFolDel('destinos',${i})" style="padding:4px 8px">✕</button>`:''}
-      </div>
-    </div>`;
-  }).join('');
+  // v37 · Antes se agregaban de a uno con "+ Módulo". Ahora aparecen todos los
+  // módulos del predio de una vez, igual que los sectores en Fertilización:
+  // basta con escribir el mojamiento gastado en los que se aplicaron.
+  let destH;
+  if(!aplFol.predioId){
+    destH='<p style="font-size:11px;color:var(--muted)">Elige el predio para ver sus módulos.</p>';
+  }else{
+    const mods = modulosDePredio(aplFol.predioId);
+    if(!mods.length){
+      destH='<p style="font-size:11px;color:var(--muted)">Este predio no tiene módulos cargados.</p>';
+    }else{
+      destH = mods.map((m,i)=>{
+        const ha=haModulo(aplFol.predioId,m);
+        const lit=aplFol.litros[m]!=null?aplFol.litros[m]:'';
+        return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+          <span style="flex:1;font-size:12px">Mód ${escH(m)}${ha!=null?` <span style="color:var(--muted)">(${fmtNum(ha,2)} ha)</span>`:''}</span>
+          <input type="text" inputmode="decimal" placeholder="L" value="${escH(String(lit))}" oninput="aplFolLitrosIdx(${i},this.value)" style="width:90px;text-align:right">
+        </div>`;
+      }).join('');
+    }
+  }
 
   box.innerHTML=`
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value"></div>
-      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplFolSetCampo('predioId',this.value)">${predOpts(aplFol.predioId)}</select></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplFolSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplFol.predioId)}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplFolSetCampo('cultivo',this.value)">${cultOpts}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época</label><select onchange="aplFolSetCampo('epoca',this.value)">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplFol.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
     </div>
@@ -1925,11 +1995,10 @@ function renderFoliarForm(){
     <textarea id="folTxt" placeholder="Ej: Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + acido citrico 30 g" oninput="folSetTxt(this.value)" style="width:100%;min-height:64px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplFol.recetaTxt)}</textarea>
     <button class="btn btn-sm" onclick="folInterpretar()" style="background:var(--dark);color:#fff;margin:6px 0">🔎 Interpretar receta</button>
     ${recetaH}
-    <div class="sec-div">Módulos aplicados (módulo + mojamiento)</div>
+    <div class="sec-div">Mojamiento gastado por módulo (L)</div>
     ${destH}
-    <button class="btn btn-sm" onclick="aplFolAdd('destinos')" style="background:var(--sand);color:var(--dark)"${aplFol.predioId?'':' disabled'}>+ Módulo</button>
     <div id="folConsumo"></div>
-    <button class="btn btn-primary" style="margin-top:12px" onclick="guardarFoliar()">Registrar aplicación</button>
+    ${aplBotonGuardar('guardarFoliar()','Registrar aplicación')}
   `;
   folRenderConsumo();
 }
@@ -1948,26 +2017,27 @@ function folSetProd(i,productoId){
 }
 function folDelItem(i){ aplFol.receta.splice(i,1); renderFoliarForm(); }
 
-function aplFolSet(grupo,i,campo,val){
-  aplFol[grupo][i][campo]=val;
-  if(grupo==='destinos'&&campo==='litros'){ folRenderConsumo(); return; }  // no re-render: mantener foco
-  renderFoliarForm();
+function aplFolLitrosIdx(i,val){
+  const mods=modulosDePredio(aplFol.predioId); const m=mods[i];
+  if(m!=null){ aplFol.litros[m]=val; folRenderConsumo(); }   // sin re-render: mantener foco
 }
 function aplFolSetCampo(campo,val){
   aplFol[campo]=val;
-  if(campo==='predioId'){ aplFol.destinos=[{modulo:'',litros:''}]; }  // reset módulos al cambiar predio
+  if(campo==='predioId'){ aplFol.litros={}; }  // los módulos son otros: se parte de cero
   if(campo==='cultivo'||campo==='epoca'){ return; }  // no re-render: mantener foco/selección
   renderFoliarForm();
 }
-function aplFolAdd(grupo){
-  if(grupo==='destinos') aplFol.destinos.push({modulo:'',litros:''});
-  renderFoliarForm();
+
+// Módulos con mojamiento escrito, en el formato que se guarda en Firestore.
+function folDestinos(){
+  return Object.keys(aplFol.litros)
+    .filter(m=>num(aplFol.litros[m])>0)
+    .map(m=>({modulo:String(m), litros:num(aplFol.litros[m]), ha:haModulo(aplFol.predioId,m)}));
 }
-function aplFolDel(grupo,i){ aplFol[grupo].splice(i,1); renderFoliarForm(); }
 
 // Consumo por producto = dosis × litros/100 (en unidad escrita y en base L/kg)
 function calcFolConsumo(){
-  const totalAgua = aplFol.destinos.reduce((s,d)=>s+(parseFloat(d.litros)||0),0);
+  const totalAgua = Object.keys(aplFol.litros).reduce((s,m)=>s+(num(aplFol.litros[m])||0),0);
   const items=[];
   aplFol.receta.forEach(r=>{
     if(r.productoId && r.dosis!=null && !isNaN(r.dosis)){
@@ -1984,7 +2054,7 @@ function folRenderConsumo(){
   if(consumo.total>0 && consumo.items.length){
     el.innerHTML=`<div class="sec-div">Consumo calculado</div>
       <div style="font-size:11px;color:var(--dark);line-height:1.7">
-        <b>Total agua: ${fmtNum(consumo.total,0)} L</b> en ${aplFol.destinos.filter(d=>d.unidad&&parseFloat(d.litros)>0).length} destino(s)<br>
+        <b>Total agua: ${fmtNum(consumo.total,0)} L</b> en ${folDestinos().length} módulo(s)<br>
         ${consumo.items.map(it=>`${escH(it.nombre)}: <b>${fmtNum(it.origTotal)} ${escH(it.unidad)}</b> = ${fmtNum(it.baseTotal,3)} ${escH(it.base)}`).join('<br>')}
       </div>`;
   } else el.innerHTML='';
@@ -2047,7 +2117,7 @@ function renderViaRiegoForm(){
   box.innerHTML=`
     <div class="form-row"><label>Fecha</label><input type="date" value="${aplVia.fecha}" onchange="viaSetCampo('fecha',this.value)"></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="viaSetCampo('predioId',this.value)">${predOpts(aplVia.predioId)}</select></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="viaSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplVia.predioId)}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="viaSetCampo('cultivo',this.value)">${cultOpts}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época</label><select onchange="viaSetCampo('epoca',this.value)">${epocaOpts}</select></div>
     </div>
@@ -2058,7 +2128,7 @@ function renderViaRiegoForm(){
     <div class="sec-div">Sectores de riego aplicados</div>
     ${sectoresH}
     <div id="viaCalc"></div>
-    <button class="btn btn-primary" style="margin-top:12px" onclick="guardarViaRiego()">Registrar vía riego</button>
+    ${aplBotonGuardar('guardarViaRiego()','Registrar vía riego')}
   `;
   viaRenderCalc();
 }
@@ -2101,8 +2171,13 @@ function viaSetCampo(campo,val){ aplVia[campo]=val; if(campo==='predioId'){ aplV
 function viaToggleSector(i){ const secs=sectoresDePredio(aplVia.predioId); const s=secs[i]; if(s==null) return; aplVia.sectores[s]=!aplVia.sectores[s]; renderViaRiegoForm(); }
 
 async function guardarViaRiego(){
-  if(!canAplicaciones()){ toast('Sin permiso'); return; }
-  if(!canAplicEnPredio(aplVia.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
+  const editando = !!(aplEdit && aplEdit.tipo==='viariego');
+  if(editando){
+    if(!canEditAplic(aplEdit.doc)){ toast('Sin permiso para corregir esta aplicación'); return; }
+  }else{
+    if(!canAplicaciones()){ toast('Sin permiso'); return; }
+    if(!canAplicEnPredio(aplVia.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
+  }
   if(!aplVia.receta.length){ toast('⚠️ Escribe la receta y pulsa Interpretar'); return; }
   if(aplVia.receta.some(r=>!r.productoId)){ toast('⚠️ Corrige los productos no reconocidos'); return; }
   if(aplVia.receta.some(r=>r.dosis==null||isNaN(r.dosis)||r.dosis<=0)){ toast('⚠️ Falta dosis en algún producto'); return; }
@@ -2120,24 +2195,34 @@ async function guardarViaRiego(){
   const sinDescontar=aplVia.receta.filter(x=>!x.productoId)
     .map(x=>({nombre:x.nombre||x.txt||'', cantidadCargada:x.dosis, unidad:x.unidad||'', motivo:'sin producto de bodega'}));
 
-  loading(true,'Registrando…');
+  loading(true, editando?'Guardando cambios…':'Registrando…');
   try{
     const bodDesc=aplVia.predioId||'constancia';
     const faltan=faltantesStock(desc, bodDesc);
-    await db.collection('aplicaciones').add({
+    const datos={
       tipo:'viariego', fecha:aplVia.fecha, predioId:aplVia.predioId, cultivo:aplVia.cultivo, epoca:aplVia.epoca||'', bodegaDescuento:bodDesc,
-      ...datosTemporada(aplVia.predioId, aplVia.epoca, aplVia.cultivo),
+      ...datosTemporadaEdit(aplVia.predioId, aplVia.epoca, aplVia.cultivo),
       receta:recetaData, sectores:sectoresData, haTotal:r.haTotal, sinDescontar,
-      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
-      registradoPor:currentUser.uid,
-      registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
-      createdAt:Date.now()
-    });
-    await ajustarStockBodega(desc, bodDesc, -1);
-    aplVia={ fecha:todayIso, predioId:aplVia.predioId, cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
+      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad}))
+    };
+    if(editando){
+      await aplGuardarEdicion(datos, desc, bodDesc);
+    }else{
+      await db.collection('aplicaciones').add({
+        ...datos,
+        registradoPor:currentUser.uid,
+        registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+        createdAt:Date.now()
+      });
+      await ajustarStockBodega(desc, bodDesc, -1);
+    }
+    const pid=aplVia.predioId;
+    aplEdit=null;
+    aplVia={ fecha:todayIso, predioId:pid, cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
     renderViaRiegoForm();
     renderAplList();
-    toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Vía riego registrado · stock descontado');
+    if(editando) toast(faltan.length ? `✅ Corregida · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Vía riego corregido · stock recalculado');
+    else toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Vía riego registrado · stock descontado');
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
@@ -2660,8 +2745,13 @@ async function ajustarStockBodega(descuentos, bodega, signo){
 async function ajustarStockCentral(descuentos, signo){ return ajustarStockBodega(descuentos, BODEGA_CENTRAL, signo); }
 
 async function guardarFoliar(){
-  if(!canAplicFoliar()){ toast('Sin permiso'); return; }
-  if(!canAplicEnPredio(aplFol.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
+  const editando = !!(aplEdit && aplEdit.tipo==='foliar');
+  if(editando){
+    if(!canEditAplic(aplEdit.doc)){ toast('Sin permiso para corregir esta aplicación'); return; }
+  }else{
+    if(!canAplicFoliar()){ toast('Sin permiso'); return; }
+    if(!canAplicEnPredio(aplFol.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
+  }
   if(!aplFol.receta.length){ toast('⚠️ Escribe la receta y pulsa Interpretar'); return; }
   const sinRec=aplFol.receta.filter(r=>!r.productoId);
   if(sinRec.length){ toast('⚠️ Corrige los productos no reconocidos'); return; }
@@ -2669,39 +2759,46 @@ async function guardarFoliar(){
   if(sinDosis.length){ toast('⚠️ Falta dosis en: '+sinDosis.map(r=>r.nombre||r.txt).join(', ')); return; }
   if(!aplFol.predioId){ toast('⚠️ Elige el predio'); return; }
   if(!aplFol.cultivo){ toast('⚠️ Elige el cultivo'); return; }
-  const destinos = aplFol.destinos.filter(d=>d.modulo && parseFloat(d.litros)>0);
-  if(!destinos.length){ toast('⚠️ Agrega al menos un módulo con mojamiento'); return; }
+  const destData = folDestinos();
+  if(!destData.length){ toast('⚠️ Anota el mojamiento de al menos un módulo'); return; }
 
   const recetaData = aplFol.receta.map(r=>{
     const cv=aStock(r.dosis,r.unidad);
     return {productoId:r.productoId, nombre:r.nombre, unidad:r.unidad, dosis:r.dosis, base:cv.base};
   });
-  const destData = destinos.map(d=>({
-    modulo:String(d.modulo), litros:parseFloat(d.litros), ha:haModulo(aplFol.predioId,d.modulo)
-  }));
 
-  loading(true,'Registrando…');
+  loading(true, editando?'Guardando cambios…':'Registrando…');
   try{
-    const totalLitros = destinos.reduce((s,d)=>s+parseFloat(d.litros),0);
+    const totalLitros = destData.reduce((s,d)=>s+d.litros,0);
     const desc = descuentosFoliar(recetaData, totalLitros).filter(d=>d.productoId);
     const sinDescontar = recetaData.filter(r=>!r.productoId)
       .map(r=>({nombre:r.nombre||'', cantidadCargada:r.dosis, unidad:r.unidad||'', motivo:'sin producto de bodega'}));
     const bodDesc=aplFol.predioId||'constancia';
     const faltan = faltantesStock(desc, bodDesc);
-    await db.collection('aplicaciones').add({
+    const datos = {
       tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'', bodegaDescuento:bodDesc,
-      ...datosTemporada(aplFol.predioId, aplFol.epoca, aplFol.cultivo),
+      ...datosTemporadaEdit(aplFol.predioId, aplFol.epoca, aplFol.cultivo),
       receta:recetaData, destinos:destData, sinDescontar,
-      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
-      registradoPor:currentUser.uid,
-      registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
-      createdAt:Date.now()
-    });
-    await ajustarStockBodega(desc, bodDesc, -1);
-    aplFol={ fecha:todayIso, predioId:aplFol.predioId, cultivo:'', epoca:'', recetaTxt:'', receta:[], destinos:[{modulo:'',litros:''}] };
+      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad}))
+    };
+    if(editando){
+      await aplGuardarEdicion(datos, desc, bodDesc);
+    }else{
+      await db.collection('aplicaciones').add({
+        ...datos,
+        registradoPor:currentUser.uid,
+        registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+        createdAt:Date.now()
+      });
+      await ajustarStockBodega(desc, bodDesc, -1);
+    }
+    const pid=aplFol.predioId;
+    aplEdit=null;
+    aplFol={ fecha:todayIso, predioId:pid, cultivo:'', epoca:'', recetaTxt:'', receta:[], litros:{} };
     renderFoliarForm();
     renderAplList();
-    toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Aplicación registrada · stock descontado');
+    if(editando) toast(faltan.length ? `✅ Corregida · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Aplicación corregida · stock recalculado');
+    else toast(faltan.length ? `✅ Registrado · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Aplicación registrada · stock descontado');
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
@@ -2735,7 +2832,8 @@ async function renderAplList(){
         receta=(a.sales||[]).map(s=>`${escH(s.nombre)} ${fmtNum(s.cantidadKg)}${escH(s.unidad||'kg')}`).join(' + ');
         const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
         sub=(a.sectores||[]).map(s=>`${escH(s.sector)}: ${fmtNum(s.litros,0)}L`).join(' · ');
-        totalTxt=`${escH(pred)} · ${escH(a.cultivo||'')} · estanque ${fmtNum(a.capacidad,0)}L → ${fmtNum(a.totalLitros,0)}L aplicados`;
+        const nEst=(Number(a.estanquesDia)||1)>1 ? ` · estanque ${Number(a.estanque)||1} de ${Number(a.estanquesDia)}` : '';
+        totalTxt=`${escH(pred)} · ${escH(a.cultivo||'')}${nEst} · estanque ${fmtNum(a.capacidad,0)}L → ${fmtNum(a.totalLitros,0)}L aplicados`;
       }else if(a.tipo==='riego'){
         etiqueta='💦';
         receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.cantidad)}${escH(r.unidadStock||'')}`).join(' + ');
@@ -2756,15 +2854,25 @@ async function renderAplList(){
       const sdH = sd.length ? `<div style="background:#FEF3C7;border-radius:6px;padding:4px 8px;margin-top:4px;font-size:10.5px;color:#B45309">
         ⚠️ No se descontó de bodega: ${sd.map(x=>`${escH(x.nombre)}${x.cantidadCargada!=null?' '+fmtNum(x.cantidadCargada)+escH(x.unidad||''):''}`).join(' · ')}
       </div>` : '';
+      // v37 · Rastro de la corrección: quién y cuándo la editó por última vez.
+      const edH = a.editadoPorNombre
+        ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">✏️ corregida por ${escH(a.editadoPorNombre)}${a.editadoAt?' el '+escH(fD(new Date(a.editadoAt).toISOString().slice(0,10))):''}</div>`
+        : '';
+      // v37 · El ✏️ abre el registro en su formulario. Los documentos del modelo
+      // antiguo ('riego', anteriores a la v36) no se pueden reabrir: su forma es otra.
+      const puedeEd = a.tipo!=='riego' && canEditAplic(a);
       return `<div style="padding:8px 0;border-bottom:1px solid var(--sand)">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
           <div style="flex:1">
             <div style="font-size:11px;color:var(--muted)">${etiqueta} ${escH(fD(a.fecha))} · ${escH(a.registradoPorNombre||'')} · ${totalTxt}</div>
             <div style="font-size:12px;color:var(--dark);font-weight:600;margin:2px 0">${receta}</div>
             <div style="font-size:11px;color:var(--muted)">${sub}</div>
-            ${sdH}
+            ${sdH}${edH}
           </div>
-          ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="delAplicacion('${doc.id}')">✕</button>`:''}
+          <div style="display:flex;gap:4px;flex-shrink:0">
+            ${puedeEd?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" title="Corregir esta aplicación" onclick="aplEditar('${doc.id}')">✏️</button>`:''}
+            ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="delAplicacion('${doc.id}')">✕</button>`:''}
+          </div>
         </div>
       </div>`;
     }).join('');
@@ -2787,6 +2895,101 @@ async function delAplicacion(id){
   }
   catch(e){ toast('Error: '+e.message); }
   loading(false);
+}
+
+// ══════════ v37 · CORREGIR UNA APLICACIÓN YA REGISTRADA ══════════
+// El registro se reabre en su mismo formulario. Al guardar, el stock se
+// recalcula en tres pasos: se devuelve lo que había descontado el documento
+// original, se reescribe el documento, y se descuenta el consumo corregido.
+// Así da lo mismo si cambió la dosis, el mojamiento o los productos.
+
+// Reconstruye el texto de la receta para poder agregarle productos y volver a
+// interpretarla. Se usa punto decimal porque es lo que escribe parseReceta.
+function recetaATexto(receta){
+  return (receta||[]).map(r=>{
+    const d=(r.dosis!=null&&!isNaN(r.dosis))?String(r.dosis):'';
+    return [r.nombre||r.txt||'', d, r.unidad||''].filter(Boolean).join(' ');
+  }).filter(Boolean).join(' + ');
+}
+function recetaAEstado(receta){
+  return (receta||[]).map(r=>({
+    txt:r.nombre||r.txt||'', dosis:(r.dosis!=null&&!isNaN(r.dosis))?Number(r.dosis):null,
+    unidad:r.unidad||'', productoId:r.productoId||'', nombre:r.nombre||r.txt||''
+  }));
+}
+
+async function aplEditar(id){
+  loading(true,'Abriendo el registro…');
+  try{
+    const snap=await db.collection('aplicaciones').doc(id).get();
+    if(!snap.exists){ loading(false); toast('Ese registro ya no existe'); renderAplList(); return; }
+    const a=snap.data();
+    if(!canEditAplic(a)){ loading(false); toast('Sin permiso para corregir esta aplicación'); return; }
+    if(a.tipo==='riego'){ loading(false); toast('Este registro es del modelo antiguo y no se puede reabrir'); return; }
+    const tipo=a.tipo||'foliar';
+    if(!['foliar','fertirriego','viariego'].includes(tipo)){ loading(false); toast('Tipo de registro desconocido'); return; }
+
+    if(!Object.keys(ciclosAllCache||{}).length) await loadCiclosAll();
+
+    aplEdit={ id, tipo, doc:a, descontado:(a.descontado||[]).slice(), bodega:a.bodegaDescuento||a.predioId||'constancia' };
+
+    if(tipo==='foliar'){
+      aplFol={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
+        recetaTxt:recetaATexto(a.receta), receta:recetaAEstado(a.receta), litros:{} };
+      (a.destinos||[]).forEach(d=>{ if(d && d.modulo!=null) aplFol.litros[String(d.modulo)]=String(d.litros!=null?d.litros:''); });
+    }else if(tipo==='viariego'){
+      aplVia={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
+        recetaTxt:recetaATexto(a.receta), receta:recetaAEstado(a.receta), sectores:{} };
+      (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) aplVia.sectores[String(x.sector)]=true; });
+    }else{
+      const est=nuevoEstanque();
+      est.cultivo=a.cultivo||'';
+      est.capacidad=String(a.capacidad!=null?a.capacidad:'');
+      (a.sales||[]).forEach(s=>{
+        const i=FERTIRRIEGO_SALES.findIndex(x=>claveProd(x.nombre)===claveProd(s.nombre||''));
+        if(i>=0){
+          est.cant[i]=String(s.cantidadKg!=null?s.cantidadKg:'');
+          if(s.productoId) est.prodSel[i]=s.productoId;
+        }
+      });
+      (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) est.litros[String(x.sector)]=String(x.litros!=null?x.litros:''); });
+      aplRie={ fecha:a.fecha||todayIso, predioId:a.predioId||'', epoca:a.epoca||'', estanques:[est] };
+    }
+
+    const formCard=document.getElementById('aplFormCard');
+    if(formCard) formCard.style.display='';
+    aplSetTab(tipo==='fertirriego'?'riego':tipo);
+    loading(false);
+    if(formCard) formCard.scrollIntoView({behavior:'smooth', block:'start'});
+    toast('✏️ Corrigiendo el registro · cambia lo que falte y guarda');
+  }catch(e){ loading(false); toast('Error: '+e.message); }
+}
+
+function aplCancelarEdicion(){
+  aplResetForms();
+  const formCard=document.getElementById('aplFormCard');
+  if(canAplicaciones()){
+    if(formCard) formCard.style.display='';
+    aplSetTab(canAplicFoliar()?'foliar':'riego');
+  }else if(formCard){
+    formCard.style.display='none';
+  }
+  renderAplList();
+  toast('Corrección cancelada');
+}
+
+// Devuelve el stock antiguo, reescribe el documento y descuenta el nuevo.
+// Conserva quién y cuándo lo registró: la corrección se anota aparte.
+async function aplGuardarEdicion(datos, desc, bodDesc){
+  const prev=aplEdit;
+  if(prev.descontado.length) await ajustarStockBodega(prev.descontado, prev.bodega, +1);
+  await db.collection('aplicaciones').doc(prev.id).update({
+    ...datos,
+    editadoPor: currentUser.uid,
+    editadoPorNombre: (currentProfile&&currentProfile.nombre)||currentUser.email,
+    editadoAt: Date.now()
+  });
+  if(desc.length) await ajustarStockBodega(desc, bodDesc, -1);
 }
 
 
@@ -2859,12 +3062,36 @@ function candidatosSal(sal, bodega){
   return hits;
 }
 
-function salesEstanque(){
+// ══════════════════════════════════════════════
+// FERTIRRIEGO — v37: varios estanques por día
+//
+// Paradero 12 prepara tres estanques distintos el mismo día (piment 1-7,
+// piment 8-9, tomate/lechuga 10-13), cada uno con su propia carga de sales y
+// sus propios sectores. Por eso el formulario dejó de tener UN estanque y pasó
+// a tener una lista: `aplRie.estanques[]`.
+//
+// Cada estanque se guarda como un documento aparte en /aplicaciones, con la
+// misma forma que antes más `estanque` (el número del día) y `estanquesDia`.
+// Se hizo así a propósito: informes, conciliación y descuento de stock siguen
+// leyendo un documento = un estanque, sin cambiar nada de ese lado.
+// ══════════════════════════════════════════════
+const ESTANQUES_POR_DIA = {paradero:3};   // los demás predios parten con uno
+
+function nuevoEstanque(){ return {cultivo:'', capacidad:'', cant:{}, litros:{}, prodSel:{}}; }
+function estanquesPorDefecto(predioId){
+  const n = ESTANQUES_POR_DIA[predioId] || 1;
+  return Array.from({length:n}, ()=>nuevoEstanque());
+}
+function estanqueAct(e){ return (aplRie&&aplRie.estanques&&aplRie.estanques[e])||nuevoEstanque(); }
+
+// Sales del estanque `e`, ya vinculadas con el producto de bodega que descuenta.
+function salesEstanque(e){
   const bodega=(aplRie&&aplRie.predioId)||'';
+  const est=estanqueAct(e);
   return FERTIRRIEGO_SALES.map((sal,i)=>{
     const cands=candidatosSal(sal, bodega);
     // Override manual del usuario (selector del formulario) por sobre lo detectado
-    const manual=(aplRie&&aplRie.prodSel&&aplRie.prodSel[i])||'';
+    const manual=(est.prodSel&&est.prodSel[i])||'';
     const elegido = manual ? productosCache.find(p=>p.id===manual) : cands[0];
     return {
       idx:i, nombre:sal.nombre,
@@ -2880,9 +3107,10 @@ function salesEstanque(){
 }
 
 // El usuario elige a mano con qué producto de bodega se descuenta una sal.
-function aplRieProd(idx, productoId){
-  if(!aplRie.prodSel) aplRie.prodSel={};
-  if(productoId) aplRie.prodSel[idx]=productoId; else delete aplRie.prodSel[idx];
+function aplRieProd(e, idx, productoId){
+  const est=aplRie.estanques[e]; if(!est) return;
+  if(!est.prodSel) est.prodSel={};
+  if(productoId) est.prodSel[idx]=productoId; else delete est.prodSel[idx];
   renderRiegoForm();
 }
 
@@ -2894,79 +3122,102 @@ function renderRiegoForm(){
   const box=document.getElementById('aplBody');
   const predOpts = pid=>`<option value="">— predio —</option>`+prediosPermitidos().map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
   const cultList = cultivosCache.length ? cultivosCache.map(c=>c.nombre) : ['tomate','pimentón','especialidades'];
-  const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===aplRie.cultivo?' selected':''}>${escH(c)}</option>`).join('');
-
-  // Sales fijas — aparecen siempre; solo se escribe kg
-  // v36 · cada sal muestra con qué producto de bodega se va a descontar y
-  // permite corregirlo a mano. Solo se despliega si hay kilos cargados o si
-  // el vínculo automático falló, para no llenar la pantalla de selectores.
   const prodOpts = sel => `<option value="">— sin descontar —</option>` +
     productosCache.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')))
       .map(p=>`<option value="${p.id}"${p.id===sel?' selected':''}>${escH(p.nombre)}</option>`).join('');
-  const salesH = salesEstanque().map(s=>{
-    const cant=aplRie.cant[s.idx]||'';
-    const cargada=num(cant)>0;
-    const aviso = s.enBodega
-      ? (s.ambiguo?` <span style="color:#B45309;font-size:10px" title="El catálogo tiene más de un producto con este nombre">(revisar: ${s.candidatos.length} productos)</span>`:'')
-      : ' <span style="color:var(--red);font-size:10px;font-weight:700">(no descuenta stock)</span>';
-    const linea = (cargada||!s.enBodega)
-      ? `<div style="display:flex;gap:6px;align-items:center;margin:0 0 6px 0;padding-left:2px">
-           <span style="font-size:10px;color:var(--muted);white-space:nowrap">↳ descuenta de</span>
-           <select onchange="aplRieProd(${s.idx},this.value)" style="flex:1;font-size:11px;padding:3px 5px">${prodOpts(s.productoId)}</select>
-         </div>`
-      : '';
-    return `<div style="margin-bottom:5px">
-      <div style="display:flex;gap:6px;align-items:center">
-        <span style="flex:1;font-size:12.5px">${escH(s.nombre)}${aviso}</span>
-        <input type="text" inputmode="decimal" placeholder="0" value="${cant}" oninput="aplRieCant(${s.idx},this.value)" style="width:66px;text-align:right">
-        <span style="font-size:10.5px;color:var(--muted);width:22px">${escH(s.unidad)}</span>
-        <span id="conc_${s.idx}" style="font-size:10.5px;color:#2E7D32;width:94px;text-align:right"></span>
-      </div>
-      ${linea}
-    </div>`;
-  }).join('');
 
-  // Sectores del predio (litros aplicados)
-  let sectoresH;
-  if(!aplRie.predioId){
-    sectoresH='<p style="font-size:11px;color:var(--muted)">Elige el predio para ver sus sectores.</p>';
-  }else{
-    const secs=sectoresDePredio(aplRie.predioId);
-    if(!secs.length){ sectoresH='<p style="font-size:11px;color:var(--muted)">Este predio no tiene sectores cargados.</p>'; }
-    else sectoresH=secs.map((s,i)=>{
-      const ha=haSector(aplRie.predioId,s);
-      const lit=aplRie.litros[s]||'';
-      return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
-        <span style="flex:1;font-size:12px">${escH(s)}${ha!=null?` <span style="color:var(--muted)">(${fmtNum(ha,2)} ha)</span>`:''}</span>
-        <input type="text" inputmode="decimal" placeholder="L" value="${lit}" oninput="aplRieLitrosIdx(${i},this.value)" style="width:80px;text-align:right">
+  const secs = aplRie.predioId ? sectoresDePredio(aplRie.predioId) : [];
+  const varios = aplRie.estanques.length>1;
+
+  const estanquesH = aplRie.estanques.map((est,e)=>{
+    const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===est.cultivo?' selected':''}>${escH(c)}</option>`).join('');
+
+    // Sales fijas — aparecen siempre; solo se escribe kg.
+    // Cada sal muestra con qué producto de bodega se va a descontar y permite
+    // corregirlo a mano. Solo se despliega si hay kilos cargados o si el
+    // vínculo automático falló, para no llenar la pantalla de selectores.
+    const salesH = salesEstanque(e).map(s=>{
+      const cant=est.cant[s.idx]||'';
+      const cargada=num(cant)>0;
+      const aviso = s.enBodega
+        ? (s.ambiguo?` <span style="color:#B45309;font-size:10px" title="El catálogo tiene más de un producto con este nombre">(revisar: ${s.candidatos.length} productos)</span>`:'')
+        : ' <span style="color:var(--red);font-size:10px;font-weight:700">(no descuenta stock)</span>';
+      const linea = (cargada||!s.enBodega)
+        ? `<div style="display:flex;gap:6px;align-items:center;margin:0 0 6px 0;padding-left:2px">
+             <span style="font-size:10px;color:var(--muted);white-space:nowrap">↳ descuenta de</span>
+             <select onchange="aplRieProd(${e},${s.idx},this.value)" style="flex:1;font-size:11px;padding:3px 5px">${prodOpts(s.productoId)}</select>
+           </div>`
+        : '';
+      return `<div style="margin-bottom:5px">
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="flex:1;font-size:12.5px">${escH(s.nombre)}${aviso}</span>
+          <input type="text" inputmode="decimal" placeholder="0" value="${escH(String(cant))}" oninput="aplRieCant(${e},${s.idx},this.value)" style="width:66px;text-align:right">
+          <span style="font-size:10.5px;color:var(--muted);width:22px">${escH(s.unidad)}</span>
+          <span id="conc_${e}_${s.idx}" style="font-size:10.5px;color:#2E7D32;width:94px;text-align:right"></span>
+        </div>
+        ${linea}
       </div>`;
     }).join('');
-  }
+
+    // Sectores del predio (litros aplicados desde ESTE estanque)
+    let sectoresH;
+    if(!aplRie.predioId){
+      sectoresH='<p style="font-size:11px;color:var(--muted)">Elige el predio para ver sus sectores.</p>';
+    }else if(!secs.length){
+      sectoresH='<p style="font-size:11px;color:var(--muted)">Este predio no tiene sectores cargados.</p>';
+    }else{
+      sectoresH=secs.map((s,i)=>{
+        const ha=haSector(aplRie.predioId,s);
+        const lit=est.litros[s]!=null?est.litros[s]:'';
+        return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+          <span style="flex:1;font-size:12px">${escH(s)}${ha!=null?` <span style="color:var(--muted)">(${fmtNum(ha,2)} ha)</span>`:''}</span>
+          <input type="text" inputmode="decimal" placeholder="L" value="${escH(String(lit))}" oninput="aplRieLitrosIdx(${e},${i},this.value)" style="width:80px;text-align:right">
+        </div>`;
+      }).join('');
+    }
+
+    const titulo = varios ? `Estanque ${e+1} de ${aplRie.estanques.length}` : 'Estanque';
+    const quitar = (varios && !aplEdit)
+      ? `<button class="btn btn-danger btn-sm" onclick="aplRieDelEstanque(${e})" style="padding:3px 8px">✕</button>` : '';
+
+    return `<div style="border:1px solid var(--sand);border-radius:10px;padding:10px;margin-bottom:10px;background:var(--cream)">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <b style="flex:1;font-size:12.5px;color:var(--dark)">🧪 ${escH(titulo)}</b>
+        ${quitar}
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplRieSetEst(${e},'cultivo',this.value)">${cultOpts}</select></div>
+        <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Capacidad (L)</label><input type="text" inputmode="decimal" placeholder="Ej: 1000" value="${escH(String(est.capacidad))}" oninput="aplRieSetEst(${e},'capacidad',this.value)"></div>
+      </div>
+      <div class="sec-div">Sales cargadas al estanque (kg)</div>
+      ${salesH}
+      <div class="sec-div">Litros de estanque aplicados por sector</div>
+      ${sectoresH}
+      <div id="rieCalc_${e}"></div>
+    </div>`;
+  }).join('');
 
   box.innerHTML=`
     <div class="form-row"><label>Fecha</label><input type="date" value="${aplRie.fecha}" onchange="aplRieSetCampo('fecha',this.value)"></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <div style="flex:1;min-width:100px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplRieSetCampo('predioId',this.value)">${predOpts(aplRie.predioId)}</select></div>
-      <div style="flex:1;min-width:100px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplRieSetCampo('cultivo',this.value)">${cultOpts}</select></div>
-      <div style="flex:1;min-width:100px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época</label><select onchange="aplRieSetCampo('epoca',this.value)">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplRie.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplRieSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplRie.predioId)}</select></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época</label><select onchange="aplRieSetCampo('epoca',this.value)">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplRie.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
     </div>
-    <div class="form-row" style="margin-top:6px"><label>Capacidad del estanque (L)</label><input type="text" inputmode="decimal" placeholder="Ej: 1000" value="${aplRie.capacidad}" oninput="aplRieSetCampo('capacidad',this.value)"></div>
-    <div class="sec-div">Sales cargadas al estanque (kg)</div>
-    ${salesH}
-    <div class="sec-div">Litros de estanque aplicados por sector</div>
-    ${sectoresH}
-    <div id="rieCalc"></div>
-    <button class="btn btn-primary" style="margin-top:12px" onclick="guardarRiego()">Registrar fertirriego</button>
+    ${estanquesH}
+    ${aplEdit?'':`<button class="btn btn-sm" onclick="aplRieAddEstanque()" style="background:var(--sand);color:var(--dark)">+ Otro estanque</button>`}
+    ${aplEdit?'':'<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Se guarda un registro por estanque. Los estanques que dejes en blanco no se guardan.</div>'}
+    ${aplBotonGuardar('guardarRiego()','Registrar fertirriego')}
   `;
   rieRenderCalc();
 }
 
-function calcFertirriego(){
-  const cap=num(aplRie.capacidad);
-  const totalLitros=Object.values(aplRie.litros).reduce((s,v)=>s+(num(v)||0),0);
+function calcFertirriego(e){
+  const est=estanqueAct(e);
+  const cap=num(est.capacidad);
+  const totalLitros=Object.keys(est.litros).reduce((s,k)=>s+(num(est.litros[k])||0),0);
   const items=[];
-  salesEstanque().forEach(s=>{
-    const kg=num(aplRie.cant[s.idx]);
+  salesEstanque(e).forEach(s=>{
+    const kg=num(est.cant[s.idx]);
     if(kg>0 && cap>0){
       const concentracion=kg/cap;
       items.push({idx:s.idx, productoId:s.productoId, nombre:s.nombre, productoNombre:s.productoNombre, unidad:s.unidad, cantKg:kg, concentracion, totalAplicado:totalLitros*concentracion, enBodega:s.enBodega});
@@ -2976,88 +3227,145 @@ function calcFertirriego(){
 }
 
 function rieRenderCalc(){
-  const r=calcFertirriego();
-  salesEstanque().forEach(s=>{
-    const el=document.getElementById('conc_'+s.idx); if(!el) return;
-    const kg=num(aplRie.cant[s.idx]);
-    el.textContent = (kg>0 && r.cap>0) ? fmtNum(kg/r.cap,4)+' '+s.unidad+'/L' : '';
+  aplRie.estanques.forEach((est,e)=>{
+    const r=calcFertirriego(e);
+    salesEstanque(e).forEach(s=>{
+      const el=document.getElementById('conc_'+e+'_'+s.idx); if(!el) return;
+      const kg=num(est.cant[s.idx]);
+      el.textContent = (kg>0 && r.cap>0) ? fmtNum(kg/r.cap,4)+' '+s.unidad+'/L' : '';
+    });
+    const box=document.getElementById('rieCalc_'+e); if(!box) return;
+    if(r.cap>0 && r.totalLitros>0 && r.items.length){
+      box.innerHTML=`<div class="sec-div">Total aplicado</div>
+        <div style="font-size:11px;color:var(--dark);line-height:1.7">
+          <b>${fmtNum(r.totalLitros,0)} L aplicados</b> · estanque ${fmtNum(r.cap,0)} L<br>
+          ${r.items.map(it=>`${escH(it.nombre)}: <b style="color:#B45309">${fmtNum(it.totalAplicado,2)} ${escH(it.unidad)}</b>${it.enBodega?'':' <span style="color:var(--muted);font-size:10px">(no descuenta)</span>'}`).join('<br>')}
+        </div>`;
+    }else box.innerHTML='';
   });
-  const box=document.getElementById('rieCalc'); if(!box) return;
-  if(r.cap>0 && r.totalLitros>0 && r.items.length){
-    box.innerHTML=`<div class="sec-div">Total aplicado</div>
-      <div style="font-size:11px;color:var(--dark);line-height:1.7">
-        <b>${fmtNum(r.totalLitros,0)} L aplicados</b> · estanque ${fmtNum(r.cap,0)} L<br>
-        ${r.items.map(it=>`${escH(it.nombre)}: <b style="color:#B45309">${fmtNum(it.totalAplicado,2)} ${escH(it.unidad)}</b>${it.enBodega?'':' <span style="color:var(--muted);font-size:10px">(no descuenta)</span>'}`).join('<br>')}
-      </div>`;
-  }else box.innerHTML='';
 }
 
 function aplRieSetCampo(campo,val){
   aplRie[campo]=val;
-  if(campo==='predioId'){ aplRie.litros={}; renderRiegoForm(); return; }
-  if(campo==='capacidad'){ rieRenderCalc(); return; }   // no re-render: mantener foco
-  if(campo==='cultivo'||campo==='fecha'||campo==='epoca'){ return; }
+  if(campo==='predioId'){
+    // Otro predio = otros sectores y otra cantidad de estanques por día.
+    aplRie.estanques=estanquesPorDefecto(val);
+    renderRiegoForm(); return;
+  }
+  if(campo==='fecha'||campo==='epoca'){ return; }
   renderRiegoForm();
 }
-function aplRieCant(idx,val){
-  const antes=num(aplRie.cant[idx])>0;
-  aplRie.cant[idx]=val;
+function aplRieSetEst(e,campo,val){
+  const est=aplRie.estanques[e]; if(!est) return;
+  est[campo]=val;
+  if(campo==='capacidad'){ rieRenderCalc(); return; }   // no re-render: mantener foco
+  if(campo==='cultivo'){ return; }
+  renderRiegoForm();
+}
+function aplRieCant(e,idx,val){
+  const est=aplRie.estanques[e]; if(!est) return;
+  const antes=num(est.cant[idx])>0;
+  est.cant[idx]=val;
   // Si la sal pasó de vacía a cargada (o al revés), hay que redibujar para
   // mostrar u ocultar el selector de producto. Si no, solo recalcular (mantiene el foco).
   if(antes !== (num(val)>0)) renderRiegoForm(); else rieRenderCalc();
 }
-function aplRieLitrosIdx(i,val){
+function aplRieLitrosIdx(e,i,val){
+  const est=aplRie.estanques[e]; if(!est) return;
   const secs=sectoresDePredio(aplRie.predioId); const s=secs[i];
-  if(s!=null){ aplRie.litros[s]=val; rieRenderCalc(); }
+  if(s!=null){ est.litros[s]=val; rieRenderCalc(); }
+}
+function aplRieAddEstanque(){
+  aplRie.estanques.push(nuevoEstanque());
+  renderRiegoForm();
+}
+function aplRieDelEstanque(e){
+  if(aplRie.estanques.length<=1) return;
+  aplRie.estanques.splice(e,1);
+  renderRiegoForm();
 }
 
 async function guardarRiego(){
-  if(!canAplicaciones()){ toast('Sin permiso'); return; }
-  if(!canAplicEnPredio(aplRie.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
-  const cap=num(aplRie.capacidad);
-  if(!(cap>0)){ toast('⚠️ Indica la capacidad del estanque'); return; }
+  const editando = !!(aplEdit && aplEdit.tipo==='fertirriego');
+  if(editando){
+    if(!canEditAplic(aplEdit.doc)){ toast('Sin permiso para corregir esta aplicación'); return; }
+  }else{
+    if(!canAplicaciones()){ toast('Sin permiso'); return; }
+    if(!canAplicEnPredio(aplRie.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
+  }
   if(!aplRie.predioId){ toast('⚠️ Elige el predio'); return; }
-  if(!aplRie.cultivo){ toast('⚠️ Elige el cultivo'); return; }
-  const r=calcFertirriego();
-  if(!r.items.length){ toast('⚠️ Carga la cantidad de al menos una sal'); return; }
-  if(!(r.totalLitros>0)){ toast('⚠️ Indica los litros aplicados a los sectores'); return; }
 
-  const sectoresData=Object.keys(aplRie.litros)
-    .filter(s=>num(aplRie.litros[s])>0)
-    .map(s=>({sector:String(s), litros:num(aplRie.litros[s]), ha:haSector(aplRie.predioId,s)}));
-  const salesData=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, productoNombre:it.productoNombre||'', cantidadKg:it.cantKg, concentracion:it.concentracion, unidad:it.unidad}));
-  const desc=r.items.filter(it=>it.productoId).map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.totalAplicado}));
-  // v36 · Lo que se aplicó pero no salió de bodega queda escrito en el documento,
-  // no solo en un toast que se va en 3 segundos.
-  const sinDescontar=r.items.filter(it=>!it.productoId)
-    .map(it=>({nombre:it.nombre, cantidadCargada:it.cantKg, cantidadAplicada:it.totalAplicado, unidad:it.unidad, motivo:'sin producto de bodega'}));
-  const sinBodega=sinDescontar.map(it=>it.nombre);
+  // Se guardan solo los estanques con datos; los que quedaron en blanco se
+  // ignoran, pero uno a medio llenar se avisa en vez de perderse en silencio.
+  const usados=[];
+  for(let e=0;e<aplRie.estanques.length;e++){
+    const est=aplRie.estanques[e];
+    const r=calcFertirriego(e);
+    const tocado = num(est.capacidad)>0 || r.totalLitros>0 || !!est.cultivo
+      || Object.keys(est.cant).some(k=>num(est.cant[k])>0);
+    if(!tocado) continue;
+    const et = aplRie.estanques.length>1 ? `Estanque ${e+1}: ` : '';
+    if(!(r.cap>0)){ toast(`⚠️ ${et}indica la capacidad del estanque`); return; }
+    if(!est.cultivo){ toast(`⚠️ ${et}elige el cultivo`); return; }
+    if(!r.items.length){ toast(`⚠️ ${et}carga la cantidad de al menos una sal`); return; }
+    if(!(r.totalLitros>0)){ toast(`⚠️ ${et}indica los litros aplicados a los sectores`); return; }
+    usados.push({e, est, r});
+  }
+  if(!usados.length){ toast('⚠️ No hay ningún estanque con datos'); return; }
 
-  loading(true,'Registrando…');
+  loading(true, editando?'Guardando cambios…':'Registrando…');
   try{
     const bodDesc=aplRie.predioId||'constancia';
-    const faltan=faltantesStock(desc, bodDesc);
-    await db.collection('aplicaciones').add({
-      tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:aplRie.cultivo, epoca:aplRie.epoca||'', bodegaDescuento:bodDesc,
-      ...datosTemporada(aplRie.predioId, aplRie.epoca, aplRie.cultivo),
-      capacidad:cap, sales:salesData, sectores:sectoresData, totalLitros:r.totalLitros, sinDescontar,
-      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
-      registradoPor:currentUser.uid,
-      registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
-      createdAt:Date.now()
-    });
-    if(desc.length) await ajustarStockBodega(desc, bodDesc, -1);
-    aplRie={ fecha:todayIso, predioId:aplRie.predioId, cultivo:'', epoca:'', capacidad:'', cant:{}, litros:{}, prodSel:{} };
+    const avisosFaltan=[], avisosSinBodega=[];
+    for(const u of usados){
+      const {e, est, r}=u;
+      const sectoresData=Object.keys(est.litros)
+        .filter(s=>num(est.litros[s])>0)
+        .map(s=>({sector:String(s), litros:num(est.litros[s]), ha:haSector(aplRie.predioId,s)}));
+      const salesData=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, productoNombre:it.productoNombre||'', cantidadKg:it.cantKg, concentracion:it.concentracion, unidad:it.unidad}));
+      const desc=r.items.filter(it=>it.productoId).map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.totalAplicado}));
+      // Lo que se aplicó pero no salió de bodega queda escrito en el documento,
+      // no solo en un toast que se va en 3 segundos.
+      const sinDescontar=r.items.filter(it=>!it.productoId)
+        .map(it=>({nombre:it.nombre, cantidadCargada:it.cantKg, cantidadAplicada:it.totalAplicado, unidad:it.unidad, motivo:'sin producto de bodega'}));
+      sinDescontar.forEach(x=>avisosSinBodega.push(x.nombre));
+      faltantesStock(desc, bodDesc).forEach(n=>avisosFaltan.push(n));
+
+      const datos={
+        tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:est.cultivo, epoca:aplRie.epoca||'', bodegaDescuento:bodDesc,
+        ...datosTemporadaEdit(aplRie.predioId, aplRie.epoca, est.cultivo),
+        capacidad:r.cap, sales:salesData, sectores:sectoresData, totalLitros:r.totalLitros, sinDescontar,
+        estanque: editando ? (Number(aplEdit.doc.estanque)||1) : (e+1),
+        estanquesDia: editando ? (Number(aplEdit.doc.estanquesDia)||1) : usados.length,
+        descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad}))
+      };
+      if(editando){
+        await aplGuardarEdicion(datos, desc, bodDesc);
+      }else{
+        await db.collection('aplicaciones').add({
+          ...datos,
+          registradoPor:currentUser.uid,
+          registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+          createdAt:Date.now()
+        });
+        if(desc.length) await ajustarStockBodega(desc, bodDesc, -1);
+      }
+    }
+    const pid=aplRie.predioId;
+    aplEdit=null;
+    aplRie={ fecha:todayIso, predioId:pid, epoca:'', estanques:estanquesPorDefecto(pid) };
     renderRiegoForm();
     renderAplList();
-    let msg='✅ Fertirriego registrado';
-    if(desc.length) msg+=' · stock descontado';
-    if(sinBodega.length) msg+=` · ⚠️ sin descontar (falta en bodega): ${sinBodega.slice(0,3).join(', ')}`;
-    else if(faltan.length) msg+=` · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}`;
+    let msg = editando ? '✅ Fertirriego corregido · stock recalculado'
+                       : (usados.length>1 ? `✅ ${usados.length} estanques registrados · stock descontado`
+                                          : '✅ Fertirriego registrado · stock descontado');
+    if(avisosSinBodega.length) msg+=` · ⚠️ sin descontar: ${[...new Set(avisosSinBodega)].slice(0,3).join(', ')}`;
+    else if(avisosFaltan.length) msg+=` · ⚠️ stock bajo: ${[...new Set(avisosFaltan)].slice(0,3).join(', ')}`;
     toast(msg);
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
+
 
 
 // ══════════════════════════════════════════════
@@ -3120,7 +3428,7 @@ function planRow(p, idx){
     <td><input type="text" inputmode="decimal" value="${p.precioEnv}" oninput="planSet(${idx},'precioEnv',this.value)" placeholder="$"></td>
     <td class="plan-calc" id="pu-${idx}">${pu!=null?('$'+fmtNum(pu,0)):'—'}</td>
     <td><input type="text" value="${escH(p.vencimiento)}" oninput="planSet(${idx},'vencimiento',this.value)" placeholder="—" style="min-width:70px"></td>
-    <td><button class="plan-del" onclick="abrirMovProducto(${idx})" title="Compras / despachos" style="color:var(--green)">📦</button></td>
+    <td>${(canDespachar()||canComprar())?`<button class="plan-del" onclick="abrirMovProducto(${idx})" title="Compras / despachos" style="color:var(--green)">📦</button>`:''}</td>
     <td>${canCatalogo()?`<button class="plan-del" onclick="planDelProd(${idx})" title="Eliminar">✕</button>`:''}</td>
   </tr>`;
 }
@@ -3160,7 +3468,7 @@ function planUpdateInfo(){
   const sinUni=planProds.filter(p=>!p.unidad).length;
   const dirty=planProds.filter(p=>p._dirty||p._new).length;
   if(!canCatalogo()){
-    info.innerHTML=`${total} productos · <b>Solo lectura</b>: el catálogo y los precios los mantiene la bodega central. Usa 📦 para despachar.`;
+    info.innerHTML=`${total} productos · <b>Solo lectura</b>: el catálogo, el stock y los precios los mantiene bodega.`+(canDespachar()?' Usa 📦 para despachar.':'');
     return;
   }
   info.innerHTML=`${total} productos · ${sinUni>0?`<b style="color:#B45309">${sinUni} sin unidad (kg/L)</b> · `:''}${dirty>0?`<b style="color:var(--green)">${dirty} sin guardar</b>`:'todo guardado'}`;
@@ -3210,7 +3518,7 @@ async function planDelProd(idx){
 function planFiltrar(txt){ planFiltroTxt=txt; renderPlanilla(); }
 
 async function planGuardar(){
-  if(!canCatalogo()){ toast('Solo la bodega central edita el catálogo'); return; }
+  if(!canCatalogo()){ toast('Solo bodega o gerencia edita el catálogo'); return; }
   const pend=planProds.filter(p=>p._dirty||p._new);
   if(!pend.length){ toast('No hay cambios que guardar'); return; }
   // validar nombres
@@ -3373,7 +3681,7 @@ function abrirMovProducto(idx){
     <div class="modal-sub">Stock: 
       <b>${fmtNum(st.constancia)}</b> Central · <b>${fmtNum(st.transito)}</b> Sub Tránsito · <b>${fmtNum(st.paradero)}</b> Sub Paradero ${escH(uni)}</div>
 
-    ${canCatalogo()?`
+    ${canComprar()?`
     <div class="sec-div">🛒 Registrar compra (entra stock)</div>
     <div class="form-row"><label>Bodega que recibe</label><select id="mcPredio">${predOpts('constancia')}</select></div>
     <div style="display:flex;gap:8px">
@@ -3410,7 +3718,7 @@ function movCalc(){
 }
 
 async function movCompra(idx){
-  if(!canCatalogo()){ toast('Solo la bodega central registra compras'); return; }
+  if(!canComprar()){ toast('Solo la bodega central registra compras'); return; }
   const p=planProds[idx];
   const predio=document.getElementById('mcPredio').value;
   const env=num(document.getElementById('mcEnv').value);
@@ -6018,10 +6326,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v36';
-const MANUAL_FECHA='2026-09-06';
+const MANUAL_VERSION='v37';
+const MANUAL_FECHA='2026-09-09';
 
 const MANUAL_CAMBIOS=[
+  {v:'v37', f:'09-09-2026', txt:'Fertilización: se pueden cargar varios estanques el mismo día, cada uno con su cultivo, sus sales y sus sectores (Paradero 12 parte con tres). Foliar: al elegir el predio aparecen todos los módulos de una vez para anotar el mojamiento. Las aplicaciones ya registradas se pueden corregir con el ✏️, y el stock se recalcula solo. Las jefaturas de predio pueden consultar el inventario de bodega y las aplicaciones, sin modificarlos, y los dos encargados de bodega pueden corregir nombres, cantidades y precios del catálogo.'},
   {v:'v36', f:'06-09-2026', txt:'Fertirriego: las sales ahora sí descuentan de bodega. Antes, siete de las nueve sales no calzaban con el nombre del producto en el catálogo y se aplicaban sin descontar. Además, bajo cada sal se ve de qué producto se descuenta y se puede corregir a mano, y si algo queda sin descontar el aviso queda escrito en la aplicación.'},
   {v:'v35', f:'06-09-2026', txt:'Cada entrada guarda el nombre del trabajador al momento de registrarla. Antes, si se borraba a alguien de la lista del predio, sus registros viejos quedaban sin nombre. Ahora el histórico se mantiene aunque el trabajador ya no esté; en esos casos aparece la marca (histórico).'},
   {v:'v34', f:'03-09-2026', txt:'Gerencia ya puede corregir el rol y los predios de un usuario desde Config › Usuarios, con el lápiz ✏️. Antes había que entrar a la consola de Firebase. Se agrega el rol Asesor BPA, de solo lectura.'},
@@ -6131,8 +6440,9 @@ const MANUAL_SECCIONES=[
     'Pon la <b>Fecha</b>, el <b>Predio</b>, el <b>Cultivo</b> y la <b>Época</b>.',
     'Escribe la <b>receta tal como la anotas en terreno</b>, con dosis por 100 L de agua. Ejemplo: <i>Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + ácido cítrico 30 g</i>.',
     'La app trata de reconocer cada producto en la bodega. El que quede en amarillo con "no reconocí", elígelo a mano de la lista.',
-    'Marca los <b>módulos aplicados</b> y anota el <b>mojamiento en litros</b> de cada uno.',
-    'Aprieta <b>Registrar aplicación</b>. Abajo, en "Últimas aplicaciones", queda el respaldo.'
+    'Al elegir el predio aparecen <b>todos sus módulos</b> en una lista. Anota el <b>mojamiento gastado en litros</b> solo en los que aplicaste; los que dejes en blanco no se guardan.',
+    'Aprieta <b>Registrar aplicación</b>. Abajo, en "Últimas aplicaciones", queda el respaldo.',
+    '¿Te equivocaste o faltó un producto? En "Últimas aplicaciones" aprieta el <b>✏️</b> del registro, corrige y guarda. El stock se devuelve y se vuelve a descontar solo.'
   ],
   tips:[
     'El mojamiento es la base del cálculo: si va mal, el descuento de stock y el informe de gasto quedan mal.',
@@ -6144,10 +6454,13 @@ const MANUAL_SECCIONES=[
   id:'aplic-riego', ico:'💧', tit:'Aplicaciones — Fertilización y Vía riego', ver:()=>canAplicRiego(),
   intro:'Fertirriego (sales al estanque) y aplicaciones vía riego (receta por hectárea). También descuentan stock.',
   pasos:[
-    '<b>🧪 Fertilización:</b> fecha, predio, cultivo y época. Anota la <b>capacidad del estanque</b> en litros, las <b>sales cargadas</b> en kilos y, por cada sector, los <b>litros de estanque aplicados</b>. Aprieta "Registrar fertirriego".',
+    '<b>🧪 Fertilización:</b> arriba van la <b>fecha</b>, el <b>predio</b> y la <b>época</b>. Abajo va un bloque por cada <b>estanque</b> del día, con su propio <b>cultivo</b>, su <b>capacidad en litros</b>, las <b>sales cargadas</b> en kilos y los <b>litros aplicados por sector</b>.',
+    'En <b>Paradero 12</b> aparecen tres estanques, que es lo que se prepara cada día (dos de pimentón por grupos de sectores y uno de tomate/lechuga). En los otros predios aparece uno, y con <b>+ Otro estanque</b> se agregan los que falten. El estanque que dejes en blanco no se guarda.',
+    'Cada estanque queda como un <b>registro aparte</b> en "Últimas aplicaciones", numerado (estanque 1 de 3, 2 de 3…).',
     'Al cargar kilos en una sal aparece abajo <b>"↳ descuenta de"</b> con el producto de bodega elegido. Revísalo: si dice <b>— sin descontar —</b> o el producto no es el correcto, elígelo tú de la lista. Lo que quede sin producto se aplica igual, pero <b>no sale de bodega</b>.',
     '<b>💧 Vía riego:</b> fecha, predio, cultivo y época. Escribe la <b>receta con dosis por hectárea</b> (ejemplo: <i>Ultraferro 2 kg + Zincfull 1 L + Serenade 2 L</i>), marca los <b>sectores aplicados</b> y aprieta "Registrar vía riego".',
-    'Igual que en foliar: el producto que la app no reconozca hay que elegirlo a mano antes de guardar.'
+    'Igual que en foliar: el producto que la app no reconozca hay que elegirlo a mano antes de guardar.',
+    'Para corregir algo ya registrado, aprieta el <b>✏️</b> en "Últimas aplicaciones": se reabre en su formulario, y al guardar el stock se recalcula solo.'
   ],
   tips:[
     'Los litros por sector son los que reparten el consumo entre sectores. Si pones el total en un solo sector, el gasto por hectárea queda deformado.',
@@ -6199,6 +6512,20 @@ const MANUAL_SECCIONES=[
   ]
 },
 {
+  id:'aplic-consulta', ico:'🔎', tit:'Aplicaciones — consulta y corrección', ver:()=>(isJefe()||isBodeguero()),
+  intro:'Tu cuenta no registra aplicaciones, pero sí puede revisarlas. Bodega, además, puede corregir un registro mal anotado.',
+  pasos:[
+    'En <b>Aplicaciones</b> aparece el listado de lo registrado en tus predios: fecha, quién lo registró, receta, módulos o sectores, litros y la marca amarilla de lo que se aplicó <b>sin descontar de bodega</b>.',
+    '<b>Solo bodega:</b> el <b>✏️</b> de un registro lo reabre en su formulario. Ahí se corrige la dosis, el mojamiento, los litros o el producto con que se descuenta, y se puede agregar un producto que faltaba escribiéndolo en la receta y apretando "Interpretar".',
+    'Al guardar, el stock se recalcula solo: se devuelve a la bodega lo que había descontado el registro anterior y se descuenta lo corregido. No hay que ajustar nada a mano en la planilla.',
+    'El registro guarda quién lo corrigió y cuándo, y eso queda a la vista en el listado.'
+  ],
+  tips:[
+    'Las jefaturas de predio ven el listado pero no el ✏️: para corregir hay que avisarle a bodega o a gerencia.',
+    'Si una aplicación quedó en el predio equivocado, no se arregla con el ✏️ (el predio queda fijo mientras se corrige): pídele a gerencia que la elimine y se vuelve a registrar.'
+  ]
+},
+{
   id:'bodega', ico:'📦', tit:'Bodega — planilla y conciliación', ver:()=>canBodega(),
   intro:'Stock por bodega, precios y comparación entre lo entregado y lo usado. Está pensada para trabajarla desde el computador.',
   pasos:[
@@ -6210,7 +6537,8 @@ const MANUAL_SECCIONES=[
   ],
   tips:[
     'Una diferencia grande en conciliación casi siempre es una aplicación sin registrar, o registrada en el predio equivocado.',
-    'La bodega central es <b>La Constancia</b>: desde ahí se crean productos, se editan precios y se registran las compras.',
+    'Los <b>dos encargados de bodega</b> pueden corregir directamente el nombre de un producto, las cantidades y los precios. Las <b>compras</b> siguen registrándose desde la bodega central (La Constancia).',
+    'Las <b>jefaturas de predio</b> entran a esta pantalla en <b>solo lectura</b>: ven el stock y la conciliación, pero no editan celdas ni mueven productos.',
     'Usa la vista de escritorio (botón 🖥️) para esta pantalla; en el celular la planilla queda apretada.'
   ]
 },
