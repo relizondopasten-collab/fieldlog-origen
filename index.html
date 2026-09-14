@@ -491,8 +491,15 @@ body.vista-escritorio .modal-content{max-width:700px}
       <div class="form-row" style="margin-top:8px"><label>Observación</label><input type="text" id="iO" placeholder="Notas adicionales…" oninput="fotoSugerir()"></div>
       <!-- v39 · Respaldo fotográfico de la observación -->
       <div id="fotoZona" style="margin:-2px 0 8px">
-        <input type="file" id="fotoFile" accept="image/*" capture="environment" multiple style="display:none" onchange="fotoElegida(this)">
-        <button id="fotoBtn" class="btn btn-secondary" style="padding:7px 10px;font-size:12px;width:100%" onclick="document.getElementById('fotoFile').click()">📷 Agregar foto de respaldo</button>
+        <!-- v39 · Dos entradas separadas a propósito: 'capture' abre la cámara pero
+             su comportamiento junto a 'multiple' no está definido y cambia según el
+             teléfono. Con un input por acción, cada botón hace siempre lo mismo. -->
+        <input type="file" id="fotoCam"  accept="image/*" capture="environment" style="display:none" onchange="fotoElegida(this)">
+        <input type="file" id="fotoFile" accept="image/*" multiple style="display:none" onchange="fotoElegida(this)">
+        <div id="fotoBotones" style="display:flex;gap:6px">
+          <button id="fotoBtn" class="btn btn-secondary" style="flex:2;padding:7px 10px;font-size:12px" onclick="document.getElementById('fotoCam').click()">📷 Tomar foto</button>
+          <button id="fotoBtnGal" class="btn btn-secondary" style="flex:1;padding:7px 10px;font-size:12px" onclick="document.getElementById('fotoFile').click()">🖼️ Elegir</button>
+        </div>
         <div id="fotoHint" style="font-size:10.5px;color:var(--muted);margin-top:4px;display:none">Una foto deja constancia de lo que anotaste. Hasta 3.</div>
         <div id="fotoPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
       </div>
@@ -4581,6 +4588,7 @@ function comprimirFoto(file){
 // la foto sirve de respaldo. Nunca obliga.
 function fotoSugerir(){
   const inp=document.getElementById('iO'), btn=document.getElementById('fotoBtn'), hint=document.getElementById('fotoHint');
+  // Se destaca el de la cámara: es el camino que interesa en terreno.
   if(!inp||!btn) return;
   const hay=!!inp.value.trim();
   btn.style.background = hay?'var(--dark)':'';
@@ -4617,10 +4625,12 @@ function renderFotosPend(){
   const btn=document.getElementById('fotoBtn');
   if(btn){
     btn.textContent = fotosPend.length
-      ? `📷 Agregar otra (${fotosPend.length}/${FOTO_MAX_POR_ENTRADA})`
-      : '📷 Agregar foto de respaldo';
-    btn.style.display = fotosPend.length>=FOTO_MAX_POR_ENTRADA ? 'none' : '';
+      ? `📷 Otra foto (${fotosPend.length}/${FOTO_MAX_POR_ENTRADA})`
+      : '📷 Tomar foto';
   }
+  // Al llegar al máximo se esconden los dos botones, no solo el de la cámara.
+  const zona=document.getElementById('fotoBotones');
+  if(zona) zona.style.display = fotosPend.length>=FOTO_MAX_POR_ENTRADA ? 'none' : 'flex';
 }
 
 // Ver las fotos de una entrada ya guardada. Se cargan recién acá, nunca junto
@@ -6832,7 +6842,7 @@ const MANUAL_SECCIONES=[
     'Si el trabajador <b>no vino</b>, marca Trabajador ausente, Licencia médica o Vacaciones. Si hubo alguien que lo reemplazó, elígelo en Reemplazante. Con ausencia, licencia o vacaciones no hace falta cargar labores.',
     'En <b>Labores del día</b>, elige la labor y anota las <b>horas</b> y las <b>mesas</b>. Con "＋ Agregar labor" puedes cargar hasta 6 labores en una misma entrada.',
     'Escribe una <b>Observación</b> si hay algo que explicar (una lluvia, una falla, un cambio de sector, una labor mal hecha).',
-    'Cuando escribes una observación se destaca el botón <b>📷 Agregar foto de respaldo</b>: abre la cámara del teléfono y la foto queda pegada a esa entrada. Hasta <b>3 fotos</b> por registro. Es opcional, pero cuando el comentario es sobre trabajo mal hecho, la foto es la que respalda al subjefe después.',
+    'Cuando escribes una observación se destaca el botón <b>📷 Tomar foto</b>: abre directamente la cámara del teléfono y la foto queda pegada a esa entrada. Al lado, <b>🖼️ Elegir</b> sirve para usar una foto que ya tienes en la galería. Hasta <b>3 fotos</b> por registro. Es opcional, pero cuando el comentario es sobre trabajo mal hecho, la foto es la que respalda al subjefe después.',
     'Aprieta <b>＋ Guardar Entrada</b>. Abajo aparece la lista de lo ya registrado ese día.'
   ],
   tips:[
