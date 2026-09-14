@@ -813,6 +813,14 @@ body.vista-escritorio .modal-content{max-width:700px}
             <option value="">— (solo para rol subjefe) —</option>
           </select>
         </div>
+        <!-- v40 · Permiso extra, al margen del rol -->
+        <div class="form-row">
+          <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer">
+            <input type="checkbox" id="nuFoliar" style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">
+            🍃 Puede registrar desinfecciones foliares
+          </label>
+          <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">Para jefes y subjefes que además hacen las desinfecciones. Habilita la pestaña Foliar sin cambiarles el rol.</div>
+        </div>
         <button class="btn btn-primary" onclick="createUser()">Crear usuario</button>
       </div>
     </div>
@@ -840,7 +848,7 @@ body.vista-escritorio .modal-content{max-width:700px}
 // ══════════════════════════════════════════════
 const PREDIOS={
   transito:  {nombre:'El Tránsito',   jefe:'Claudio Flores',  subjefes:['Marcelo Covarrubias'], cultivos:['tomate']},
-  constancia:{nombre:'La Constancia', jefe:'Katherina',       subjefes:['Sara','José','Roxana'], cultivos:['tomate','especialidades']},
+  constancia:{nombre:'La Constancia', jefe:'Katherine Castro', subjefes:['Sara','José','Roxana'], cultivos:['tomate','especialidades']},
   paradero:  {nombre:'Paradero 12',   jefe:'Jorge Guajardo',  subjefes:['Jorge Guajardo','Mario Durand'], cultivos:['tomate','pimenton']}
 };
 const CNAMES={tomate:'Tomate',especialidades:'Especialidades',pimenton:'Pimentón'};
@@ -1162,10 +1170,16 @@ function canEditPredio(pid){return canAccessPredio(pid)}
 // ¿Ve a todos los subjefes del predio, o solo a sí mismo?
 function verTodosSubjefes(){return isAdmin()||isJefe()}
 
-// Bodega central: la única que crea productos, edita precios y registra compras.
-// Si algún día la central deja de ser La Constancia, se cambia solo esta constante.
-const BODEGA_CENTRAL='constancia';
-function esBodegaCentral(){return isBodeguero()&&userPredios().includes(BODEGA_CENTRAL)}
+// v40 · La empresa compra por CENTRO DE COSTO: los fertilizantes y lo de vía
+// riego llegan directo a cada campo y se descuentan de la bodega de ese campo.
+// La excepción son los fitosanitarios: quedan en La Constancia, y desde ahí
+// salen las desinfecciones foliares de los tres predios.
+// BODEGA_FITO es esa bodega. BODEGA_CENTRAL se mantiene como su alias para no
+// romper el código anterior que la nombra.
+const BODEGA_FITO='constancia';
+const BODEGA_CENTRAL=BODEGA_FITO;
+function esBodegaFito(){return isBodeguero()&&userPredios().includes(BODEGA_FITO)}
+function esBodegaCentral(){return esBodegaFito()}
 
 // Planilla de bodega (stock, compras, despachos, conciliación)
 // v37 · Las jefaturas de predio entran a CONSULTAR el inventario. Ven la
@@ -1177,16 +1191,24 @@ function canBodega(){return isAdmin()||isBodeguero()||isJefe()}
 // v37 · Antes esto era solo la bodega central. Ahora los dos bodegueros
 // (Gabriela y Nicolás) corrigen directamente nombres, cantidades y precios.
 function canCatalogo(){return isAdmin()||isBodeguero()}
-// Registrar compras (entrada de stock con precio): sigue siendo de la central.
-function canComprar(){return isAdmin()||esBodegaCentral()}
+// v40 · Compras por centro de costo: cada bodeguero registra lo que llega a SU
+// bodega. Antes era solo la central, cuando todo entraba por La Constancia.
+function canComprar(){return isAdmin()||isBodeguero()}
+// Bodegas a las que este usuario puede ingresar una compra.
+function prediosCompra(){return isAdmin()?PRED_ORDER.slice():prediosPermitidos()}
 // Despachar: desde las bodegas propias hacia cualquier otra.
 function canDespachar(){return isAdmin()||isBodeguero()}
 // Predios sobre los que el usuario puede operar, en el orden estándar.
 function prediosPermitidos(){const u=userPredios();return PRED_ORDER.filter(x=>u.includes(x))}
 // Registrar una aplicación exige que el predio sea uno de los suyos.
 function canAplicEnPredio(pid){return canAplicaciones()&&userPredios().includes(pid)}
+// v40 · Permiso extra, independiente del rol: deja registrar desinfecciones
+// foliares sin cambiarle el rol a la persona. Es el caso de los jefes de predio
+// (Claudio Flores, Jorge Guajardo) y del subjefe Mario Durand, que siguen
+// necesitando sus pantallas de campo. Se marca en Config › Usuarios.
+function puedeDesinfectar(){return !!(currentProfile && currentProfile.puedeFoliar);}
 // Registro de aplicaciones. El bodeguero ya NO registra: solo ve la planilla.
-function canAplicaciones(){return isAdmin()||isRiego()||isFoliar()}
+function canAplicaciones(){return isAdmin()||isRiego()||isFoliar()||puedeDesinfectar()}
 // Ver la pantalla de aplicaciones (registrar, corregir o solo mirar).
 // v37 · Se suman las jefaturas de predio (solo mirar) y los bodegueros
 // (mirar y corregir lo que ya está registrado).
@@ -1202,7 +1224,7 @@ function canEditAplic(a){
   if(!userPredios().includes(a.predioId)) return false;
   return !!(currentUser && a.registradoPor===currentUser.uid);
 }
-function canAplicFoliar(){return isAdmin()||isFoliar()}
+function canAplicFoliar(){return isAdmin()||isFoliar()||puedeDesinfectar()}
 function canAplicRiego(){return isAdmin()||isRiego()}
 // Informe de gasto: gerencia, jefes de predio y el rol de solo-gastos.
 function canVerGastos(){return isAdmin()||isJefe()||isGastos()}
@@ -1857,7 +1879,7 @@ let aplVia = null;      // estado del formulario vía riego (dosis/ha)
 let aplEdit = null;
 
 function aplResetForms(){
-  aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], litros:{} };
+  aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], litros:{}, bodega:'' };
   aplRie = { fecha: todayIso, predioId:'', epoca:'', estanques:estanquesPorDefecto('') };
   aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
   aplEdit = null;
@@ -2058,6 +2080,49 @@ function parseReceta(texto){
   }).filter(Boolean);
 }
 
+// ══════════════════════════════════════════════
+// v40 · DE QUÉ BODEGA SALE UNA DESINFECCIÓN
+// ══════════════════════════════════════════════
+// Los fitosanitarios quedan en La Constancia y de ahí salen las foliares de los
+// tres predios. La excepción es lo que ya se despachó al campo: si el predio
+// tiene stock de todos los productos de la receta, se descuenta de su bodega.
+// La app sugiere; quien registra puede cambiarlo.
+function bodegaFoliarSugerida(){
+  const pid=aplFol.predioId;
+  if(!pid || pid===BODEGA_FITO) return BODEGA_FITO;
+  const ids=(aplFol.receta||[]).filter(r=>r.productoId).map(r=>r.productoId);
+  if(!ids.length) return BODEGA_FITO;
+  const todoEnPredio=ids.every(id=>{
+    const p=productosCache.find(x=>x.id===id);
+    return p && num((p.stock||{})[pid]) > 0;
+  });
+  return todoEnPredio ? pid : BODEGA_FITO;
+}
+function bodegaFoliarActiva(){ return aplFol.bodega || bodegaFoliarSugerida(); }
+function folSetBodega(v){ aplFol.bodega=v; renderFoliarForm(); }
+
+function folBodegaHTML(){
+  if(!aplFol.predioId || !(aplFol.receta||[]).length) return '';
+  const pid=aplFol.predioId, sel=bodegaFoliarActiva(), sug=bodegaFoliarSugerida();
+  const opciones=[BODEGA_FITO].concat(pid!==BODEGA_FITO?[pid]:[]);
+  // Stock de cada producto en la bodega elegida: es lo que decide si alcanza.
+  const detalle=(aplFol.receta||[]).filter(r=>r.productoId).map(r=>{
+    const p=productosCache.find(x=>x.id===r.productoId);
+    const st=p?num((p.stock||{})[sel]):0;
+    return `<span style="color:${st>0?'var(--muted)':'var(--red)'}">${escH(r.nombre||'')}: ${fmtNum(st,2)}${st>0?'':' (sin stock)'}</span>`;
+  }).join(' · ');
+  return `
+    <div style="background:var(--sand);border-radius:8px;padding:8px 10px;margin:8px 0">
+      <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Descuenta de la bodega de</label>
+      <select onchange="folSetBodega(this.value)" style="width:100%">
+        ${opciones.map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(BODEGA_NOMBRES[k]||PREDIOS[k].nombre)}${k===BODEGA_FITO?' · fitosanitarios':''}</option>`).join('')}
+      </select>
+      <div style="font-size:10.5px;margin-top:4px;line-height:1.5">
+        ${sel===sug?'':'<span style="color:#B45309">Cambiado a mano · </span>'}${detalle||'<span style="color:var(--muted)">Interpreta la receta para ver el stock.</span>'}
+      </div>
+    </div>`;
+}
+
 function renderFoliarForm(){
   const box=document.getElementById('aplBody');
   if(!productosCache.length){
@@ -2132,6 +2197,7 @@ function renderFoliarForm(){
     <textarea id="folTxt" placeholder="Ej: Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + acido citrico 30 g" oninput="folSetTxt(this.value)" style="width:100%;min-height:64px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplFol.recetaTxt)}</textarea>
     <button class="btn btn-sm" onclick="folInterpretar()" style="background:var(--dark);color:#fff;margin:6px 0">🔎 Interpretar receta</button>
     ${recetaH}
+    ${folBodegaHTML()}
     <div class="sec-div">Mojamiento gastado por módulo (L)</div>
     ${destH}
     <div id="folConsumo"></div>
@@ -2163,6 +2229,7 @@ function aplFolSetCampo(campo,val){
   if(campo==='predioId'){
     aplFol.litros={};                                  // los módulos son otros: se parte de cero
     aplFol.epoca=epocaSugerida(val, aplFol.cultivo);   // v38 · época del ciclo abierto
+    aplFol.bodega='';                                  // v40 · que vuelva a sugerir la bodega
   }
   // v38 · Al elegir cultivo puede quedar clara la época que antes era ambigua.
   if(campo==='cultivo' && !aplFol.epoca){
@@ -2928,7 +2995,9 @@ function exportGastoPDF(){
 }
 
 // ══════════ C3: descuento de stock desde la bodega del predio ══════════
-const BODEGA_NOMBRES = {constancia:'Bodega Central (La Constancia)', transito:'Sub bodega El Tránsito', paradero:'Sub bodega Paradero 12'};
+// v40 · Con la compra por centro de costo las tres son bodegas de igual rango.
+// La Constancia se distingue solo por guardar los fitosanitarios de los tres campos.
+const BODEGA_NOMBRES = {constancia:'Bodega La Constancia', transito:'Bodega El Tránsito', paradero:'Bodega Paradero 12'};
 // Consumo foliar en base de stock (L/kg): aStock(dosis,unidad).val × litros/100
 function descuentosFoliar(recetaData, totalLitros){
   return recetaData.map(r=>{
@@ -3008,7 +3077,7 @@ async function guardarFoliar(){
     const desc = descuentosFoliar(recetaData, totalLitros).filter(d=>d.productoId);
     const sinDescontar = recetaData.filter(r=>!r.productoId)
       .map(r=>({nombre:r.nombre||'', cantidadCargada:r.dosis, unidad:r.unidad||'', motivo:'sin producto de bodega'}));
-    const bodDesc=aplFol.predioId||'constancia';
+    const bodDesc=bodegaFoliarActiva();   // v40 · fitosanitarios desde La Constancia, salvo despacho
     const faltan = faltantesStock(desc, bodDesc);
     const datos = {
       tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'', bodegaDescuento:bodDesc,
@@ -3030,7 +3099,7 @@ async function guardarFoliar(){
     }
     const pid=aplFol.predioId;
     aplEdit=null;
-    aplFol={ fecha:todayIso, predioId:pid, cultivo:'', epoca:epocaSugerida(pid), recetaTxt:'', receta:[], litros:{} };
+    aplFol={ fecha:todayIso, predioId:pid, cultivo:'', epoca:epocaSugerida(pid), recetaTxt:'', receta:[], litros:{}, bodega:'' };
     renderFoliarForm();
     renderAplList();
     if(editando) avisoGuardado(faltan.length ? `✅ Corregida · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Aplicación corregida · stock recalculado');
@@ -3170,8 +3239,11 @@ async function aplEditar(id){
     aplEdit={ id, tipo, doc:a, descontado:(a.descontado||[]).slice(), bodega:a.bodegaDescuento||a.predioId||'constancia' };
 
     if(tipo==='foliar'){
+      // v40 · Al corregir se conserva la bodega desde la que se descontó: si no,
+      // la corrección devolvería el stock a una bodega y lo sacaría de otra.
       aplFol={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
-        recetaTxt:recetaATexto(a.receta), receta:recetaAEstado(a.receta), litros:{} };
+        recetaTxt:recetaATexto(a.receta), receta:recetaAEstado(a.receta), litros:{},
+        bodega:a.bodegaDescuento||'' };
       (a.destinos||[]).forEach(d=>{ if(d && d.modulo!=null) aplFol.litros[String(d.modulo)]=String(d.litros!=null?d.litros:''); });
     }else if(tipo==='viariego'){
       aplVia={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
@@ -3918,11 +3990,13 @@ function abrirMovProducto(idx){
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">📦 ${escH(p.nombre)}</div>
     <div class="modal-sub">Stock: 
-      <b>${fmtNum(st.constancia)}</b> Central · <b>${fmtNum(st.transito)}</b> Sub Tránsito · <b>${fmtNum(st.paradero)}</b> Sub Paradero ${escH(uni)}</div>
+      <b>${fmtNum(st.constancia)}</b> La Constancia · <b>${fmtNum(st.transito)}</b> El Tránsito · <b>${fmtNum(st.paradero)}</b> Paradero 12 ${escH(uni)}</div>
 
     ${canComprar()?`
     <div class="sec-div">🛒 Registrar compra (entra stock)</div>
-    <div class="form-row"><label>Bodega que recibe</label><select id="mcPredio">${predOpts('constancia')}</select></div>
+    <div class="form-row"><label>Bodega que recibe</label><select id="mcPredio">${
+      prediosCompra().map(k=>`<option value="${k}"${k===(prediosCompra()[0]||'')?' selected':''}>${escH(BODEGA_NOMBRES[k]||PREDIOS[k].nombre)}</option>`).join('')
+    }</select></div>
     <div style="display:flex;gap:8px">
       <div class="form-row" style="flex:1"><label>N° envases</label><input type="text" inputmode="decimal" id="mcEnv" oninput="movCalc()" placeholder="Ej: 5"></div>
       <div class="form-row" style="flex:1"><label>Capacidad c/u (${escH(uni)})</label><input type="text" inputmode="decimal" id="mcCap" value="${p.capEnvase!=null&&p.capEnvase!==''?p.capEnvase:''}" oninput="movCalc()" placeholder="Ej: 20"></div>
@@ -3957,9 +4031,11 @@ function movCalc(){
 }
 
 async function movCompra(idx){
-  if(!canComprar()){ toast('Solo la bodega central registra compras'); return; }
+  if(!canComprar()){ toast('Sin permiso para registrar compras'); return; }
   const p=planProds[idx];
   const predio=document.getElementById('mcPredio').value;
+  // v40 · La compra entra a un centro de costo: solo a una bodega propia.
+  if(!prediosCompra().includes(predio)){ toast('⚠️ Solo puedes registrar compras que lleguen a tu bodega'); return; }
   const env=num(document.getElementById('mcEnv').value);
   const cap=num(document.getElementById('mcCap').value);
   const pre=num(document.getElementById('mcPrecio').value);
@@ -5560,7 +5636,7 @@ async function loadUsers(){
       return `<div class="user-row">
       <div class="ur-info">
         <div class="ur-name">${u.nombre||u.email}</div>
-        <div class="ur-meta">${escH(u.email)} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}" ${rolMalo?'style="background:#FEE2E2;color:var(--red)"':''}>${escH(ROLES[u.role]||((u.role||'sin rol')+' ⚠'))}</span> · ${escH(prediosLabel(u))}${u.subjefe?' · '+escH(u.subjefe):''}</div>
+        <div class="ur-meta">${escH(u.email)} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}" ${rolMalo?'style="background:#FEE2E2;color:var(--red)"':''}>${escH(ROLES[u.role]||((u.role||'sin rol')+' ⚠'))}</span> · ${escH(prediosLabel(u))}${u.subjefe?' · '+escH(u.subjefe):''}${u.puedeFoliar?' · <span title="Puede registrar desinfecciones foliares">🍃</span>':''}</div>
       </div>
       ${propio?'':`<button class="btn btn-sm" onclick="openUserEdit('${u.uid}')" style="background:var(--sand);color:var(--dark);width:auto;padding:6px 10px">✏️</button>`}
     </div>`}).join('')||'<div style="font-size:12px;color:var(--muted)">Sin usuarios aún</div>';
@@ -5601,6 +5677,14 @@ function openUserEdit(uid){
       <div style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:10px 12px;display:flex;flex-direction:column;gap:7px">${chk}</div>
     </div>
     <div class="form-row" id="euSubjefeRow" style="display:none"><label>Subjefe asignado</label><select id="euSubjefe">${subOpts}</select></div>
+    <!-- v40 · Permiso extra, al margen del rol -->
+    <div class="form-row" id="euFoliarRow">
+      <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer">
+        <input type="checkbox" id="euFoliar"${u.puedeFoliar?' checked':''} style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">
+        🍃 Puede registrar desinfecciones foliares
+      </label>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">Habilita la pestaña Foliar en Aplicaciones, en los predios que tenga a cargo, sin cambiarle el rol. Los fitosanitarios se descuentan de La Constancia, salvo que ya se hayan despachado a su campo.</div>
+    </div>
     <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:9px">El cambio se aplica la próxima vez que esa persona inicie sesión. Si está con la app abierta, tiene que cerrar sesión y volver a entrar.</div>
     <button class="btn btn-primary" onclick="saveUserEdit()">Guardar cambios</button>
     <button class="btn btn-secondary" style="margin-top:6px" onclick="closeModal()">Cancelar</button>`;
@@ -5653,7 +5737,8 @@ async function saveUserEdit(){
   try{
     await colUsers().doc(uid).update({
       nombre: nombre || u.nombre || (u.email||'').split('@')[0],
-      role, predios, predioId, subjefe
+      role, predios, predioId, subjefe,
+      puedeFoliar: !!document.getElementById('euFoliar').checked   // v40
     });
     closeModal();
     await loadUsers();
@@ -5693,8 +5778,11 @@ async function createUser(){
     await secondApp.auth().signOut();
     secondApp.delete();
     // save profile
-    await colUsers().doc(uid).set({email,nombre:nombre||email.split('@')[0],role,predioId,predios,subjefe,ts:Date.now()});
+    await colUsers().doc(uid).set({email,nombre:nombre||email.split('@')[0],role,predioId,predios,subjefe,
+      puedeFoliar: !!document.getElementById('nuFoliar').checked,   // v40
+      ts:Date.now()});
     ['nuEmail_name','nuEmail','nuPass'].forEach(id=>document.getElementById(id).value='');
+    document.getElementById('nuFoliar').checked=false;
     loadUsers();
     toast('✅ Usuario creado: '+email);
   }catch(e){
@@ -6795,10 +6883,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v39';
+const MANUAL_VERSION='v40';
 const MANUAL_FECHA='2026-09-14';
 
 const MANUAL_CAMBIOS=[
+  {v:'v40', f:'14-09-2026', txt:'<b>Tres bodegas, una por campo.</b> Como la empresa compra por centro de costo, los fertilizantes y lo de vía riego llegan directo a cada predio y se descuentan de la bodega de ese predio; cada encargado de bodega registra las compras que llegan a la suya. Los <b>fitosanitarios quedan en La Constancia</b>: las desinfecciones de los tres campos descuentan de ahí, salvo que el producto ya se haya despachado al campo, y en el formulario se ve y se puede corregir de qué bodega sale. Además, ahora un jefe o subjefe puede registrar desinfecciones sin cambiar de rol: gerencia marca la casilla <b>🍃 Puede registrar desinfecciones foliares</b> en Config › Usuarios.'},
   {v:'v39', f:'14-09-2026', txt:'Las <b>observaciones del registro diario ahora admiten fotos</b>. Al escribir una observación aparece destacado el botón 📷: se toma la foto con la cámara del teléfono y queda guardada junto a la entrada, hasta tres por registro. Sirve de respaldo cuando una labor quedó mal hecha. En el listado del día, las entradas con foto muestran el botón <b>📷 Ver fotos</b>, y en Informes hay un <b>Anexo de observaciones (PDF)</b> con las observaciones del período y sus fotos. Las fotos se achican solas en el teléfono y, si no hay señal, se envían igual al reconectar.'},
   {v:'v38', f:'13-09-2026', txt:'La <b>época es obligatoria</b> al registrar cualquier aplicación, y se llena sola con la del ciclo abierto del predio: sin ella, lo aplicado quedaba fuera de su temporada en el informe de gasto. El informe de <b>Gastos</b> ahora separa foliar, fertirriego y vía riego, dice de qué predio es cada temporada y cuenta las aplicaciones de cada tipo. Y si te quedas <b>sin señal</b>, lo que registres ya no se pierde: queda guardado en el teléfono y se envía solo al volver la conexión, con un aviso arriba mientras tanto.'},
   {v:'v37', f:'09-09-2026', txt:'Fertilización: se pueden cargar varios estanques el mismo día, cada uno con su cultivo, sus sales y sus sectores (Paradero 12 parte con tres). Foliar: al elegir el predio aparecen todos los módulos de una vez para anotar el mojamiento. Las aplicaciones ya registradas se pueden corregir con el ✏️, y el stock se recalcula solo. Las jefaturas de predio pueden consultar el inventario de bodega y las aplicaciones, sin modificarlos, y los dos encargados de bodega pueden corregir nombres, cantidades y precios del catálogo.'},
@@ -6913,6 +7002,7 @@ const MANUAL_SECCIONES=[
   intro:'Registro de las desinfecciones foliares. Lo que registres acá descuenta stock de la bodega.',
   pasos:[
     'En Aplicaciones, entra a la pestaña <b>🍃 Foliar</b>.',
+    'Después de interpretar la receta aparece <b>"Descuenta de la bodega de"</b>. Por defecto es <b>La Constancia</b>, donde se guardan los fitosanitarios de los tres campos. Si el producto ya se despachó a tu campo y hay stock, la app propone la bodega de tu predio. Puedes cambiarlo a mano; abajo se ve el stock de cada producto en la bodega elegida, y en rojo el que no tiene.',
     'Pon la <b>Fecha</b>, el <b>Predio</b>, el <b>Cultivo</b> y la <b>Época</b>. Al elegir el predio, la época se llena sola con la del <b>ciclo abierto</b>; si el predio tiene varios ciclos abiertos de distinta época, o ninguno, hay que elegirla a mano. <b>Sin época no se puede guardar</b>: es lo que hace que la aplicación entre en su temporada en el informe de gasto.',
     'Escribe la <b>receta tal como la anotas en terreno</b>, con dosis por 100 L de agua. Ejemplo: <i>Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + ácido cítrico 30 g</i>.',
     'La app trata de reconocer cada producto en la bodega. El que quede en amarillo con "no reconocí", elígelo a mano de la lista.',
@@ -7016,7 +7106,9 @@ const MANUAL_SECCIONES=[
   ],
   tips:[
     'Una diferencia grande en conciliación casi siempre es una aplicación sin registrar, o registrada en el predio equivocado.',
-    'Los <b>dos encargados de bodega</b> pueden corregir directamente el nombre de un producto, las cantidades y los precios. Las <b>compras</b> siguen registrándose desde la bodega central (La Constancia).',
+    'Una desinfección hecha en El Tránsito o Paradero 12 descuenta de <b>La Constancia</b>, no del campo donde se aplicó. Al conciliar, eso no es un error: es donde vive el fitosanitario.',
+    'Los <b>encargados de bodega</b> corrigen el nombre de un producto, las cantidades y los precios. Desde la v40, <b>cada bodega registra sus propias compras</b>: el selector "Bodega que recibe" solo muestra los predios que tienes a cargo, porque la compra entra a un centro de costo.',
+    'Los <b>fitosanitarios</b> se cargan en la bodega de <b>La Constancia</b>, aunque se usen en los tres campos: de ahí descuentan las desinfecciones. Los fertilizantes y lo de vía riego se cargan en la bodega del campo al que llegaron.',
     'Las <b>jefaturas de predio</b> entran a esta pantalla en <b>solo lectura</b>: ven el stock y la conciliación, pero no editan celdas ni mueven productos.',
     'Usa la vista de escritorio (botón 🖥️) para esta pantalla; en el celular la planilla queda apretada.'
   ]
@@ -7028,12 +7120,14 @@ const MANUAL_SECCIONES=[
     '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes.',
     '<b>Costos del personal</b> (gerencia con todos los predios): sueldo mínimo mensual, bono o extra fijo y jornada semanal. De ahí sale el costo por hora de los informes; actualízalo cuando cambie el sueldo mínimo legal.',
     '<b>Usuarios del sistema</b> (gerencia con todos los predios): se crea un acceso por persona, con su correo, una contraseña inicial que tú le entregas, el rol y los predios. Al elegir el rol, la app explica en una línea qué podrá hacer esa persona.',
-    '<b>Corregir un usuario:</b> en la lista, el lápiz ✏️ abre la edición de rol, predios y nombre. El cambio se aplica la próxima vez que esa persona inicie sesión. Si tiene la app abierta, debe cerrar sesión y volver a entrar.'
+    '<b>Corregir un usuario:</b> en la lista, el lápiz ✏️ abre la edición de rol, predios y nombre. El cambio se aplica la próxima vez que esa persona inicie sesión. Si tiene la app abierta, debe cerrar sesión y volver a entrar.',
+    '<b>🍃 Puede registrar desinfecciones foliares:</b> casilla aparte del rol, tanto al crear como al editar. Le habilita la pestaña Foliar de Aplicaciones en sus predios, sin quitarle nada de lo suyo. Es lo que se usa para los jefes de predio y el subjefe que hacen las desinfecciones. En la lista de usuarios aparecen marcados con 🍃.'
   ],
   tips:[
     'Pídele a cada persona que cambie la contraseña inicial. Las cuentas compartidas hacen imposible saber quién registró qué.',
     'Tu propia cuenta no se puede editar desde acá, a propósito: es la forma más fácil de dejarse fuera del sistema.',
-    'Un rol en rojo en la lista significa que ese usuario tiene un rol inválido y no va a poder entrar hasta que lo corrijas con el lápiz.'
+    'Un rol en rojo en la lista significa que ese usuario tiene un rol inválido y no va a poder entrar hasta que lo corrijas con el lápiz.',
+    'La casilla de desinfecciones no reemplaza al rol <b>Jefe de desinfecciones</b>: ese rol es para quien SOLO hace foliares. La casilla es para quien además tiene otro trabajo en la app.'
   ]
 },
 {
