@@ -488,7 +488,14 @@ body.vista-escritorio .modal-content{max-width:700px}
         <div id="laborRows"></div>
         <button id="addLaborBtn" class="btn btn-secondary" style="margin-top:6px;padding:8px;font-size:12px" onclick="addLaborRow()">＋ Agregar labor</button>
       </div>
-      <div class="form-row" style="margin-top:8px"><label>Observación</label><input type="text" id="iO" placeholder="Notas adicionales…"></div>
+      <div class="form-row" style="margin-top:8px"><label>Observación</label><input type="text" id="iO" placeholder="Notas adicionales…" oninput="fotoSugerir()"></div>
+      <!-- v39 · Respaldo fotográfico de la observación -->
+      <div id="fotoZona" style="margin:-2px 0 8px">
+        <input type="file" id="fotoFile" accept="image/*" capture="environment" multiple style="display:none" onchange="fotoElegida(this)">
+        <button id="fotoBtn" class="btn btn-secondary" style="padding:7px 10px;font-size:12px;width:100%" onclick="document.getElementById('fotoFile').click()">📷 Agregar foto de respaldo</button>
+        <div id="fotoHint" style="font-size:10.5px;color:var(--muted);margin-top:4px;display:none">Una foto deja constancia de lo que anotaste. Hasta 3.</div>
+        <div id="fotoPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
+      </div>
       <button class="btn btn-primary" onclick="guardar()">＋ Guardar Entrada</button>
     </div>
     <div id="hoy"></div>
@@ -558,7 +565,10 @@ body.vista-escritorio .modal-content{max-width:700px}
         <button class="inftab" data-tab="labores" onclick="switchInfTab('labores')">🔧 Labores</button>
         <button class="inftab" data-tab="inconsist" onclick="switchInfTab('inconsist')">⚠️ Inconsistencias</button>
       </div>
-      <button class="btn btn-secondary" style="margin-bottom:10px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Descargar Excel completo (5 hojas)</button>
+      <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (5 hojas)</button>
+        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportAnexoFotos()">📷 Anexo de observaciones (PDF)</button>
+      </div>
       <div id="infContent"></div>
     </div>
   </div>
@@ -4511,8 +4521,128 @@ function eHTML(e,pred=activePred){
       ${totalM?`<span class="badge bm">🪴 ${totalM} mesas</span>`:''}
     </div>
     <div style="border-top:1px solid var(--sand);padding-top:6px">${laborLines}</div>
-    ${e.obs?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:5px;border-top:1px solid var(--sand)">📌 ${e.obs}</div>`:''}
+    ${(e.obs||e.nFotos)?`<div style="font-size:11px;color:var(--muted);margin-top:6px;padding-top:5px;border-top:1px solid var(--sand);display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">
+      <span style="flex:1;min-width:120px">${e.obs?'📌 '+escH(e.obs):''}</span>
+      ${e.nFotos?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark);font-size:10.5px;padding:3px 8px;flex-shrink:0" onclick="verFotos('${pred}','${e.id}')">📷 Ver ${e.nFotos} foto${e.nFotos>1?'s':''}</button>`:''}
+    </div>`:''}
   </div>`;
+}
+
+// ══════════════════════════════════════════════
+// v39 · FOTOS DE RESPALDO DE LA OBSERVACIÓN
+// ══════════════════════════════════════════════
+// La foto se comprime en el teléfono y se guarda como texto (base64) en un
+// documento aparte: /registros/{predio}/entries/{id}/fotos/{fotoId}.
+// Por qué así y no con Firebase Storage:
+//   · Storage exige plan de pago en los proyectos creados después de sept-2024.
+//   · Storage NO encola las subidas sin señal; Firestore sí, así que la foto
+//     sacada en el invernadero sin datos se sube sola al reconectar (v38).
+// Va en documento aparte para que los informes, que leen miles de entradas,
+// no arrastren las imágenes: la entrada solo guarda nFotos.
+const FOTO_MAX_LADO=1280;        // px del lado mayor
+const FOTO_MAX_CHARS=420000;     // del texto base64. El tope de Firestore es 1 MiB por documento.
+const FOTO_MAX_POR_ENTRADA=3;
+let fotosPend=[];                // fotos elegidas que aún no se guardan
+
+// Reduce y recomprime hasta que el texto quepa holgado en un documento.
+function comprimirFoto(file){
+  return new Promise((resolve,reject)=>{
+    const url=URL.createObjectURL(file);
+    const img=new Image();
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      let w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+      const esc=Math.min(1, FOTO_MAX_LADO/Math.max(w,h));
+      w=Math.max(1,Math.round(w*esc)); h=Math.max(1,Math.round(h*esc));
+      const dibuja=(aw,ah,q)=>{
+        const c=document.createElement('canvas'); c.width=aw; c.height=ah;
+        const ctx=c.getContext('2d');
+        ctx.fillStyle='#fff'; ctx.fillRect(0,0,aw,ah);   // JPEG no tiene transparencia
+        ctx.drawImage(img,0,0,aw,ah);
+        return c.toDataURL('image/jpeg',q);
+      };
+      let q=0.65, dataUrl=dibuja(w,h,q);
+      while(dataUrl.length>FOTO_MAX_CHARS && q>0.32){ q=Math.round((q-0.1)*100)/100; dataUrl=dibuja(w,h,q); }
+      // Si con calidad baja sigue sin caber (fotos muy grandes), se achica.
+      let intentos=0;
+      while(dataUrl.length>FOTO_MAX_CHARS && intentos<3){
+        w=Math.round(w*0.75); h=Math.round(h*0.75);
+        dataUrl=dibuja(w,h,0.5); intentos++;
+      }
+      if(dataUrl.length>FOTO_MAX_CHARS) return reject(new Error('la foto es demasiado grande'));
+      resolve({dataUrl, chars:dataUrl.length, w, h});
+    };
+    img.onerror=()=>{ URL.revokeObjectURL(url); reject(new Error('no se pudo leer la imagen')); };
+    img.src=url;
+  });
+}
+
+// El botón se destaca cuando hay algo escrito en la observación: es ahí donde
+// la foto sirve de respaldo. Nunca obliga.
+function fotoSugerir(){
+  const inp=document.getElementById('iO'), btn=document.getElementById('fotoBtn'), hint=document.getElementById('fotoHint');
+  if(!inp||!btn) return;
+  const hay=!!inp.value.trim();
+  btn.style.background = hay?'var(--dark)':'';
+  btn.style.color      = hay?'#fff':'';
+  if(hint) hint.style.display = (hay && !fotosPend.length) ? '' : 'none';
+}
+
+async function fotoElegida(input){
+  const files=[...(input.files||[])];
+  input.value='';                       // permite volver a elegir la misma foto
+  if(!files.length) return;
+  const cupo=FOTO_MAX_POR_ENTRADA-fotosPend.length;
+  if(cupo<=0){ toast(`⚠️ Máximo ${FOTO_MAX_POR_ENTRADA} fotos por entrada`); return; }
+  const usar=files.slice(0,cupo);
+  if(files.length>cupo) toast(`⚠️ Solo caben ${cupo} foto(s) más`);
+  loading(true,'Preparando foto…');
+  for(const f of usar){
+    try{ fotosPend.push(await comprimirFoto(f)); }
+    catch(e){ toast('⚠️ '+(f.name||'Foto')+': '+e.message); }
+  }
+  loading(false);
+  renderFotosPend(); fotoSugerir();
+}
+
+function fotoQuitar(i){ fotosPend.splice(i,1); renderFotosPend(); fotoSugerir(); }
+
+function renderFotosPend(){
+  const box=document.getElementById('fotoPrev'); if(!box) return;
+  box.innerHTML=fotosPend.map((f,i)=>`
+    <div style="position:relative">
+      <img src="${f.dataUrl}" style="width:74px;height:74px;object-fit:cover;border-radius:8px;border:1px solid var(--sand)">
+      <button onclick="fotoQuitar(${i})" title="Quitar" style="position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:11px;line-height:1;cursor:pointer">✕</button>
+    </div>`).join('');
+  const btn=document.getElementById('fotoBtn');
+  if(btn){
+    btn.textContent = fotosPend.length
+      ? `📷 Agregar otra (${fotosPend.length}/${FOTO_MAX_POR_ENTRADA})`
+      : '📷 Agregar foto de respaldo';
+    btn.style.display = fotosPend.length>=FOTO_MAX_POR_ENTRADA ? 'none' : '';
+  }
+}
+
+// Ver las fotos de una entrada ya guardada. Se cargan recién acá, nunca junto
+// con el listado del día.
+async function verFotos(pred, entryId){
+  loading(true,'Cargando fotos…');
+  try{
+    const snap=await colRegistros(pred).doc(entryId).collection('fotos').get();
+    loading(false);
+    if(snap.empty){ toast('Esta entrada no tiene fotos guardadas'); return; }
+    const fotos=snap.docs.map(d=>({id:d.id, ...d.data()}));
+    document.getElementById('modalContent').innerHTML=`
+      <div class="modal-title">📷 Respaldo de la observación</div>
+      <div class="modal-sub">${escH(fotos[0].obs||'')}</div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">
+        ${fotos.map(f=>`<div>
+          <img src="${f.data}" style="width:100%;border-radius:10px;border:1px solid var(--sand)">
+          <div style="font-size:10.5px;color:var(--muted);margin-top:3px">${escH(fD(f.fecha||''))} · ${escH(f.creadoPorNombre||'')}</div>
+        </div>`).join('')}
+      </div>`;
+    document.getElementById('overlay').classList.add('open');
+  }catch(e){ loading(false); toast('Error: '+e.message); }
 }
 
 // ══════════════════════════════════════════════
@@ -4597,7 +4727,23 @@ async function guardar(){
       ausente:ausente||false,licencia:document.getElementById('chkLicencia').checked||false,vacaciones:vacaciones||false,reemplazoPredioId,reemplazoWorkerId,reemplazoNombre,
       ts:Date.now(),creadoPor:currentUser.uid};
     if(cicloIdReg) data.cicloId = cicloIdReg;
-    await colRegistros(activePred).add(data);
+    // v39 · nFotos viaja en la entrada para que el listado sepa que hay respaldo
+    // sin tener que leer las imágenes.
+    data.nFotos = fotosPend.length;
+    // El id se genera acá, no lo devuelve el servidor: así las fotos saben a qué
+    // entrada pertenecen aunque se esté registrando sin señal.
+    const refEntry = colRegistros(activePred).doc();
+    await enCola(refEntry.set(data), 'Registro de '+(wSel.nombre||'trabajador'));
+    for(let i=0;i<fotosPend.length;i++){
+      const f=fotosPend[i];
+      await enCola(refEntry.collection('fotos').doc().set({
+        data:f.dataUrl, ancho:f.w, alto:f.h, chars:f.chars,
+        obs, fecha:selDate, workerNombre:wSel.nombre||'',
+        ts:Date.now(), creadoPor:currentUser.uid,
+        creadoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email
+      }), `Foto ${i+1} de ${fotosPend.length}`);
+    }
+    fotosPend=[]; renderFotosPend(); fotoSugerir();
     document.getElementById('iO').value='';
     document.getElementById('chkAusente').checked=false;
     document.getElementById('chkLicencia').checked=false;
@@ -4605,7 +4751,7 @@ async function guardar(){
     document.getElementById('reemplazoDiv').style.display='none';
     document.getElementById('ausenteSection').style.display='none';
     initLaborRows();
-    toast('✅ Entrada guardada');
+    avisoGuardado('✅ Entrada guardada');
   }catch(e){toast('Error: '+e.message)}
   loading(false);
 }
@@ -4613,7 +4759,17 @@ async function guardar(){
 async function delEntry(id){
   if(!confirm('¿Eliminar esta entrada?'))return;
   loading(true,'Eliminando…');
-  try{await colRegistros(activePred).doc(id).delete();toast('🗑 Eliminada')}
+  try{
+    // v39 · Firestore no borra las subcolecciones al borrar el documento: las
+    // fotos quedarían huérfanas y sin forma de llegar a ellas desde la app.
+    const ref=colRegistros(activePred).doc(id);
+    try{
+      const fs=await ref.collection('fotos').get();
+      await Promise.all(fs.docs.map(d=>d.ref.delete().catch(()=>{})));
+    }catch(e){ /* sin fotos o sin acceso: se sigue con la entrada */ }
+    await ref.delete();
+    toast('🗑 Eliminada');
+  }
   catch(e){toast('Error: '+e.message)}
   loading(false);
 }
@@ -6407,6 +6563,87 @@ function exportInfExcelTodo(){
 }
 
 // Exportar UN informe a PDF (incluye el gráfico del tab si existe)
+// v39 · Anexo fotográfico: las observaciones del período, con su foto de
+// respaldo. Es el informe que pidieron los subjefes para dejar constancia de una
+// labor mal hecha. Solo entra lo que tiene observación escrita.
+const ANEXO_MAX_ENTRADAS=40;   // tope para que el PDF no se vuelva inmanejable
+
+async function exportAnexoFotos(){
+  if(!infState.data){ toast('⚠️ Primero genera los informes'); return; }
+  if(!window.jspdf || !window.jspdf.jsPDF){ toast('⚠️ Librería PDF no cargada. Revisa tu conexión y recarga.'); return; }
+  const m=infExportMeta();
+  const conObs=infState.data.registros
+    .filter(r=>(r.obs&&String(r.obs).trim()) || r.nFotos)
+    .sort((a,b)=>String(a.fecha).localeCompare(String(b.fecha)));
+  if(!conObs.length){ toast('No hay observaciones en el período'); return; }
+  const recortado = conObs.length>ANEXO_MAX_ENTRADAS;
+  const lista=conObs.slice(0,ANEXO_MAX_ENTRADAS);
+
+  loading(true,'Armando el anexo…');
+  try{
+    // Las fotos se leen recién ahora, y solo las de estas entradas.
+    for(const r of lista){
+      r._fotos=[];
+      if(!r.nFotos) continue;
+      try{
+        const snap=await colRegistros(r._predio).doc(r._id).collection('fotos').get();
+        r._fotos=snap.docs.map(d=>d.data());
+      }catch(e){ /* sin acceso a esa foto: la entrada igual sale, sin imagen */ }
+    }
+
+    const { jsPDF }=window.jspdf;
+    const doc=new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+    const pw=doc.internal.pageSize.getWidth(), ph=doc.internal.pageSize.getHeight();
+    doc.setFont('helvetica','bold'); doc.setFontSize(14);
+    doc.text('FieldLog — Anexo de observaciones', 14, 16);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+    doc.text(`${m.predioTxt} · ${m.subjefeTxt}`, 14, 23);
+    doc.text(`Período: ${m.periodo}`, 14, 28.5);
+    doc.text(`Generado: ${fDMY(todayIso)} · ${(currentProfile&&currentProfile.nombre)||''}`, pw-14, 23, {align:'right'});
+
+    let y=38;
+    lista.forEach((r,idx)=>{
+      const w=r._worker||{};
+      const alto = 14 + (r._fotos.length?62:0);
+      if(y+alto>ph-14){ doc.addPage(); y=20; }
+      doc.setDrawColor(224,221,212); doc.line(14, y-4, pw-14, y-4);
+      doc.setFont('helvetica','bold'); doc.setFontSize(10);
+      doc.text(`${idx+1}. ${fDMY(r.fecha)} · ${w.nombre||r.workerNombre||'—'}`, 14, y);
+      doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+      doc.setTextColor(110);
+      doc.text(`${PREDIOS[r._predio]?PREDIOS[r._predio].nombre:r._predio} · ${w.subjefe||r.workerSubjefe||'—'}`, pw-14, y, {align:'right'});
+      doc.setTextColor(20); doc.setFontSize(9.5);
+      y+=6;
+      const txt=doc.splitTextToSize(String(r.obs||'(sin texto)'), pw-28);
+      doc.text(txt, 14, y);
+      y+=txt.length*4.6+2;
+
+      // Las fotos van en fila, tamaño parejo.
+      if(r._fotos.length){
+        if(y+58>ph-14){ doc.addPage(); y=20; }
+        let x=14;
+        r._fotos.slice(0,FOTO_MAX_POR_ENTRADA).forEach(f=>{
+          const ancho=Math.min(58, (pw-28-4*(r._fotos.length-1))/r._fotos.length);
+          const prop=(f.alto&&f.ancho)?(f.alto/f.ancho):0.75;
+          const alt=Math.min(58, ancho*prop);
+          try{ doc.addImage(f.data, 'JPEG', x, y, ancho, alt); }catch(e){ /* foto ilegible */ }
+          x+=ancho+4;
+        });
+        y+=58;
+      }
+      y+=6;
+    });
+
+    if(recortado){
+      doc.setFontSize(8.5); doc.setTextColor(180,83,9);
+      doc.text(`Se muestran las primeras ${ANEXO_MAX_ENTRADAS} de ${conObs.length} observaciones del período. Acota las fechas para ver el resto.`, 14, ph-10);
+    }
+    doc.save(`anexo_observaciones_${m.suf}.pdf`);
+    toast('✅ Anexo descargado');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
 function exportInfPDF(tab){
   if(!infState.data){ toast('⚠️ Primero genera los informes'); return; }
   if(!window.jspdf || !window.jspdf.jsPDF){ toast('⚠️ Librería PDF no cargada. Revisa tu conexión y recarga.'); return; }
@@ -6548,10 +6785,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v38';
-const MANUAL_FECHA='2026-09-13';
+const MANUAL_VERSION='v39';
+const MANUAL_FECHA='2026-09-14';
 
 const MANUAL_CAMBIOS=[
+  {v:'v39', f:'14-09-2026', txt:'Las <b>observaciones del registro diario ahora admiten fotos</b>. Al escribir una observación aparece destacado el botón 📷: se toma la foto con la cámara del teléfono y queda guardada junto a la entrada, hasta tres por registro. Sirve de respaldo cuando una labor quedó mal hecha. En el listado del día, las entradas con foto muestran el botón <b>📷 Ver fotos</b>, y en Informes hay un <b>Anexo de observaciones (PDF)</b> con las observaciones del período y sus fotos. Las fotos se achican solas en el teléfono y, si no hay señal, se envían igual al reconectar.'},
   {v:'v38', f:'13-09-2026', txt:'La <b>época es obligatoria</b> al registrar cualquier aplicación, y se llena sola con la del ciclo abierto del predio: sin ella, lo aplicado quedaba fuera de su temporada en el informe de gasto. El informe de <b>Gastos</b> ahora separa foliar, fertirriego y vía riego, dice de qué predio es cada temporada y cuenta las aplicaciones de cada tipo. Y si te quedas <b>sin señal</b>, lo que registres ya no se pierde: queda guardado en el teléfono y se envía solo al volver la conexión, con un aviso arriba mientras tanto.'},
   {v:'v37', f:'09-09-2026', txt:'Fertilización: se pueden cargar varios estanques el mismo día, cada uno con su cultivo, sus sales y sus sectores (Paradero 12 parte con tres). Foliar: al elegir el predio aparecen todos los módulos de una vez para anotar el mojamiento. Las aplicaciones ya registradas se pueden corregir con el ✏️, y el stock se recalcula solo. Las jefaturas de predio pueden consultar el inventario de bodega y las aplicaciones, sin modificarlos, y los dos encargados de bodega pueden corregir nombres, cantidades y precios del catálogo.'},
   {v:'v36', f:'06-09-2026', txt:'Fertirriego: las sales ahora sí descuentan de bodega. Antes, siete de las nueve sales no calzaban con el nombre del producto en el catálogo y se aplicaban sin descontar. Además, bajo cada sal se ve de qué producto se descuenta y se puede corregir a mano, y si algo queda sin descontar el aviso queda escrito en la aplicación.'},
@@ -6593,13 +6831,16 @@ const MANUAL_SECCIONES=[
     'Elige el <b>Trabajador</b>.',
     'Si el trabajador <b>no vino</b>, marca Trabajador ausente, Licencia médica o Vacaciones. Si hubo alguien que lo reemplazó, elígelo en Reemplazante. Con ausencia, licencia o vacaciones no hace falta cargar labores.',
     'En <b>Labores del día</b>, elige la labor y anota las <b>horas</b> y las <b>mesas</b>. Con "＋ Agregar labor" puedes cargar hasta 6 labores en una misma entrada.',
-    'Escribe una <b>Observación</b> si hay algo que explicar (una lluvia, una falla, un cambio de sector).',
+    'Escribe una <b>Observación</b> si hay algo que explicar (una lluvia, una falla, un cambio de sector, una labor mal hecha).',
+    'Cuando escribes una observación se destaca el botón <b>📷 Agregar foto de respaldo</b>: abre la cámara del teléfono y la foto queda pegada a esa entrada. Hasta <b>3 fotos</b> por registro. Es opcional, pero cuando el comentario es sobre trabajo mal hecho, la foto es la que respalda al subjefe después.',
     'Aprieta <b>＋ Guardar Entrada</b>. Abajo aparece la lista de lo ya registrado ese día.'
   ],
   tips:[
     'Si un valor se ve raro (más de 10 horas o más de 70 mesas en el día, sumando lo ya registrado), la app pregunta antes de guardar. No es un bloqueo: si el dato es correcto, acepta.',
     'Se puede hacer más de una entrada por trabajador en el mismo día; se suman.',
-    'Si te equivocaste, borra la entrada en la lista de abajo y vuelve a cargarla. Es mejor eso que dejar el dato malo.',
+    'Si te equivocaste, borra la entrada en la lista de abajo y vuelve a cargarla. Es mejor eso que dejar el dato malo. Al borrar una entrada se borran también sus fotos.',
+    'Las fotos se achican solas en el teléfono antes de guardarse, así que no llenan la memoria ni gastan datos de más. Toma la foto de cerca y con luz: una foto general de todo el módulo no sirve de respaldo.',
+    'Si estás sin señal, la foto se guarda igual y se envía sola al volver la conexión, junto con el registro.',
     'Desde la v35 la entrada guarda el nombre del trabajador tal como estaba ese día. Si después se saca a esa persona de la lista del predio, sus registros viejos siguen mostrando su nombre, con la marca <b>(histórico)</b>. Por eso ya no hay problema en depurar la lista de trabajadores entre temporadas.'
   ]
 },
@@ -6648,11 +6889,13 @@ const MANUAL_SECCIONES=[
     'Elige <b>Desde</b> y <b>Hasta</b>, el <b>Predio</b> y el <b>Subjefe</b> (o "Todos").',
     'Aprieta <b>🔄 Generar informes</b>.',
     'Cambia entre las pestañas: <b>Prog vs Real</b>, <b>Por ciclo</b>, <b>Trabajadores</b>, <b>Labores</b> e <b>Inconsistencias</b>.',
-    'Con <b>📥 Descargar Excel completo</b> bajas las 5 hojas en un solo archivo.'
+    'Con <b>📥 Excel completo</b> bajas las 5 hojas en un solo archivo.',
+    'Con <b>📷 Anexo de observaciones (PDF)</b> bajas todas las observaciones escritas en el período, con la foto de respaldo de cada una. Sirve para respaldar una conversación sobre trabajo mal hecho, o para dejarlo por escrito.'
   ],
   tips:[
     'Parte siempre por <b>Inconsistencias</b>: ahí salen los datos que no cuadran (días sin registro, horas fuera de rango, labores sin ciclo). Corregir eso primero hace que el resto de los informes sirva.',
-    'Los costos por hora salen de lo que esté cargado en Config › Costos del personal. Si el sueldo mínimo cambió y no se actualizó ahí, los pesos van a estar malos.'
+    'Los costos por hora salen de lo que esté cargado en Config › Costos del personal. Si el sueldo mínimo cambió y no se actualizó ahí, los pesos van a estar malos.',
+    'El anexo de observaciones sale del mismo período y predio que tengas arriba: si quieres solo una semana, acota las fechas antes de generarlo. Trae hasta 40 observaciones por archivo.'
   ]
 },
 {
@@ -6810,6 +7053,7 @@ const MANUAL_SECCIONES=[
     '<b>"Cuenta no habilitada."</b> El usuario no está creado en Config › Usuarios. Lo crea gerencia.',
     '<b>"Rol no reconocido."</b> El rol guardado no existe en el sistema (pasa cuando la cuenta se creó a mano). Gerencia lo corrige en Config › Usuarios con el lápiz ✏️.',
     '<b>"Estoy sin señal."</b> Desde la v38, si la app ya está abierta puedes registrar igual: aparece una <b>barra naranja arriba</b> y lo que guardes queda esperando en el teléfono. Al volver la señal se envía solo y la barra desaparece. <b>No lo registres de nuevo</b>: se duplicaría. Lo que sí necesita internet son las compras y despachos de bodega.',
+    '<b>"No puedo agregar más fotos."</b> El máximo es 3 por entrada. Si necesitas más, guarda la entrada y crea otra con el resto (se pueden hacer varias entradas del mismo trabajador el mismo día).',
     '<b>"La barra naranja no se va."</b> Mientras diga "esperando envío" es que el teléfono aún no recupera señal. Deja la app abierta un momento con señal buena. Si cerraste la app antes de que se enviara, no se pierde: se manda la próxima vez que entres con internet.'
   ],
   tips:['Si el problema no está acá, anota qué pantalla era, qué apretaste y qué decía el mensaje. Con eso se arregla rápido; sin eso, no.']
