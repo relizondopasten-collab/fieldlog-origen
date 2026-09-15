@@ -2573,9 +2573,24 @@ async function calcResumen(){
     // en terreno: un 0 en foliar significa que nadie está registrando foliares.
     const nTipo={foliar:0, fertirriego:0, viariego:0, otro:0};
 
+    // v41 · Un estanque que se aplicó en varios días aporta un evento POR DÍA:
+    // cada consumo pesa en la fecha en que se aplicó, no en la de preparación.
+    const eventos=[];
     docs.forEach(doc=>{
       const a=doc.data();
-      const f=a.fecha||'';
+      const us=(a.tipo==='fertirriego' && Array.isArray(a.usos) && a.usos.length) ? a.usos : null;
+      if(us){
+        us.forEach(u=>eventos.push({a, fecha:u.fecha||a.fecha, descontado:u.descontado||[],
+                                    sectores:u.sectores||[], destinos:[]}));
+      }else{
+        eventos.push({a, fecha:a.fecha, descontado:a.descontado||[],
+                      sectores:a.sectores||[], destinos:a.destinos||[]});
+      }
+    });
+
+    eventos.forEach(ev=>{
+      const a=ev.a;
+      const f=ev.fecha||'';
       if(desde && f<desde) return;
       if(hasta && f>hasta) return;
       nApp++;
@@ -2595,14 +2610,14 @@ async function calcResumen(){
       // Superficie DISTINTA: cada módulo o sector cuenta una sola vez por
       // temporada, aunque se trate diez veces.
       const pid=a.predioId||'';
-      (a.destinos||[]).forEach(d=>{
+      (ev.destinos||[]).forEach(d=>{
         if(d.modulo==null||d.modulo==='') return;
         const ha=(d.ha!=null&&!isNaN(Number(d.ha)))?Number(d.ha):haModulo(pid,d.modulo);
         if(ha==null||isNaN(ha)) return;
         if(!T.mod[pid]) T.mod[pid]={};
         T.mod[pid][String(d.modulo)]=ha;
       });
-      (a.sectores||[]).forEach(sx=>{
+      (ev.sectores||[]).forEach(sx=>{
         if(sx.sector==null||sx.sector==='') return;
         const ha=(sx.ha!=null&&!isNaN(Number(sx.ha)))?Number(sx.ha):haSector(pid,sx.sector);
         if(ha==null||isNaN(ha)) return;
@@ -2616,7 +2631,7 @@ async function calcResumen(){
       (a.sales||[]).forEach(sx=>{ if(sx.productoId){ baseMap[sx.productoId]=sx.unidad||'kg'; nombreMap[sx.productoId]=sx.nombre; } });
 
       const ym=f.slice(0,7);
-      (a.descontado||[]).forEach(d=>{
+      (ev.descontado||[]).forEach(d=>{
         if(!d.productoId) return;
         const prod=productosCache.find(x=>x.id===d.productoId);
         const precio=(prod&&prod.precioUnit!=null&&prod.precioUnit!=='')?Number(prod.precioUnit):null;
@@ -3136,9 +3151,15 @@ async function renderAplList(){
         etiqueta='🧪';
         receta=(a.sales||[]).map(s=>`${escH(s.nombre)} ${fmtNum(s.cantidadKg)}${escH(s.unidad||'kg')}`).join(' + ');
         const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
-        sub=(a.sectores||[]).map(s=>`${escH(s.sector)}: ${fmtNum(s.litros,0)}L`).join(' · ');
+        // v41 · Si el estanque se aplicó en varios días, se listan los días.
+        const us=usosDe(a);
+        sub = us.length>1
+          ? us.map(u=>`${escH(fD(u.fecha))}: ${fmtNum(u.litros,0)}L (${(u.sectores||[]).map(x=>escH(x.sector)).join(', ')})`).join(' · ')
+          : (a.sectores||[]).map(s=>`${escH(s.sector)}: ${fmtNum(s.litros,0)}L`).join(' · ');
         const nEst=(Number(a.estanquesDia)||1)>1 ? ` · estanque ${Number(a.estanque)||1} de ${Number(a.estanquesDia)}` : '';
-        totalTxt=`${escH(pred)} · ${escH(a.cultivo||'')}${nEst} · estanque ${fmtNum(a.capacidad,0)}L → ${fmtNum(a.totalLitros,0)}L aplicados`;
+        const disp=litrosDisponibles(a);
+        const dispTxt = estanqueAbierto(a) ? ` · <b style="color:#2E7D32">quedan ${fmtNum(disp,0)}L</b>` : (a.cerrado?' · cerrado':'');
+        totalTxt=`${escH(pred)} · ${escH(a.cultivo||'')}${nEst} · estanque ${fmtNum(a.capacidad,0)}L → ${fmtNum(a.totalLitros,0)}L aplicados${dispTxt}`;
       }else if(a.tipo==='riego'){
         etiqueta='💦';
         receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.cantidad)}${escH(r.unidadStock||'')}`).join(' + ');
@@ -3175,6 +3196,7 @@ async function renderAplList(){
             ${sdH}${edH}
           </div>
           <div style="display:flex;gap:4px;flex-shrink:0">
+            ${(estanqueAbierto(a) && (canAplicEnPredio(a.predioId)||canEditAplicTodas()))?`<button class="btn btn-sm" style="background:#E7F3E8;color:#2E7D32;font-weight:600" title="Este estanque todavía tiene mezcla: registrar la aplicación de otro día" onclick="abrirUsoEstanque('${doc.id}')">➕ Seguir</button>`:''}
             ${puedeEd?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" title="Corregir esta aplicación" onclick="aplEditar('${doc.id}')">✏️</button>`:''}
             ${isAdmin()?`<button class="btn btn-danger btn-sm" onclick="delAplicacion('${doc.id}')">✕</button>`:''}
           </div>
@@ -3231,6 +3253,14 @@ async function aplEditar(id){
     const a=snap.data();
     if(!canEditAplic(a)){ loading(false); toast('Sin permiso para corregir esta aplicación'); return; }
     if(a.tipo==='riego'){ loading(false); toast('Este registro es del modelo antiguo y no se puede reabrir'); return; }
+    // v41 · Un estanque con aplicaciones de varios días no se corrige con el ✏️:
+    // la corrección devuelve el stock del documento completo y volvería a
+    // descontar solo lo del formulario, borrando los días siguientes.
+    if(a.tipo==='fertirriego' && Array.isArray(a.usos) && a.usos.length>1){
+      loading(false);
+      toast('⚠️ Este estanque tiene aplicaciones de varios días. Para corregirlo, pide a gerencia que lo revise.');
+      return;
+    }
     const tipo=a.tipo||'foliar';
     if(!['foliar','fertirriego','viariego'].includes(tipo)){ loading(false); toast('Tipo de registro desconocido'); return; }
 
@@ -3519,6 +3549,162 @@ function renderRiegoForm(){
   rieRenderCalc();
 }
 
+// ══════════════════════════════════════════════
+// v41 · SEGUIR APLICANDO UN ESTANQUE YA PREPARADO
+// ══════════════════════════════════════════════
+// Un estanque se prepara una vez y puede durar dos o tres días. Cada día de
+// aplicación queda como un "uso" dentro del mismo documento, con su fecha, sus
+// sectores y lo que descontó de bodega. El descuento es proporcional a los
+// litros de ESE día (la concentración del estanque no cambia), y el informe de
+// gasto carga cada consumo a la fecha en que se aplicó.
+function usosDe(a){
+  if(Array.isArray(a.usos) && a.usos.length) return a.usos;
+  // Documentos anteriores a la v41: el estanque entero es un solo uso.
+  return [{fecha:a.fecha, litros:Number(a.totalLitros)||0, sectores:a.sectores||[],
+           descontado:a.descontado||[], registradoPorNombre:a.registradoPorNombre||''}];
+}
+function litrosUsados(a){ return usosDe(a).reduce((s,u)=>s+(Number(u.litros)||0),0); }
+function litrosDisponibles(a){ return Math.max(0, (Number(a.capacidad)||0) - litrosUsados(a)); }
+// Un estanque sigue abierto mientras le queden litros y nadie lo haya cerrado.
+function estanqueAbierto(a){
+  return a.tipo==='fertirriego' && a.cerrado!==true && litrosDisponibles(a) > 0.5;
+}
+
+let usoEdit=null;   // {docId, doc, litros:{sector:valor}}
+
+async function abrirUsoEstanque(docId){
+  loading(true,'Abriendo estanque…');
+  try{
+    const snap=await db.collection('aplicaciones').doc(docId).get();
+    const a=snap.data();
+    if(!a){ loading(false); toast('No se encontró el estanque'); return; }
+    if(!canAplicEnPredio(a.predioId) && !canEditAplicTodas()){ loading(false); toast('Sin permiso'); return; }
+    usoEdit={docId, doc:a, litros:{}};
+    loading(false);
+    renderUsoEstanque();
+  }catch(e){ loading(false); toast('Error: '+e.message); }
+}
+
+function usoSetLitros(sector, val){ usoEdit.litros[sector]=val; usoRenderCalc(); }
+function usoSetFecha(v){ usoEdit.fecha=v; }
+
+function usoTotalLitros(){
+  return Object.keys(usoEdit.litros||{}).reduce((s,k)=>s+(num(usoEdit.litros[k])||0),0);
+}
+
+function usoRenderCalc(){
+  const box=document.getElementById('usoCalc'); if(!box||!usoEdit) return;
+  const a=usoEdit.doc, cap=Number(a.capacidad)||0, disp=litrosDisponibles(a), tot=usoTotalLitros();
+  const items=(a.sales||[]).filter(s=>s.productoId).map(s=>{
+    const conc=Number(s.concentracion)|| (cap>0 ? Number(s.cantidadKg)/cap : 0);
+    return {nombre:s.nombre, unidad:s.unidad||'kg', cantidad:tot*conc};
+  });
+  box.innerHTML = tot>0 ? `
+    <div style="font-size:11px;color:var(--dark);line-height:1.7;margin-top:6px">
+      <b>${fmtNum(tot,0)} L</b> de los ${fmtNum(disp,0)} L que quedaban${tot>disp?' <span style="color:var(--red)">· más de lo disponible</span>':''}<br>
+      ${items.map(it=>`${escH(it.nombre)}: <b style="color:#B45309">${fmtNum(it.cantidad,2)} ${escH(it.unidad)}</b>`).join('<br>')}
+    </div>` : '';
+}
+
+function renderUsoEstanque(){
+  const a=usoEdit.doc;
+  const secs=sectoresDePredio(a.predioId);
+  const disp=litrosDisponibles(a);
+  const hist=usosDe(a).map(u=>`<div style="font-size:10.5px;color:var(--muted)">${escH(fD(u.fecha))} · ${fmtNum(u.litros,0)} L · ${(u.sectores||[]).map(x=>escH(x.sector)).join(', ')}</div>`).join('');
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">🧪 Seguir aplicando este estanque</div>
+    <div class="modal-sub">${escH((a.sales||[]).map(s=>s.nombre).join(' + '))}</div>
+    <div style="background:var(--sand);border-radius:8px;padding:8px 10px;margin:6px 0">
+      <div style="font-size:11.5px"><b>${fmtNum(disp,0)} L disponibles</b> de ${fmtNum(a.capacidad,0)} L${a.cultivo?' · '+escH(a.cultivo):''}</div>
+      <div style="margin-top:4px">${hist}</div>
+    </div>
+    <div class="form-row"><label>Fecha de esta aplicación</label>
+      <input type="date" id="usoFecha" value="${todayIso}" onchange="usoSetFecha(this.value)"></div>
+    <div class="sec-div">Litros aplicados por sector</div>
+    ${secs.length ? secs.map(sx=>`
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">
+        <div style="flex:1;font-size:12px">${escH(sx)}</div>
+        <input type="text" inputmode="decimal" style="width:110px" placeholder="L"
+               oninput="usoSetLitros('${escH(String(sx)).replace(/'/g,"\\'")}', this.value)">
+      </div>`).join('')
+      : '<p style="font-size:11px;color:var(--muted)">Este predio no tiene sectores cargados.</p>'}
+    <div id="usoCalc"></div>
+    <button class="btn btn-primary" style="margin-top:10px" onclick="guardarUsoEstanque()">Registrar aplicación del día</button>
+    <button class="btn btn-sm" style="margin-top:6px;background:var(--sand);color:var(--dark)" onclick="cerrarEstanque()">Cerrar estanque (sobró y no se usará)</button>`;
+  usoEdit.fecha=todayIso;
+  document.getElementById('overlay').classList.add('open');
+}
+
+async function guardarUsoEstanque(){
+  if(!usoEdit) return;
+  const a=usoEdit.doc, cap=Number(a.capacidad)||0;
+  const sectores=Object.keys(usoEdit.litros)
+    .filter(sx=>num(usoEdit.litros[sx])>0)
+    .map(sx=>({sector:String(sx), litros:num(usoEdit.litros[sx]), ha:haSector(a.predioId,sx)}));
+  if(!sectores.length){ toast('⚠️ Anota los litros aplicados en al menos un sector'); return; }
+  const tot=sectores.reduce((s,x)=>s+x.litros,0);
+  const disp=litrosDisponibles(a);
+  if(tot>disp+0.5 && !confirm(`Estás aplicando ${fmtNum(tot,0)} L y en el estanque quedaban ${fmtNum(disp,0)} L.\n\n¿Guardar igual?`)) return;
+
+  // El descuento del día es proporcional a los litros aplicados hoy.
+  const desc=(a.sales||[]).filter(s=>s.productoId).map(s=>{
+    const conc=Number(s.concentracion)|| (cap>0 ? Number(s.cantidadKg)/cap : 0);
+    return {productoId:s.productoId, nombre:s.nombre||'', cantidad:tot*conc};
+  }).filter(d=>d.cantidad>0);
+
+  loading(true,'Registrando…');
+  try{
+    const nuevoUso={
+      fecha: usoEdit.fecha||todayIso, litros: tot, sectores, descontado: desc,
+      registradoPor: currentUser.uid,
+      registradoPorNombre: (currentProfile&&currentProfile.nombre)||currentUser.email,
+      ts: Date.now()
+    };
+    const usos=usosDe(a).concat([nuevoUso]);
+    // Acumulados: los sectores se suman por nombre, para que el documento siga
+    // mostrando el total del estanque como antes.
+    const acumSec={};
+    usos.forEach(u=>(u.sectores||[]).forEach(x=>{
+      if(!acumSec[x.sector]) acumSec[x.sector]={sector:x.sector, litros:0, ha:x.ha};
+      acumSec[x.sector].litros+=Number(x.litros)||0;
+    }));
+    const acumDesc={};
+    usos.forEach(u=>(u.descontado||[]).forEach(d=>{
+      if(!acumDesc[d.productoId]) acumDesc[d.productoId]={productoId:d.productoId, nombre:d.nombre, cantidad:0};
+      acumDesc[d.productoId].cantidad+=Number(d.cantidad)||0;
+    }));
+    const totalAcum=usos.reduce((s,u)=>s+(Number(u.litros)||0),0);
+
+    await enCola(db.collection('aplicaciones').doc(usoEdit.docId).update({
+      usos, sectores:Object.values(acumSec), descontado:Object.values(acumDesc),
+      totalLitros: totalAcum,
+      cerrado: (cap>0 && totalAcum >= cap-0.5) ? true : (a.cerrado===true),
+      editadoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+      editadoAt:Date.now()
+    }), `Aplicación del ${fD(nuevoUso.fecha)} (estanque)`);
+    await enCola(ajustarStockBodega(desc, a.bodegaDescuento||a.predioId, -1), 'Descuento de bodega');
+
+    usoEdit=null; closeModal(); renderAplList();
+    avisoGuardado(`✅ Aplicación registrada · ${fmtNum(tot,0)} L descontados del estanque`);
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+// Sobró mezcla y no se va a usar: se cierra para que no siga apareciendo abierto.
+async function cerrarEstanque(){
+  if(!usoEdit) return;
+  if(!confirm('¿Cerrar este estanque? Dejará de aparecer como disponible.\n\nLo que sobró NO se descuenta de bodega: solo se descontó lo aplicado.')) return;
+  loading(true,'Cerrando…');
+  try{
+    await enCola(db.collection('aplicaciones').doc(usoEdit.docId).update({
+      cerrado:true, editadoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email, editadoAt:Date.now()
+    }), 'Cierre de estanque');
+    usoEdit=null; closeModal(); renderAplList();
+    toast('✅ Estanque cerrado');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
 function calcFertirriego(e){
   const est=estanqueAct(e);
   const cap=num(est.capacidad);
@@ -3641,10 +3827,25 @@ async function guardarRiego(){
       sinDescontar.forEach(x=>avisosSinBodega.push(x.nombre));
       faltantesStock(desc, bodDesc).forEach(n=>avisosFaltan.push(n));
 
+      // v41 · Un estanque puede aplicarse en varios días. El primer uso es el de
+      // hoy; los siguientes se agregan con "Seguir aplicando" desde el listado.
+      // sectores/totalLitros/descontado quedan como el ACUMULADO del estanque,
+      // para que la conciliación y los informes viejos sigan leyendo lo mismo.
+      const usoInicial={
+        fecha:aplRie.fecha, litros:r.totalLitros, sectores:sectoresData,
+        descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
+        registradoPor:currentUser.uid,
+        registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+        ts:Date.now()
+      };
       const datos={
         tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:est.cultivo, epoca:aplRie.epoca||'', bodegaDescuento:bodDesc,
         ...datosTemporadaEdit(aplRie.predioId, aplRie.epoca, est.cultivo),
         capacidad:r.cap, sales:salesData, sectores:sectoresData, totalLitros:r.totalLitros, sinDescontar,
+        usos: editando ? (Array.isArray(aplEdit.doc.usos)&&aplEdit.doc.usos.length
+                          ? [Object.assign({}, aplEdit.doc.usos[0], usoInicial)]
+                          : [usoInicial])
+                       : [usoInicial],
         estanque: editando ? (Number(aplEdit.doc.estanque)||1) : (e+1),
         estanquesDia: editando ? (Number(aplEdit.doc.estanquesDia)||1) : usados.length,
         descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad}))
@@ -3897,12 +4098,20 @@ async function calcConciliacion(){
     }
     const apl={docs:aplDocs};
     apl.docs.forEach(doc=>{
-      const a=doc.data(); if(!enRango(a.fecha||'')) return;
+      const a=doc.data();
       const bod=a.bodegaDescuento||a.predioId||'constancia';
-      (a.descontado||[]).forEach(d=>{
-        if(!d.productoId) return;
-        const o=cell(bod,d.productoId); o.usado+=Number(d.cantidad)||0;
-        if(!o.nombre){ const p=productosCache.find(x=>x.id===d.productoId); o.nombre=p?p.nombre:d.productoId; }
+      // v41 · Un estanque aplicado en varios días descuenta en cada uno: se
+      // cuenta uso por uso y cada uno entra al rango por SU fecha.
+      const partes=(a.tipo==='fertirriego' && Array.isArray(a.usos) && a.usos.length)
+        ? a.usos.map(u=>({fecha:u.fecha||a.fecha, descontado:u.descontado||[]}))
+        : [{fecha:a.fecha, descontado:a.descontado||[]}];
+      partes.forEach(parte=>{
+        if(!enRango(parte.fecha||'')) return;
+        (parte.descontado||[]).forEach(d=>{
+          if(!d.productoId) return;
+          const o=cell(bod,d.productoId); o.usado+=Number(d.cantidad)||0;
+          if(!o.nombre){ const p=productosCache.find(x=>x.id===d.productoId); o.nombre=p?p.nombre:d.productoId; }
+        });
       });
     });
     // Armar por bodega (todas o la elegida)
@@ -6883,10 +7092,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v40';
-const MANUAL_FECHA='2026-09-14';
+const MANUAL_VERSION='v41';
+const MANUAL_FECHA='2026-09-15';
 
 const MANUAL_CAMBIOS=[
+  {v:'v41', f:'15-09-2026', txt:'<b>Un estanque puede aplicarse en varios días.</b> Antes había que registrar todo el gasto el mismo día que se preparaba. Ahora, si sobra mezcla, el estanque queda abierto y en "Últimas aplicaciones" aparece <b>➕ Seguir</b>: se elige la fecha y los litros por sector de ese día. Cada día descuenta de bodega solo lo que se aplicó, y en el informe de gasto ese consumo pesa en el día real de aplicación. Si sobró mezcla y se botó, se cierra el estanque con el botón del mismo modal.'},
   {v:'v40', f:'14-09-2026', txt:'<b>Tres bodegas, una por campo.</b> Como la empresa compra por centro de costo, los fertilizantes y lo de vía riego llegan directo a cada predio y se descuentan de la bodega de ese predio; cada encargado de bodega registra las compras que llegan a la suya. Los <b>fitosanitarios quedan en La Constancia</b>: las desinfecciones de los tres campos descuentan de ahí, salvo que el producto ya se haya despachado al campo, y en el formulario se ve y se puede corregir de qué bodega sale. Además, ahora un jefe o subjefe puede registrar desinfecciones sin cambiar de rol: gerencia marca la casilla <b>🍃 Puede registrar desinfecciones foliares</b> en Config › Usuarios.'},
   {v:'v39', f:'14-09-2026', txt:'Las <b>observaciones del registro diario ahora admiten fotos</b>. Al escribir una observación aparece destacado el botón 📷: se toma la foto con la cámara del teléfono y queda guardada junto a la entrada, hasta tres por registro. Sirve de respaldo cuando una labor quedó mal hecha. En el listado del día, las entradas con foto muestran el botón <b>📷 Ver fotos</b>, y en Informes hay un <b>Anexo de observaciones (PDF)</b> con las observaciones del período y sus fotos. Las fotos se achican solas en el teléfono y, si no hay señal, se envían igual al reconectar.'},
   {v:'v38', f:'13-09-2026', txt:'La <b>época es obligatoria</b> al registrar cualquier aplicación, y se llena sola con la del ciclo abierto del predio: sin ella, lo aplicado quedaba fuera de su temporada en el informe de gasto. El informe de <b>Gastos</b> ahora separa foliar, fertirriego y vía riego, dice de qué predio es cada temporada y cuenta las aplicaciones de cada tipo. Y si te quedas <b>sin señal</b>, lo que registres ya no se pierde: queda guardado en el teléfono y se envía solo al volver la conexión, con un aviso arriba mientras tanto.'},
@@ -7023,6 +7233,8 @@ const MANUAL_SECCIONES=[
     '<b>🧪 Fertilización:</b> arriba van la <b>fecha</b>, el <b>predio</b> y la <b>época</b> (se llena sola con la del ciclo abierto del predio, y es obligatoria). Abajo va un bloque por cada <b>estanque</b> del día, con su propio <b>cultivo</b>, su <b>capacidad en litros</b>, las <b>sales cargadas</b> en kilos y los <b>litros aplicados por sector</b>.',
     'En <b>Paradero 12</b> aparecen tres estanques, que es lo que se prepara cada día (dos de pimentón por grupos de sectores y uno de tomate/lechuga). En los otros predios aparece uno, y con <b>+ Otro estanque</b> se agregan los que falten. El estanque que dejes en blanco no se guarda.',
     'Cada estanque queda como un <b>registro aparte</b> en "Últimas aplicaciones", numerado (estanque 1 de 3, 2 de 3…).',
+    '<b>Si el estanque dura más de un día:</b> anota los litros que aplicaste hoy y guarda. En "Últimas aplicaciones" ese estanque queda marcado con <b>quedan X L</b> y un botón <b>➕ Seguir</b>. Al día siguiente lo aprietas, pones la fecha y los litros por sector de ese día, y listo: no hay que volver a escribir las sales ni la capacidad.',
+    'Cada día descuenta de bodega <b>solo lo que se aplicó ese día</b>, en proporción a los kilos que lleva el estanque. Si sobró mezcla y se botó, abre <b>➕ Seguir</b> y usa <b>Cerrar estanque</b>: lo que sobró no se descuenta, porque no se aplicó.',
     'Al cargar kilos en una sal aparece abajo <b>"↳ descuenta de"</b> con el producto de bodega elegido. Revísalo: si dice <b>— sin descontar —</b> o el producto no es el correcto, elígelo tú de la lista. Lo que quede sin producto se aplica igual, pero <b>no sale de bodega</b>.',
     '<b>💧 Vía riego:</b> fecha, predio, cultivo y época. Escribe la <b>receta con dosis por hectárea</b> (ejemplo: <i>Ultraferro 2 kg + Zincfull 1 L + Serenade 2 L</i>), marca los <b>sectores aplicados</b> y aprieta "Registrar vía riego".',
     'Igual que en foliar: el producto que la app no reconozca hay que elegirlo a mano antes de guardar.',
@@ -7030,6 +7242,7 @@ const MANUAL_SECCIONES=[
   ],
   tips:[
     'Los litros por sector son los que reparten el consumo entre sectores. Si pones el total en un solo sector, el gasto por hectárea queda deformado.',
+    'Un estanque con varios días de aplicación <b>no se puede corregir con el ✏️</b>. Si quedó mal, avísale a gerencia.',
     'Los sectores salen de la superficie cargada en el predio. Si falta un sector, avisa a gerencia para que lo agregue.',
     'Si una sal aparece con <b>"revisar: 2 productos"</b>, es que el catálogo tiene ese producto cargado más de una vez. Se elige el que tenga stock en tu predio, pero conviene avisar a gerencia para que junte las entradas repetidas.',
     'Cuando algo se aplica sin descontar, queda un aviso amarillo en "Últimas aplicaciones". No es un error de la app: es para que bodega lo regularice.'
@@ -7152,6 +7365,7 @@ const MANUAL_SECCIONES=[
     '<b>"No me aparece el ciclo al registrar."</b> El ciclo no está abierto. Ábrelo en Ciclos y vuelve a Registrar.',
     '<b>"No veo un botón que antes veía."</b> Depende del rol y de los predios asignados. Revisa la sección "Qué puede hacer cada rol".',
     '<b>"La app no se actualizó."</b> Ciérrala del todo (en el celular, sácala de las apps abiertas) y vuelve a abrirla. En el computador, Ctrl+Shift+R.',
+    '<b>"En el celular veo cosas que en el computador no."</b> (o al revés) Es la misma app: lo que cambia es la versión que quedó guardada en cada aparato. Abre el <b>Manual</b> en los dos y compara el número de versión del pie. El que esté atrasado se arregla con Ctrl+Shift+R en el computador, o cerrando y reabriendo la app en el celular.',
     '<b>"Se me perdió la programación."</b> Desde la v31 se guarda sola en el servidor. Si no aparece, revisa que estés en la misma semana, el mismo subjefe y el mismo predio.',
     '<b>"Me avisa valores inusuales."</b> Es solo un aviso por posible error de tipeo (más de 10 horas o más de 70 mesas en el día). Si el dato es correcto, acepta.',
     '<b>"Cuenta no habilitada."</b> El usuario no está creado en Config › Usuarios. Lo crea gerencia.',
