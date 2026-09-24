@@ -750,6 +750,15 @@ body.vista-escritorio .modal-content{max-width:700px}
       <button class="btn btn-primary" id="addWBtn" onclick="addW()">Agregar trabajador</button>
     </div>
     <!-- configuración de costos (solo admin) -->
+    <!-- v47 · Sectores de riego por predio (superficie y metros lineales) -->
+    <div id="sectoresConfigSection" style="display:none">
+      <div class="card">
+        <div class="card-title">🗺️ Sectores de riego</div>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Superficie (ha) y metros lineales de cada sector. De la superficie salen los L/ha, los kg/ha y el gasto por hectárea. Cambiar un sector no altera lo ya registrado: cada aplicación guardó la superficie que tenía ese día.</p>
+        <div class="form-row"><label>Predio</label><select id="secCfgPredio" onchange="renderSectoresConfig()"></select></div>
+        <div id="secCfgBody"></div>
+      </div>
+    </div>
     <div id="costosConfigSection" style="display:none">
       <div class="card">
         <div class="card-title">💰 Costos del personal</div>
@@ -5120,6 +5129,86 @@ async function ejecutarMigracionRecintos(){
 }
 
 
+// ══════════════════════════════════════════════
+// v47 · EDITOR DE SECTORES DE RIEGO (superadmin)
+// /terreno/{predio}: sectores:{nombre:ha}, sectoresML:{nombre:metros lineales}.
+// Antes solo se podía cambiar desde la consola de Firebase.
+// ══════════════════════════════════════════════
+let secCfg=null;   // {pid, filas:[{nombre, ha, ml}]}
+function renderSectoresConfig(){
+  const selP=document.getElementById('secCfgPredio'), box=document.getElementById('secCfgBody');
+  if(!selP||!box) return;
+  if(!selP.options.length) selP.innerHTML=PRED_ORDER.map(k=>`<option value="${k}">${escH(PREDIOS[k].nombre)}</option>`).join('');
+  const pid=selP.value||PRED_ORDER[0];
+  if(!secCfg || secCfg.pid!==pid){
+    const t=terrenoCache[pid]||{}, sec=t.sectores||{}, ml=t.sectoresML||{};
+    secCfg={pid, filas:sectoresDePredio(pid).map(n=>({nombre:n, ha:sec[n]!=null?String(sec[n]):'', ml:ml[n]!=null?String(ml[n]):''}))};
+  }
+  const F=secCfg.filas;
+  const totHa=F.reduce((a,f)=>a+num(f.ha),0), totMl=F.reduce((a,f)=>a+num(f.ml),0);
+  box.innerHTML=`
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="border-bottom:2px solid var(--sand)"><th style="text-align:left;padding:4px">Sector</th><th style="padding:4px">ML</th><th style="padding:4px">ha</th><th></th></tr></thead>
+      <tbody>${F.map((f,i)=>`<tr style="border-bottom:1px solid var(--sand)">
+        <td style="padding:3px"><input type="text" value="${escH(f.nombre)}" oninput="secCfg.filas[${i}].nombre=this.value" style="width:100%"></td>
+        <td style="padding:3px;width:90px"><input type="text" inputmode="decimal" value="${escH(f.ml)}" oninput="secCfg.filas[${i}].ml=this.value;secCfgTotales()" style="width:100%;text-align:right"></td>
+        <td style="padding:3px;width:80px"><input type="text" inputmode="decimal" value="${escH(f.ha)}" oninput="secCfg.filas[${i}].ha=this.value;secCfgTotales()" style="width:100%;text-align:right"></td>
+        <td style="padding:3px;width:30px"><button class="plan-del" onclick="secCfg.filas.splice(${i},1);renderSectoresConfig()">✕</button></td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td style="padding:4px;font-weight:700">Total</td><td id="secCfgTotMl" style="padding:4px;text-align:right;font-weight:700">${fmtNum(totMl,0)}</td><td id="secCfgTotHa" style="padding:4px;text-align:right;font-weight:700">${fmtNum(totHa,2)}</td><td></td></tr></tfoot>
+    </table>
+    <button class="btn btn-sm" style="background:var(--sand);color:var(--dark);margin-top:6px" onclick="secCfg.filas.push({nombre:'',ha:'',ml:''});renderSectoresConfig()">+ Sector</button>
+    <details style="margin-top:8px"><summary style="font-size:11.5px;cursor:pointer;color:var(--dark)">📋 Pegar lista completa (reemplaza la tabla)</summary>
+      <div style="font-size:10.5px;color:var(--muted);margin:4px 0">Una línea por sector: <i>nombre&nbsp;&nbsp;metros lineales&nbsp;&nbsp;ha</i>. Ej: <code>1A-3 6976 0,67</code></div>
+      <textarea id="secCfgPegar" style="width:100%;min-height:90px;font-size:12px;box-sizing:border-box"></textarea>
+      <button class="btn btn-sm" style="background:var(--dark);color:#fff;margin-top:4px" onclick="secCfgPegar()">Pasar a la tabla</button>
+    </details>
+    <button class="btn btn-primary" style="margin-top:10px" onclick="guardarSectoresConfig()">💾 Guardar sectores de ${escH(PREDIOS[pid].nombre)}</button>`;
+}
+function secCfgTotales(){
+  const F=secCfg.filas;
+  const a=document.getElementById('secCfgTotHa'), b=document.getElementById('secCfgTotMl');
+  if(a) a.textContent=fmtNum(F.reduce((x,f)=>x+num(f.ha),0),2);
+  if(b) b.textContent=fmtNum(F.reduce((x,f)=>x+num(f.ml),0),0);
+}
+function secCfgPegar(){
+  const txt=(document.getElementById('secCfgPegar').value||'').trim();
+  if(!txt){ toast('Pega la lista primero'); return; }
+  const filas=[], malas=[];
+  txt.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).forEach(l=>{
+    const m=l.match(/^(.+?)[\s;\t]+([\d.,]+)[\s;\t]+([\d.,]+)$/);
+    if(m) filas.push({nombre:m[1].trim(), ml:m[2].replace(/\.(?=\d{3}\b)/g,''), ha:m[3]});
+    else malas.push(l);
+  });
+  if(malas.length){ toast('⚠️ No entendí: '+malas.slice(0,2).join(' | ')); return; }
+  secCfg.filas=filas; renderSectoresConfig();
+  toast(`${filas.length} sectores cargados en la tabla · revisa y guarda`);
+}
+async function guardarSectoresConfig(){
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const pid=secCfg.pid, F=secCfg.filas.filter(f=>String(f.nombre).trim());
+  const nombres=F.map(f=>String(f.nombre).trim());
+  if(new Set(nombres).size!==nombres.length){ toast('⚠️ Hay sectores con el mismo nombre'); return; }
+  if(F.some(f=>!(num(f.ha)>0))){ toast('⚠️ Todos los sectores necesitan su superficie en ha'); return; }
+  if(nombres.some(n=>/[.\/\[\]*~]/.test(n))){ toast('⚠️ El nombre de un sector no puede llevar . / [ ] * ~ (usa guion)'); return; }
+  const sectores={}, sectoresML={};
+  F.forEach(f=>{ const n=String(f.nombre).trim(); sectores[n]=num(f.ha); if(num(f.ml)>0) sectoresML[n]=num(f.ml); });
+  const antes=sectoresDePredio(pid), quitados=antes.filter(n=>!(n in sectores));
+  if(!confirm(`Guardar ${F.length} sectores de ${PREDIOS[pid].nombre}`+(quitados.length?`\n\nSe quitan: ${quitados.join(', ')}`:'')+`\n\nLo ya registrado no cambia. ¿Seguir?`)) return;
+  loading(true,'Guardando…');
+  try{
+    // set con merge asegura que el documento exista SIN tocar los módulos; el
+    // update después reemplaza los dos mapas completos (con merge, un sector
+    // quitado seguiría ahí).
+    await db.collection('terreno').doc(pid).set({sectoresAt:Date.now()}, {merge:true});
+    await db.collection('terreno').doc(pid).update({sectores, sectoresML});
+    terrenoCache[pid]=Object.assign({}, terrenoCache[pid]||{}, {sectores, sectoresML});
+    secCfg=null; renderSectoresConfig();
+    toast('✅ Sectores guardados');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
 function applyRoleUI(){
   const preds=userPredios();
   // Pestañas de predio: solo las asignadas al usuario
@@ -5142,6 +5231,8 @@ function applyRoleUI(){
   const cs=document.getElementById('costosConfigSection');
   if(cs)cs.style.display=canConfigCostos()?'block':'none';
   if(canConfigCostos())renderCostosConfig();
+  const sc=document.getElementById('sectoresConfigSection');   // v47
+  if(sc){ sc.style.display=canConfigCostos()?'block':'none'; if(canConfigCostos()) renderSectoresConfig(); }
   document.getElementById('addWBtn').style.display=canManageWorkers()?'block':'none';
   // La tarjeta de trabajadores no aporta nada a bodeguero/riego
   const wc=document.getElementById('wListCard');
@@ -8017,10 +8108,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v46';
+const MANUAL_VERSION='v47';
 const MANUAL_FECHA='2026-09-23';
 
 const MANUAL_CAMBIOS=[
+  {v:'v47', f:'24-09-2026', txt:'Nueva tarjeta <b>🗺️ Sectores de riego</b> en Config (gerencia): se corrigen el nombre, los metros lineales y la superficie de cada sector sin entrar a la consola de Firebase. También se puede pegar la lista completa.'},
   {v:'v46', f:'24-09-2026', txt:'La receta ahora reconoce las unidades como se escriben en terreno: <b>gr, grs, gramos, kgs, kilos, lt, lts, litros, cm3</b>, además de cc, ml, g, kg y L. Antes "ácido cítrico 30 grs" quedaba "sin dosis" y no dejaba guardar.'},
   {v:'v45', f:'24-09-2026', txt:'<b>Registros históricos.</b> Para poner al día lo aplicado en meses anteriores: toda aplicación (foliar, fertilización, vía riego o ácido) con fecha <b>anterior al 14 de septiembre de 2026</b> se guarda completa y entra al informe de gasto, pero <b>no descuenta de bodega</b>: es solo registro de campo. Desde el 14 de septiembre todo descuenta de bodega, aunque se registre con atraso. En el formulario aparece un aviso morado 📜, y en "Últimas aplicaciones" queda marcada como <b>Registro histórico</b>.'},
   {v:'v44', f:'23-09-2026', txt:'<b>Recintos de bodega.</b> Cada campo tiene ahora sus recintos, con sus responsables. En La Constancia: Principal, Pesticidas, Bioestimulantes, Caseta de Riego y Proveedores. En El Tránsito: Packing y Caseta de Riego. En Paradero 12: Caseta de Riego y Bodega Paradero 12. El stock se lleva por recinto. Las <b>desinfecciones</b> salen siempre de <b>Bodega Pesticidas</b>. El <b>fertirriego, los ácidos y la vía riego</b> salen de la <b>Caseta de Riego</b> del campo; en La Constancia, la vía riego puede salir también de Bioestimulantes. Las <b>compras</b> las registra quien tenga 🛒 (Luciano), eligiendo el recinto. Los <b>despachos</b> quedan pendientes hasta que el responsable del recinto que recibe los confirma. Cada responsable puede ajustar el stock de su recinto por conteo.'},
@@ -8256,6 +8348,7 @@ const MANUAL_SECCIONES=[
   intro:'Los datos base del sistema. Cada uno ve solo las tarjetas que le corresponden.',
   pasos:[
     '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes.',
+    '<b>🗺️ Sectores de riego</b> (gerencia con todos los predios): elige el predio y corrige cada sector con su nombre, metros lineales y hectáreas. Los sectores que se riegan juntos van como uno solo (ej. <i>1A-3</i>). Lo ya registrado no cambia, porque cada aplicación guardó la superficie de ese día.',
     '<b>Costos del personal</b> (gerencia con todos los predios): sueldo mínimo mensual, bono o extra fijo y jornada semanal. De ahí sale el costo por hora de los informes; actualízalo cuando cambie el sueldo mínimo legal.',
     '<b>Usuarios del sistema</b> (gerencia con todos los predios): se crea un acceso por persona, con su correo, una contraseña inicial que tú le entregas, el rol y los predios. Al elegir el rol, la app explica en una línea qué podrá hacer esa persona.',
     '<b>Corregir un usuario:</b> en la lista, el lápiz ✏️ abre la edición de rol, predios y nombre. El cambio se aplica la próxima vez que esa persona inicie sesión. Si tiene la app abierta, debe cerrar sesión y volver a entrar.',
