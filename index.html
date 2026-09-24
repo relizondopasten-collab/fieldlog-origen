@@ -502,7 +502,8 @@ body.vista-escritorio .modal-content{max-width:700px}
         <div id="fotoHint" style="font-size:10.5px;color:var(--muted);margin-top:4px;display:none">Una foto deja constancia de lo que anotaste. Hasta 3.</div>
         <div id="fotoPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
       </div>
-      <button class="btn btn-primary" onclick="guardar()">＋ Guardar Entrada</button>
+      <button class="btn btn-primary" id="regBtnGuardar" onclick="guardar()">＋ Guardar Entrada</button>
+      <button class="btn btn-secondary" id="regBtnCancelar" style="display:none;margin-top:6px" onclick="regCancelarEdicion()">Cancelar corrección</button>
     </div>
     <div id="hoy"></div>
   </div>
@@ -618,6 +619,7 @@ body.vista-escritorio .modal-content{max-width:700px}
         <button class="btn btn-sm" id="aplTabFoliar" onclick="aplSetTab('foliar')" style="flex:1;min-width:100px">🍃 Foliar</button>
         <button class="btn btn-sm" id="aplTabRiego" onclick="aplSetTab('riego')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">🧪 Fertilización</button>
         <button class="btn btn-sm" id="aplTabVia" onclick="aplSetTab('viariego')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">💧 Vía riego</button>
+        <button class="btn btn-sm" id="aplTabAcido" onclick="aplSetTab('acido')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">⚗️ Ácidos</button>
       </div>
       <div id="aplBody"></div>
     </div>
@@ -842,6 +844,41 @@ const DIAS=['Lunes','Martes','Miérc.','Jueves','Viernes'];
 const TNAMES={otono:'Otoño',invierno:'Invierno',primor:'Primor',trastomate:'Trastomate',verano:'Verano'};
 const TICONS={otono:'🍂',invierno:'❄️',primor:'🌱',trastomate:'🔄',verano:'☀️'};
 const TORDER=['otono','invierno','primor','trastomate','verano'];
+// v43 · El pimentón no se maneja por época sino por MES DE PLANTACIÓN. En las
+// aplicaciones se guarda como epoca:'pim01'…'pim12'. Se suma a TNAMES/TICONS
+// solo para que los nombres se lean bien; TORDER no cambia, porque los ciclos
+// de tomate y especialidades siguen usando las cinco épocas.
+const MESES_NOM=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const EPOCAS_PIM=MESES_NOM.map((_,i)=>'pim'+String(i+1).padStart(2,'0'));
+EPOCAS_PIM.forEach((k,i)=>{ TNAMES[k]='Pimentón plantación '+MESES_NOM[i]; TICONS[k]='🫑'; });
+function esEpocaPim(ep){ return /^pim\d\d$/.test(String(ep||'')); }
+// ¿El cultivo (nombre o id, como venga) se registra por mes de plantación?
+function esCultivoPim(cult){
+  if(!cult) return false;
+  const k=normNombre(cult);
+  const c=(typeof cultivosCache!=='undefined'?cultivosCache:[]).find(x=>normNombre(x.id)===k||normNombre(x.nombre)===k);
+  if(c && c.usaMesPlantacion) return true;
+  return k.includes('piment');
+}
+// Opciones del selector de época: meses para pimentón, épocas para el resto.
+function epocaOptsHTML(cultivo, sel){
+  const lista = esCultivoPim(cultivo) ? EPOCAS_PIM : TORDER;
+  const vacio = esCultivoPim(cultivo) ? '— mes de plantación —' : '— época —';
+  return `<option value="">${vacio}</option>`+lista.map(k=>`<option value="${k}"${k===sel?' selected':''}>${TICONS[k]} ${esEpocaPim(k)?MESES_NOM[Number(k.slice(3))-1].replace(/^./,c=>c.toUpperCase()):TNAMES[k]}</option>`).join('');
+}
+function epocaLabelCampo(cultivo){ return esCultivoPim(cultivo) ? 'Mes de plantación *' : 'Época *'; }
+// Si cambia el cultivo y la época elegida ya no corresponde, se limpia.
+function epocaCompatible(ep, cultivo){ return !ep || (esEpocaPim(ep) === esCultivoPim(cultivo)); }
+// Año de la plantación de pimentón: el del registro, o el anterior si el mes de
+// plantación es posterior al mes del registro (plantó en noviembre, aplica en marzo).
+function anioPlantacionPim(ep, fecha){
+  if(!esEpocaPim(ep) || !fecha) return null;
+  const y=Number(String(fecha).slice(0,4)), m=Number(String(fecha).slice(5,7)), mp=Number(ep.slice(3));
+  if(!y||!m) return null;
+  return mp>m ? y-1 : y;
+}
+// Orden de las épocas en el informe: las cinco de siempre y después los meses.
+function ordenEpoca(ep){ const i=TORDER.indexOf(ep); return i>=0 ? i : (esEpocaPim(ep) ? 10+Number(ep.slice(3)) : 99); }
 const MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
 const LABORES=[
   {id:1,d:"Cortar plantas en cuello"},{id:2,d:"Descolgar la planta"},{id:3,d:"Sacar plantas a pasillo central"},
@@ -1856,6 +1893,7 @@ function aplResetForms(){
   aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], litros:{}, bodega:'' };
   aplRie = { fecha: todayIso, predioId:'', epoca:'', estanques:estanquesPorDefecto('') };
   aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
+  aplAci = nuevoAcidoForm('');   // v43
   aplEdit = null;
 }
 
@@ -1870,7 +1908,11 @@ function initAplic(){
     if(formCard)formCard.style.display='none';
     if(sub)sub.textContent = canEditAplicTodas()
       ? 'Consulta de las aplicaciones registradas · con ✏️ puedes corregir una'
-      : 'Consulta de las aplicaciones registradas en tus predios';
+      : ((isJefe()||isSubjefe())
+          // v43 · A una jefatura que hace desinfecciones pero no tiene el permiso
+          // 🍃 marcado, la pantalla le decía solo "consulta" y no por qué.
+          ? 'Solo consulta. Para registrar desinfecciones foliares, gerencia debe marcarte 🍃 en Config › Usuarios y luego debes volver a entrar a la app.'
+          : 'Consulta de las aplicaciones registradas en tus predios');
     loadCiclosAll().then(()=>renderAplList());
     return;
   }
@@ -1927,6 +1969,7 @@ function cicloDeAplicacion(predioId, epoca, cultivo){
 // '' y el usuario la elige a mano. No se adivina: una época equivocada ensucia el
 // informe de gasto de toda la temporada.
 function epocaSugerida(predioId, cultivo){
+  if(esCultivoPim(cultivo)) return '';   // v43 · el mes de plantación lo elige el usuario
   const lista=(ciclosAllCache[predioId]||[]);
   if(!lista.length) return '';
   const conCultivo = cultivo ? lista.filter(c=>!c.cultivo || c.cultivo===cultivo) : lista;
@@ -1939,15 +1982,17 @@ function epocaSugerida(predioId, cultivo){
 // corrige —bodega— no tiene permiso para leer ciclos), datosTemporada()
 // devolvería null y borraría el año de temporada del documento original.
 // Este envoltorio conserva lo que ya estaba guardado.
-function datosTemporadaEdit(predioId, epoca, cultivo){
-  const d=datosTemporada(predioId, epoca, cultivo);
+function datosTemporadaEdit(predioId, epoca, cultivo, fecha){
+  const d=datosTemporada(predioId, epoca, cultivo, fecha);
   if(aplEdit && aplEdit.doc){
     if(d.cicloId==null && aplEdit.doc.cicloId!=null) d.cicloId=aplEdit.doc.cicloId;
     if(d.temporadaAnio==null && aplEdit.doc.temporadaAnio!=null) d.temporadaAnio=aplEdit.doc.temporadaAnio;
   }
   return d;
 }
-function datosTemporada(predioId, epoca, cultivo){
+function datosTemporada(predioId, epoca, cultivo, fecha){
+  // v43 · Pimentón: no hay ciclo; el año sale de la fecha y el mes de plantación.
+  if(esEpocaPim(epoca)) return {cicloId:null, temporadaAnio:anioPlantacionPim(epoca, fecha)};
   const c=cicloDeAplicacion(predioId, epoca, cultivo);
   return {
     cicloId: c ? c.id : null,
@@ -1989,23 +2034,24 @@ function aplSetTab(t){
   // las otras dos: no se cambia de tipo a mitad de una corrección.
   if(!aplEdit){
     if(t==='foliar'&&!canAplicFoliar())t='riego';
-    if((t==='riego'||t==='viariego')&&!canAplicRiego())t='foliar';
+    if((t==='riego'||t==='viariego'||t==='acido')&&!canAplicRiego())t='foliar';
   }
   aplTab=t;
   const off='background:var(--sand);color:var(--dark)';
-  const map={foliar:'aplTabFoliar', riego:'aplTabRiego', viariego:'aplTabVia'};
+  const map={foliar:'aplTabFoliar', riego:'aplTabRiego', viariego:'aplTabVia', acido:'aplTabAcido'};
   Object.keys(map).forEach(k=>{
     const b=document.getElementById(map[k]); if(!b) return;
     // Ojo: se reescribe cssText completo, así que el ocultamiento por rol
     // debe reaplicarse aquí en cada render.
     const oculto = aplEdit ? (k!==t)
       : ((k==='foliar' && !canAplicFoliar())
-      || ((k==='riego'||k==='viariego') && !canAplicRiego()));
+      || ((k==='riego'||k==='viariego'||k==='acido') && !canAplicRiego()));
     b.style.cssText='flex:1;min-width:100px;'+(t===k?'':off)+(oculto?';display:none':'');
   });
   if(t==='foliar') renderFoliarForm();
   else if(t==='riego') renderRiegoForm();
   else if(t==='viariego') renderViaRiegoForm();
+  else if(t==='acido') renderAcidoForm();
 }
 
 // ── Intérprete de recetas (compartido foliar/riego) ──
@@ -2165,7 +2211,7 @@ function renderFoliarForm(){
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value"></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplFolSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplFol.predioId)}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplFolSetCampo('cultivo',this.value)">${cultOpts}</select></div>
-      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época *</label><select onchange="aplFolSetCampo('epoca',this.value)">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplFol.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">${epocaLabelCampo(aplFol.cultivo)}</label><select onchange="aplFolSetCampo('epoca',this.value)">${epocaOptsHTML(aplFol.cultivo, aplFol.epoca)}</select></div>
     </div>
     <div class="sec-div">Receta (dosis por 100 L de agua)</div>
     <textarea id="folTxt" placeholder="Ej: Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + acido citrico 30 g" oninput="folSetTxt(this.value)" style="width:100%;min-height:64px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplFol.recetaTxt)}</textarea>
@@ -2199,11 +2245,17 @@ function aplFolLitrosIdx(i,val){
   if(m!=null){ aplFol.litros[m]=val; folRenderConsumo(); }   // sin re-render: mantener foco
 }
 function aplFolSetCampo(campo,val){
+  const cultAntes=aplFol.cultivo;
   aplFol[campo]=val;
   if(campo==='predioId'){
     aplFol.litros={};                                  // los módulos son otros: se parte de cero
     aplFol.epoca=epocaSugerida(val, aplFol.cultivo);   // v38 · época del ciclo abierto
     aplFol.bodega='';                                  // v40 · que vuelva a sugerir la bodega
+  }
+  // v43 · Pimentón ↔ otro cultivo: cambia la lista (meses / épocas).
+  if(campo==='cultivo' && esCultivoPim(val)!==esCultivoPim(cultAntes)){
+    if(!epocaCompatible(aplFol.epoca, val)) aplFol.epoca=epocaSugerida(aplFol.predioId, val);
+    renderFoliarForm(); return;
   }
   // v38 · Al elegir cultivo puede quedar clara la época que antes era ambigua.
   if(campo==='cultivo' && !aplFol.epoca){
@@ -2258,7 +2310,7 @@ function renderViaRiegoForm(){
   const predOpts = pid=>`<option value="">— predio —</option>`+prediosPermitidos().map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
   const cultList = cultivosCache.length ? cultivosCache.map(c=>c.nombre) : ['tomate','pimentón','especialidades'];
   const cultOpts = `<option value="">— cultivo —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===aplVia.cultivo?' selected':''}>${escH(c)}</option>`).join('');
-  const epocaOpts = `<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplVia.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('');
+  const epocaOpts = epocaOptsHTML(aplVia.cultivo, aplVia.epoca);   // v43 · meses si es pimentón
   const prodOpts = sel=>`<option value="">— elegir producto —</option>`+productosCache.map(x=>`<option value="${x.id}"${x.id===sel?' selected':''}>${escH(x.nombre)}</option>`).join('');
 
   // Receta interpretada (dosis/ha)
@@ -2305,7 +2357,7 @@ function renderViaRiegoForm(){
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="viaSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplVia.predioId)}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="viaSetCampo('cultivo',this.value)">${cultOpts}</select></div>
-      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época *</label><select onchange="viaSetCampo('epoca',this.value)">${epocaOpts}</select></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">${epocaLabelCampo(aplVia.cultivo)}</label><select onchange="viaSetCampo('epoca',this.value)">${epocaOpts}</select></div>
     </div>
     <div class="sec-div">Receta (dosis por hectárea)</div>
     <textarea id="viaTxt" placeholder="Ej: Ultraferro 2 kg + Zincfull 1 L + Serenade 2 L" oninput="viaSetTxt(this.value)" style="width:100%;min-height:60px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplVia.recetaTxt)}</textarea>
@@ -2354,10 +2406,15 @@ function viaInterpretar(){ const ta=document.getElementById('viaTxt'); if(ta) ap
 function viaSetProd(i,productoId){ const p=productosCache.find(x=>x.id===productoId); aplVia.receta[i].productoId=productoId; aplVia.receta[i].nombre=p?p.nombre:aplVia.receta[i].txt; renderViaRiegoForm(); }
 function viaDelItem(i){ aplVia.receta.splice(i,1); renderViaRiegoForm(); }
 function viaSetCampo(campo,val){
+  const cultAntes=aplVia.cultivo;
   aplVia[campo]=val;
   if(campo==='predioId'){
     aplVia.sectores={};
     aplVia.epoca=epocaSugerida(val, aplVia.cultivo);   // v38 · época del ciclo abierto
+    renderViaRiegoForm(); return;
+  }
+  if(campo==='cultivo' && esCultivoPim(val)!==esCultivoPim(cultAntes)){   // v43
+    if(!epocaCompatible(aplVia.epoca, val)) aplVia.epoca=epocaSugerida(aplVia.predioId, val);
     renderViaRiegoForm(); return;
   }
   if(campo==='cultivo' && !aplVia.epoca){
@@ -2382,7 +2439,8 @@ async function guardarViaRiego(){
   if(aplVia.receta.some(r=>r.dosis==null||isNaN(r.dosis)||r.dosis<=0)){ toast('⚠️ Falta dosis en algún producto'); return; }
   if(!aplVia.predioId){ toast('⚠️ Elige el predio'); return; }
   if(!aplVia.cultivo){ toast('⚠️ Elige el cultivo'); return; }
-  if(!aplVia.epoca){ toast('⚠️ Elige la época: sin ella el gasto no entra en la temporada'); return; }   // v38
+  if(!aplVia.epoca){ toast(esCultivoPim(aplVia.cultivo)?'⚠️ Elige el mes de plantación del pimentón':'⚠️ Elige la época: sin ella el gasto no entra en la temporada'); return; }   // v38
+  if(!epocaCompatible(aplVia.epoca, aplVia.cultivo)){ toast('⚠️ La época no corresponde al cultivo: vuelve a elegirla'); return; }   // v43
   const r=calcVia();
   if(!r.secs.length){ toast('⚠️ Marca al menos un sector'); return; }
   if(!(r.haTotal>0)){ toast('⚠️ Los sectores marcados no tienen superficie'); return; }
@@ -2401,7 +2459,7 @@ async function guardarViaRiego(){
     const faltan=faltantesStock(desc, bodDesc);
     const datos={
       tipo:'viariego', fecha:aplVia.fecha, predioId:aplVia.predioId, cultivo:aplVia.cultivo, epoca:aplVia.epoca||'', bodegaDescuento:bodDesc,
-      ...datosTemporadaEdit(aplVia.predioId, aplVia.epoca, aplVia.cultivo),
+      ...datosTemporadaEdit(aplVia.predioId, aplVia.epoca, aplVia.cultivo, aplVia.fecha),
       receta:recetaData, sectores:sectoresData, haTotal:r.haTotal, sinDescontar,
       descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad}))
     };
@@ -2508,6 +2566,7 @@ function temporadaDeAplicacion(a, ciclos){
   if(!ep) return {epoca:'', anio:null};
   if(a.temporadaAnio!=null && !isNaN(Number(a.temporadaAnio)))
     return {epoca:ep, anio:Number(a.temporadaAnio)};
+  if(esEpocaPim(ep)) return {epoca:ep, anio:anioPlantacionPim(ep, a.fecha)};   // v43
   const f=a.fecha||'';
   const lista=(ciclos[a.predioId]||[]);
   const c=lista.find(c=>c.temporada===ep && c.inicio && c.inicio<=f && (!c.fin || c.fin>=f));
@@ -2664,7 +2723,7 @@ async function calcResumen(){
     }).sort((a,b)=>{
       const aa=a.anio==null?-1:a.anio, bb=b.anio==null?-1:b.anio;
       if(aa!==bb) return bb-aa;
-      return TORDER.indexOf(a.epoca)-TORDER.indexOf(b.epoca);
+      return ordenEpoca(a.epoca)-ordenEpoca(b.epoca);
     });
 
     // ── Armar matriz mensual por categoría ──
@@ -3051,7 +3110,8 @@ async function guardarFoliar(){
   if(!aplFol.cultivo){ toast('⚠️ Elige el cultivo'); return; }
   // v38 · Sin época, la aplicación queda fuera de su temporada en el informe de
   // gasto (grupo "Sin temporada"). Se exige aquí, no al final, para no perder lo escrito.
-  if(!aplFol.epoca){ toast('⚠️ Elige la época: sin ella el gasto no entra en la temporada'); return; }
+  if(!aplFol.epoca){ toast(esCultivoPim(aplFol.cultivo)?'⚠️ Elige el mes de plantación del pimentón':'⚠️ Elige la época: sin ella el gasto no entra en la temporada'); return; }
+  if(!epocaCompatible(aplFol.epoca, aplFol.cultivo)){ toast('⚠️ La época no corresponde al cultivo: vuelve a elegirla'); return; }   // v43
   const destData = folDestinos();
   if(!destData.length){ toast('⚠️ Anota el mojamiento de al menos un módulo'); return; }
 
@@ -3070,7 +3130,7 @@ async function guardarFoliar(){
     const faltan = faltantesStock(desc, bodDesc);
     const datos = {
       tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'', bodegaDescuento:bodDesc,
-      ...datosTemporadaEdit(aplFol.predioId, aplFol.epoca, aplFol.cultivo),
+      ...datosTemporadaEdit(aplFol.predioId, aplFol.epoca, aplFol.cultivo, aplFol.fecha),
       receta:recetaData, destinos:destData, sinDescontar,
       descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad}))
     };
@@ -3110,6 +3170,7 @@ async function renderAplList(){
       acumulado.push(...s.docs);
     }
     acumulado.sort((a,b)=>(Number(b.data().createdAt)||0)-(Number(a.data().createdAt)||0));
+    aplDocsCache=acumulado.map(d=>({id:d.id, ...d.data()}));   // v43 · para sumar el ácido del día
     const snap={docs:acumulado.slice(0,15), empty:!acumulado.length};
     if(snap.empty){ box.innerHTML='<p style="font-size:12px;color:var(--muted)">Aún no hay aplicaciones registradas.</p>'; return; }
     box.innerHTML=snap.docs.map(doc=>{
@@ -3121,6 +3182,19 @@ async function renderAplList(){
         const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
         sub=(a.sectores||[]).map(s=>escH(s.sector)).join(' · ');
         totalTxt=`${escH(pred)} · ${escH(a.cultivo||'')}${a.epoca?' · '+(TNAMES[a.epoca]||a.epoca):''} · ${fmtNum(a.haTotal,2)} ha`;
+      }else if(a.tipo==='fertirriego' && a.subtipo==='acido'){
+        // v43 · Estanque de ácido
+        etiqueta='⚗️';
+        const ac=ACIDOS[a.acido]||{nombre:a.acido||'Ácido'};
+        receta=`${escH(ac.nombre)} ${fmtNum(a.kgAcido)} kg (${fmtNum(a.litrosAcido,1)} L) en ${fmtNum(a.capacidad,0)} L`;
+        const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
+        sub=usosDe(a).map(u=>`${escH(fD(u.fecha))}: `+((u.acidoSectores&&u.acidoSectores.length)
+            ? u.acidoSectores.map(x=>`${escH(x.sector)} ${fmtNum(x.lAcido,1)} L${x.lHa!=null?` (<span style="${x.lHa>ACIDO_MAX_LHA_DIA?'color:var(--red);font-weight:700':''}">${fmtNum(x.lHa,2)} L/ha</span>)`:''}`).join(', ')
+            : (u.sectores||[]).map(x=>escH(x.sector)).join(', '))).join(' · ');
+        const disp=litrosDisponibles(a);
+        const dispTxt = estanqueAbierto(a) ? ` · <b style="color:#2E7D32">quedan ${fmtNum(disp,0)}L</b>` : (a.cerrado?' · cerrado':'');
+        totalTxt=`${escH(pred)}${a.cultivo?' · '+escH(a.cultivo):''}${a.epoca?' · '+(TNAMES[a.epoca]||a.epoca):''} · ${fmtNum(a.totalLitros,0)}L de solución aplicados${dispTxt}`;
+        if(usosDe(a).some(u=>u.alarmaAcido)) sub+=`<div style="background:#FEE2E2;color:var(--red);border-radius:6px;padding:3px 8px;margin-top:4px;font-size:10.5px;font-weight:600">⚠️ Sobre ${ACIDO_MAX_LHA_DIA} L/ha en un día</div>`;
       }else if(a.tipo==='fertirriego'){
         etiqueta='🧪';
         receta=(a.sales||[]).map(s=>`${escH(s.nombre)} ${fmtNum(s.cantidadKg)}${escH(s.unidad||'kg')}`).join(' + ');
@@ -3242,7 +3316,13 @@ async function aplEditar(id){
 
     aplEdit={ id, tipo, doc:a, descontado:(a.descontado||[]).slice(), bodega:a.bodegaDescuento||a.predioId||'constancia' };
 
-    if(tipo==='foliar'){
+    if(tipo==='fertirriego' && a.subtipo==='acido'){
+      // v43 · Estanque de ácido: se reabre en su propio formulario.
+      aplAci={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
+        acido:a.acido||'fosforico', kg:String(a.kgAcido!=null?a.kgAcido:''), volumen:String(a.capacidad!=null?a.capacidad:''),
+        prodSel:((a.sales||[])[0]||{}).productoId||'', litros:{} };
+      (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) aplAci.litros[String(x.sector)]=String(x.litros!=null?x.litros:''); });
+    }else if(tipo==='foliar'){
       // v40 · Al corregir se conserva la bodega desde la que se descontó: si no,
       // la corrección devolvería el stock a una bodega y lo sacaría de otra.
       aplFol={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
@@ -3265,12 +3345,13 @@ async function aplEditar(id){
         }
       });
       (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) est.litros[String(x.sector)]=String(x.litros!=null?x.litros:''); });
-      aplRie={ fecha:a.fecha||todayIso, predioId:a.predioId||'', epoca:a.epoca||'', estanques:[est] };
+      if(esEpocaPim(a.epoca)) est.mesPlant=a.epoca;   // v43
+      aplRie={ fecha:a.fecha||todayIso, predioId:a.predioId||'', epoca:esEpocaPim(a.epoca)?'':(a.epoca||''), estanques:[est] };
     }
 
     const formCard=document.getElementById('aplFormCard');
     if(formCard) formCard.style.display='';
-    aplSetTab(tipo==='fertirriego'?'riego':tipo);
+    aplSetTab(tipo==='fertirriego' ? (a.subtipo==='acido'?'acido':'riego') : tipo);
     loading(false);
     if(formCard) formCard.scrollIntoView({behavior:'smooth', block:'start'});
     toast('✏️ Corrigiendo el registro · cambia lo que falte y guarda');
@@ -3347,7 +3428,12 @@ const FERTIRRIEGO_SALES = [
   {nombre:'Fosfato mono potasico',   alias:['MONOPOTASICO','M. POTASICO','M POTASICO','FOSFATO MONOPOTASICO','MKP']},
   {nombre:'Ultrasol multiproposito', alias:['ULTRASOL MULTIPROPOSITO','MULTIPROPOSITO']},
   {nombre:'Sulfato de potasio',      alias:['SULFATO POTASIO','S. POTASIO','S POTASIO','S POTASICO','S. POTASICO']},
-  {nombre:'Cloruro de potasio',      alias:['CLORURO POTASIO','C. POTASIO','KCL']}
+  {nombre:'Cloruro de potasio',      alias:['CLORURO POTASIO','C. POTASIO','KCL']},
+  // v43 · Tres productos nuevos pedidos por Rafael. Van al final para no mover
+  // el índice de las sales anteriores (los estanques guardados lo usan).
+  {nombre:'Nitrato de potasio K acid',     alias:['K ACID','KACID','NITRATO POTASIO K ACID','N. POTASIO K ACID','N POTASIO K ACID'], sinAprox:true},
+  {nombre:'Nitrato de potasio Prohidric',  alias:['PROHIDRIC','NITRATO POTASIO PROHIDRIC','N. POTASIO PROHIDRIC','N POTASIO PROHIDRIC'], sinAprox:true},
+  {nombre:'Ultrasol Pro P',                alias:['ULTRASOL PRO P','ULTRASOL PROP','PRO P'], sinAprox:true}
 ];
 
 // Todos los productos del catálogo que corresponden a una sal (por nombre o alias).
@@ -3357,7 +3443,17 @@ const FERTIRRIEGO_SALES = [
 function candidatosSal(sal, bodega){
   const claves=[sal.nombre].concat(sal.alias||[]).map(claveProd).filter(Boolean);
   let hits=productosCache.filter(p=>clavesProd(p).some(k=>claves.includes(k)));
-  if(!hits.length){ const p=matchProducto(sal.nombre); if(p) hits=[p]; }
+  // v43 · Las variantes (K acid, Prohidric, Pro P) no se buscan por parecido:
+  // "nitrato de potasio k acid" contiene a "nitrato de potasio" y se habría
+  // descontado del producto equivocado. Si no calzan exacto, que lo elija bodega.
+  if(!hits.length && !sal.sinAprox){ const p=matchProducto(sal.nombre); if(p) hits=[p]; }
+  // Y al revés: la sal genérica no debe tomar una variante que la contenga.
+  if(!sal.sinAprox){
+    const variantes=FERTIRRIEGO_SALES.filter(x=>x.sinAprox)
+      .flatMap(x=>[x.nombre].concat(x.alias||[])).map(claveProd).filter(Boolean);
+    const sinVar=hits.filter(p=>!clavesProd(p).some(k=>variantes.includes(k)));
+    hits=sinVar;
+  }
   if(hits.length>1){
     // Desempate estable: 1) el que tenga stock disponible en esa bodega,
     // 2) el que calce exacto con el nombre completo de la sal, 3) el nombre más específico.
@@ -3389,7 +3485,10 @@ function candidatosSal(sal, bodega){
 // ══════════════════════════════════════════════
 const ESTANQUES_POR_DIA = {paradero:3};   // los demás predios parten con uno
 
-function nuevoEstanque(){ return {cultivo:'', capacidad:'', cant:{}, litros:{}, prodSel:{}}; }
+function nuevoEstanque(){ return {cultivo:'', mesPlant:'', capacidad:'', cant:{}, litros:{}, prodSel:{}}; }
+// v43 · Época con que se guarda un estanque: el mes de plantación si es
+// pimentón, la época del día si no.
+function epocaDeEstanque(est){ return esCultivoPim(est.cultivo) ? (est.mesPlant||'') : (aplRie.epoca||''); }
 function estanquesPorDefecto(predioId){
   const n = ESTANQUES_POR_DIA[predioId] || 1;
   return Array.from({length:n}, ()=>nuevoEstanque());
@@ -3463,7 +3562,7 @@ function renderRiegoForm(){
       return `<div style="margin-bottom:5px">
         <div style="display:flex;gap:6px;align-items:center">
           <span style="flex:1;font-size:12.5px">${escH(s.nombre)}${aviso}</span>
-          <input type="text" inputmode="decimal" placeholder="0" value="${escH(String(cant))}" oninput="aplRieCant(${e},${s.idx},this.value)" style="width:66px;text-align:right">
+          <input type="text" inputmode="decimal" placeholder="0" id="rieCant_${e}_${s.idx}" value="${escH(String(cant))}" oninput="aplRieCant(${e},${s.idx},this.value)" style="width:66px;text-align:right">
           <span style="font-size:10.5px;color:var(--muted);width:22px">${escH(s.unidad)}</span>
           <span id="conc_${e}_${s.idx}" style="font-size:10.5px;color:#2E7D32;width:94px;text-align:right"></span>
         </div>
@@ -3499,6 +3598,7 @@ function renderRiegoForm(){
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplRieSetEst(${e},'cultivo',this.value)">${cultOpts}</select></div>
+        ${esCultivoPim(est.cultivo)?`<div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Mes de plantación *</label><select onchange="aplRieSetEst(${e},'mesPlant',this.value)">${epocaOptsHTML(est.cultivo, est.mesPlant)}</select></div>`:''}
         <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Capacidad (L)</label><input type="text" inputmode="decimal" placeholder="Ej: 1000" value="${escH(String(est.capacidad))}" oninput="aplRieSetEst(${e},'capacidad',this.value)"></div>
       </div>
       <div class="sec-div">Sales cargadas al estanque (kg)</div>
@@ -3513,7 +3613,7 @@ function renderRiegoForm(){
     <div class="form-row"><label>Fecha</label><input type="date" value="${aplRie.fecha}" onchange="aplRieSetCampo('fecha',this.value)"></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplRieSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplRie.predioId)}</select></div>
-      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época *</label><select onchange="aplRieSetCampo('epoca',this.value)">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplRie.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época${aplRie.estanques.some(x=>esCultivoPim(x.cultivo))?' (tomate y especialidades)':' *'}</label><select onchange="aplRieSetCampo('epoca',this.value)">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplRie.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
     </div>
     ${estanquesH}
     ${aplEdit?'':`<button class="btn btn-sm" onclick="aplRieAddEstanque()" style="background:var(--sand);color:var(--dark)">+ Otro estanque</button>`}
@@ -3578,6 +3678,11 @@ function usoRenderCalc(){
       <b>${fmtNum(tot,0)} L</b> de los ${fmtNum(disp,0)} L que quedaban${tot>disp?' <span style="color:var(--red)">· más de lo disponible</span>':''}<br>
       ${items.map(it=>`${escH(it.nombre)}: <b style="color:#B45309">${fmtNum(it.cantidad,2)} ${escH(it.unidad)}</b>`).join('<br>')}
     </div>` : '';
+  // v43 · Estanque de ácido: litros de ácido por hectárea en cada sector.
+  if(a.subtipo==='acido' && tot>0){
+    box.innerHTML += acidoSectoresHTML(acidoPorSector(a.predioId, a.acido, usoEdit.fecha||todayIso,
+      acidoLporLsol(Number(a.kgAcido), Number(a.capacidad), Number(a.densidad)||ACIDOS[a.acido].densidad), usoEdit.litros, null));
+  }
 }
 
 function renderUsoEstanque(){
@@ -3620,6 +3725,14 @@ async function guardarUsoEstanque(){
   const disp=litrosDisponibles(a);
   if(tot>disp+0.5 && !confirm(`Estás aplicando ${fmtNum(tot,0)} L y en el estanque quedaban ${fmtNum(disp,0)} L.\n\n¿Guardar igual?`)) return;
 
+  // v43 · Ácido: alarma si supera el máximo por hectárea en el día.
+  let acidoSecs=null;
+  if(a.subtipo==='acido'){
+    acidoSecs=acidoPorSector(a.predioId, a.acido, usoEdit.fecha||todayIso,
+      acidoLporLsol(Number(a.kgAcido), Number(a.capacidad), Number(a.densidad)||ACIDOS[a.acido].densidad), usoEdit.litros, null);
+    const malos=acidoSecs.filter(x=>x.alarma);
+    if(malos.length && !confirm(acidoTextoAlarma(malos, a.acido))) return;
+  }
   // El descuento del día es proporcional a los litros aplicados hoy.
   const desc=(a.sales||[]).filter(s=>s.productoId).map(s=>{
     const conc=Number(s.concentracion)|| (cap>0 ? Number(s.cantidadKg)/cap : 0);
@@ -3630,6 +3743,8 @@ async function guardarUsoEstanque(){
   try{
     const nuevoUso={
       fecha: usoEdit.fecha||todayIso, litros: tot, sectores, descontado: desc,
+      ...(acidoSecs ? {acidoSectores: acidoSecs.map(x=>({sector:x.sector, litrosSol:x.litrosSol, lAcido:x.lAcido, lHa:x.lHa})),
+                       alarmaAcido: acidoSecs.some(x=>x.alarma)} : {}),
       registradoPor: currentUser.uid,
       registradoPorNombre: (currentProfile&&currentProfile.nombre)||currentUser.email,
       ts: Date.now()
@@ -3652,6 +3767,7 @@ async function guardarUsoEstanque(){
     await enCola(db.collection('aplicaciones').doc(usoEdit.docId).update({
       usos, sectores:Object.values(acumSec), descontado:Object.values(acumDesc),
       totalLitros: totalAcum,
+      ...(a.subtipo==='acido' ? {alarmaAcido: usos.some(u=>u.alarmaAcido)} : {}),
       cerrado: (cap>0 && totalAcum >= cap-0.5) ? true : (a.cerrado===true),
       editadoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       editadoAt:Date.now()
@@ -3728,7 +3844,12 @@ function aplRieSetEst(e,campo,val){
   const est=aplRie.estanques[e]; if(!est) return;
   est[campo]=val;
   if(campo==='capacidad'){ rieRenderCalc(); return; }   // no re-render: mantener foco
-  if(campo==='cultivo'){ return; }
+  if(campo==='mesPlant'){ return; }
+  if(campo==='cultivo'){
+    // v43 · Si pasa a (o deja de ser) pimentón, aparece o se va el mes de plantación.
+    if(!esCultivoPim(val)) est.mesPlant='';
+    renderRiegoForm(); return;
+  }
   renderRiegoForm();
 }
 function aplRieCant(e,idx,val){
@@ -3737,7 +3858,14 @@ function aplRieCant(e,idx,val){
   est.cant[idx]=val;
   // Si la sal pasó de vacía a cargada (o al revés), hay que redibujar para
   // mostrar u ocultar el selector de producto. Si no, solo recalcular (mantiene el foco).
-  if(antes !== (num(val)>0)) renderRiegoForm(); else rieRenderCalc();
+  // v43 · Ese redibujo reemplazaba el campo y el teclado perdía el foco apenas
+  // se escribía la primera cifra: "solo deja escribir un número y se bloquea".
+  // Ahora se devuelve el foco al mismo campo, con el cursor al final.
+  if(antes !== (num(val)>0)){
+    renderRiegoForm();
+    const inp=document.getElementById(`rieCant_${e}_${idx}`);
+    if(inp){ inp.focus(); const n=inp.value.length; try{ inp.setSelectionRange(n,n); }catch(_){} }
+  } else rieRenderCalc();
 }
 function aplRieLitrosIdx(e,i,val){
   const est=aplRie.estanques[e]; if(!est) return;
@@ -3763,7 +3891,8 @@ async function guardarRiego(){
     if(!canAplicEnPredio(aplRie.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
   }
   if(!aplRie.predioId){ toast('⚠️ Elige el predio'); return; }
-  if(!aplRie.epoca){ toast('⚠️ Elige la época: sin ella el gasto no entra en la temporada'); return; }   // v38
+  // v43 · La época del día solo se exige si hay algún estanque que no sea pimentón;
+  // los de pimentón llevan su mes de plantación (se revisa abajo, por estanque).
 
   // Se guardan solo los estanques con datos; los que quedaron en blanco se
   // ignoran, pero uno a medio llenar se avisa en vez de perderse en silencio.
@@ -3777,6 +3906,8 @@ async function guardarRiego(){
     const et = aplRie.estanques.length>1 ? `Estanque ${e+1}: ` : '';
     if(!(r.cap>0)){ toast(`⚠️ ${et}indica la capacidad del estanque`); return; }
     if(!est.cultivo){ toast(`⚠️ ${et}elige el cultivo`); return; }
+    if(esCultivoPim(est.cultivo) && !est.mesPlant){ toast(`⚠️ ${et}elige el mes de plantación del pimentón`); return; }
+    if(!esCultivoPim(est.cultivo) && !aplRie.epoca){ toast('⚠️ Elige la época: sin ella el gasto no entra en la temporada'); return; }
     if(!r.items.length){ toast(`⚠️ ${et}carga la cantidad de al menos una sal`); return; }
     if(!(r.totalLitros>0)){ toast(`⚠️ ${et}indica los litros aplicados a los sectores`); return; }
     usados.push({e, est, r});
@@ -3813,8 +3944,8 @@ async function guardarRiego(){
         ts:Date.now()
       };
       const datos={
-        tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:est.cultivo, epoca:aplRie.epoca||'', bodegaDescuento:bodDesc,
-        ...datosTemporadaEdit(aplRie.predioId, aplRie.epoca, est.cultivo),
+        tipo:'fertirriego', fecha:aplRie.fecha, predioId:aplRie.predioId, cultivo:est.cultivo, epoca:epocaDeEstanque(est), bodegaDescuento:bodDesc,
+        ...datosTemporadaEdit(aplRie.predioId, epocaDeEstanque(est), est.cultivo, aplRie.fecha),
         capacidad:r.cap, sales:salesData, sectores:sectoresData, totalLitros:r.totalLitros, sinDescontar,
         usos: editando ? (Array.isArray(aplEdit.doc.usos)&&aplEdit.doc.usos.length
                           ? [Object.assign({}, aplEdit.doc.usos[0], usoInicial)]
@@ -3852,6 +3983,252 @@ async function guardarRiego(){
   loading(false);
 }
 
+// ══════════════════════════════════════════════
+// v43 · ÁCIDOS (fosfórico y nítrico)
+//
+// El ácido se compra y se carga por KILOS, disuelto en un estanque cuyo volumen
+// cambia de una vez a otra. Lo que interesa controlar es cuántos LITROS de
+// ácido llegan a cada sector por hectárea en un día: sobre 4 L/ha/día hay
+// alarma. Paso de kg a L con la densidad: nítrico 1,40 y fosfórico 1,68 kg/L.
+//
+//   L de ácido por L de solución = (kg / densidad) / volumen del estanque
+//   L de ácido del sector        = L de solución aplicados × lo anterior
+//   L/ha del día                 = Σ L de ácido del sector ese día / ha del sector
+//
+// Se guarda como un estanque de fertirriego más (tipo 'fertirriego',
+// subtipo 'acido'). Así hereda lo de la v41 —un estanque que dura varios días,
+// "➕ Seguir", "Cerrar estanque"—, el informe de gasto, la conciliación y las
+// reglas de Firestore, sin tocarlas.
+// ══════════════════════════════════════════════
+const ACIDOS={
+  fosforico:{nombre:'Ácido fosfórico', densidad:1.68, alias:['ACIDO FOSFORICO','AC FOSFORICO','AC. FOSFORICO','FOSFORICO','H3PO4']},
+  nitrico:  {nombre:'Ácido nítrico',   densidad:1.40, alias:['ACIDO NITRICO','AC NITRICO','AC. NITRICO','NITRICO','HNO3']}
+};
+const ACIDO_MAX_LHA_DIA=4;
+let aplAci=null;
+let aplDocsCache=[];
+
+function nuevoAcidoForm(pid){
+  return {fecha:todayIso, predioId:pid||'', cultivo:'', epoca:'', acido:'fosforico', kg:'', volumen:'', prodSel:'', litros:{}};
+}
+function acidoLporLsol(kg, vol, dens){ return (kg>0 && vol>0 && dens>0) ? (kg/dens)/vol : 0; }
+
+// Producto de bodega del ácido: el elegido a mano o el que calce por nombre.
+function acidoProducto(){
+  const ac=ACIDOS[aplAci.acido];
+  if(aplAci.prodSel) return productosCache.find(p=>p.id===aplAci.prodSel)||null;
+  const c=candidatosSal({nombre:ac.nombre, alias:ac.alias}, aplAci.predioId);
+  return c[0]||null;
+}
+
+// Litros de ácido que ya se aplicaron ese día en ese sector, con el mismo
+// ácido, en OTROS estanques (o en otros días del mismo). Sale de lo cargado en
+// "Últimas aplicaciones".
+function acidoPrevioDia(predioId, acido, fecha, sector, excluirDocId, excluirUsoIdx){
+  let tot=0;
+  (aplDocsCache||[]).forEach(d=>{
+    if(d.subtipo!=='acido' || d.acido!==acido || d.predioId!==predioId) return;
+    usosDe(d).forEach((u,i)=>{
+      if(u.fecha!==fecha) return;
+      if(d.id===excluirDocId && (excluirUsoIdx==null || excluirUsoIdx===i)) return;
+      (u.acidoSectores||[]).forEach(x=>{ if(String(x.sector)===String(sector)) tot+=Number(x.lAcido)||0; });
+    });
+  });
+  return tot;
+}
+
+// Filas por sector: litros de solución, litros de ácido, L/ha del día y alarma.
+function acidoPorSector(predioId, acido, fecha, lPorL, litrosMap, excluirDocId, excluirUsoIdx){
+  return Object.keys(litrosMap||{}).filter(sx=>num(litrosMap[sx])>0).map(sx=>{
+    const litrosSol=num(litrosMap[sx]);
+    const lAcido=litrosSol*lPorL;
+    const ha=haSector(predioId, sx);
+    const previo=acidoPrevioDia(predioId, acido, fecha, sx, excluirDocId, excluirUsoIdx);
+    const lHa = (ha && ha>0) ? lAcido/ha : null;
+    const lHaDia = (ha && ha>0) ? (lAcido+previo)/ha : null;
+    return {sector:String(sx), litrosSol, lAcido, ha, lHa, previo, lHaDia,
+            alarma: lHaDia!=null && lHaDia>ACIDO_MAX_LHA_DIA+1e-9};
+  });
+}
+function acidoSectoresHTML(filas){
+  if(!filas.length) return '';
+  return `<div class="sec-div">Ácido por sector (máx. ${ACIDO_MAX_LHA_DIA} L/ha/día)</div>`+filas.map(x=>`
+    <div style="display:flex;gap:6px;font-size:11.5px;padding:3px 6px;border-radius:6px;margin-bottom:2px;${x.alarma?'background:#FEE2E2;color:var(--red);font-weight:700':''}">
+      <span style="flex:1">${escH(x.sector)}</span>
+      <span>${fmtNum(x.lAcido,2)} L</span>
+      <span style="width:118px;text-align:right">${x.lHa==null?'<span style="color:#B45309">sin superficie</span>':fmtNum(x.lHaDia,2)+' L/ha/día'}</span>
+    </div>
+    ${x.previo>0?`<div style="font-size:10px;color:var(--muted);padding-left:6px;margin-bottom:2px">incluye ${fmtNum(x.previo,2)} L ya registrados ese día</div>`:''}`).join('')
+    + (filas.some(x=>x.alarma)?`<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:4px">⚠️ Sobre ${ACIDO_MAX_LHA_DIA} L/ha en el día. Revisa la dosis antes de guardar.</div>`:'');
+}
+function acidoTextoAlarma(malos, acido){
+  return `⚠️ ALARMA ${ACIDOS[acido].nombre.toUpperCase()}\n\n`+
+    malos.map(x=>`• ${x.sector}: ${fmtNum(x.lHaDia,2)} L/ha en el día`).join('\n')+
+    `\n\nEl máximo es ${ACIDO_MAX_LHA_DIA} L/ha por día.\n\n¿Guardar igual? (quedará marcado con la alarma)`;
+}
+
+function renderAcidoForm(){
+  const box=document.getElementById('aplBody'); if(!box) return;
+  if(!aplAci) aplAci=nuevoAcidoForm('');
+  const A=aplAci, ac=ACIDOS[A.acido];
+  const predOpts=`<option value="">— predio —</option>`+prediosPermitidos().map(k=>`<option value="${k}"${k===A.predioId?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
+  const cultList = cultivosCache.length ? cultivosCache.map(c=>c.nombre) : ['tomate','pimentón','especialidades'];
+  const cultOpts=`<option value="">— cultivo (opcional) —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===A.cultivo?' selected':''}>${escH(c)}</option>`).join('');
+  const prod=acidoProducto();
+  const prodOpts=`<option value="">— sin descontar —</option>`+productosCache.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')))
+      .map(p=>`<option value="${p.id}"${prod&&p.id===prod.id?' selected':''}>${escH(p.nombre)}</option>`).join('');
+  const secs=A.predioId?sectoresDePredio(A.predioId):[];
+  const secH = !A.predioId ? '<p style="font-size:11px;color:var(--muted)">Elige el predio para ver sus sectores.</p>'
+    : !secs.length ? '<p style="font-size:11px;color:var(--muted)">Este predio no tiene sectores cargados.</p>'
+    : secs.map((sx,i)=>{
+        const ha=haSector(A.predioId,sx);
+        return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+          <span style="flex:1;font-size:12px">${escH(sx)}${ha!=null?` <span style="color:var(--muted)">(${fmtNum(ha,2)} ha)</span>`:''}</span>
+          <input type="text" inputmode="decimal" placeholder="L" value="${escH(String(A.litros[sx]!=null?A.litros[sx]:''))}" oninput="aciSetLitros(${i},this.value)" style="width:80px;text-align:right">
+        </div>`;
+      }).join('');
+  box.innerHTML=`
+    <div class="form-row"><label>Fecha</label><input type="date" value="${A.fecha}" onchange="aciSet('fecha',this.value)"></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aciSet('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts}</select></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Ácido</label><select onchange="aciSet('acido',this.value)">
+        ${Object.keys(ACIDOS).map(k=>`<option value="${k}"${k===A.acido?' selected':''}>${escH(ACIDOS[k].nombre)} (${fmtNum(ACIDOS[k].densidad,2)} kg/L)</option>`).join('')}
+      </select></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aciSet('cultivo',this.value)">${cultOpts}</select></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">${esCultivoPim(A.cultivo)?'Mes de plantación':'Época'}</label><select onchange="aciSet('epoca',this.value)">${epocaOptsHTML(A.cultivo, A.epoca)}</select></div>
+    </div>
+    <div class="sec-div">Estanque</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Kilos de ácido cargados</label><input type="text" inputmode="decimal" placeholder="Ej: 50" value="${escH(String(A.kg))}" oninput="aciSet('kg',this.value)"></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Volumen del estanque (L)</label><input type="text" inputmode="decimal" placeholder="Ej: 500" value="${escH(String(A.volumen))}" oninput="aciSet('volumen',this.value)"></div>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin:4px 0 2px">
+      <span style="font-size:10px;color:var(--muted);white-space:nowrap">↳ descuenta de</span>
+      <select onchange="aciSet('prodSel',this.value)" style="flex:1;font-size:11px;padding:3px 5px">${prodOpts}</select>
+    </div>
+    ${prod?'':'<div style="font-size:10.5px;color:var(--red);font-weight:700">No se encontró el ácido en bodega: elige el producto o no se descontará stock.</div>'}
+    <div id="aciConc" style="font-size:11px;color:#2E7D32;margin:4px 0"></div>
+    <div class="sec-div">Litros de solución del estanque aplicados hoy, por sector</div>
+    ${secH}
+    <div id="aciCalc"></div>
+    ${aplBotonGuardar('guardarAcido()','Registrar estanque de ácido')}
+    ${aplEdit?'':'<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Si sobra solución, el estanque queda abierto y los días siguientes se registran con ➕ Seguir en Últimas aplicaciones.</div>'}`;
+  aciRenderCalc();
+}
+function aciSet(campo,val){
+  const cultAntes=aplAci.cultivo;
+  aplAci[campo]=val;
+  if(campo==='predioId'){ aplAci.litros={}; aplAci.prodSel=''; renderAcidoForm(); return; }
+  if(campo==='acido'){ aplAci.prodSel=''; renderAcidoForm(); return; }
+  if(campo==='prodSel'){ renderAcidoForm(); return; }
+  if(campo==='cultivo'){
+    if(!epocaCompatible(aplAci.epoca,val)) aplAci.epoca='';
+    if(esCultivoPim(val)!==esCultivoPim(cultAntes) || !aplAci.epoca) renderAcidoForm();
+    return;
+  }
+  if(campo==='kg'||campo==='volumen') aciRenderCalc();
+}
+function aciSetLitros(i,val){
+  const sx=sectoresDePredio(aplAci.predioId)[i]; if(sx==null) return;
+  aplAci.litros[sx]=val; aciRenderCalc();
+}
+function aciCalc(){
+  const A=aplAci, ac=ACIDOS[A.acido];
+  const kg=num(A.kg), vol=num(A.volumen);
+  const lPorL=acidoLporLsol(kg, vol, ac.densidad);
+  const excl = aplEdit ? aplEdit.id : null;
+  const filas=acidoPorSector(A.predioId, A.acido, A.fecha, lPorL, A.litros, excl, excl?0:null);
+  const totalSol=filas.reduce((s,x)=>s+x.litrosSol,0);
+  return {kg, vol, lAcidoEst: kg>0?kg/ac.densidad:0, lPorL, filas, totalSol};
+}
+function aciRenderCalc(){
+  const r=aciCalc(), ac=ACIDOS[aplAci.acido];
+  const c=document.getElementById('aciConc');
+  if(c) c.innerHTML = (r.kg>0) ? `${fmtNum(r.kg,2)} kg = <b>${fmtNum(r.lAcidoEst,2)} L</b> de ${escH(ac.nombre.toLowerCase())}${r.vol>0?` · ${fmtNum(r.lPorL*1000,2)} mL de ácido por L de solución`:''}` : '';
+  const box=document.getElementById('aciCalc'); if(!box) return;
+  if(!(r.lPorL>0) || !r.filas.length){ box.innerHTML=''; return; }
+  box.innerHTML = acidoSectoresHTML(r.filas) + `<div style="font-size:11px;color:var(--dark);margin-top:6px">
+    <b>${fmtNum(r.totalSol,0)} L</b> de solución · <b>${fmtNum(r.totalSol*r.lPorL,2)} L</b> de ácido (${fmtNum(r.totalSol*r.lPorL*ac.densidad,2)} kg)
+    ${r.vol>0&&r.totalSol>r.vol+0.5?'<br><span style="color:var(--red)">Aplicaste más litros de los que tiene el estanque.</span>':''}</div>`;
+}
+
+async function guardarAcido(){
+  const editando = !!(aplEdit && aplEdit.tipo==='fertirriego');
+  if(editando){
+    if(!canEditAplic(aplEdit.doc)){ toast('Sin permiso para corregir esta aplicación'); return; }
+  }else{
+    if(!canAplicRiego()){ toast('Sin permiso'); return; }
+    if(!canAplicEnPredio(aplAci.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
+  }
+  const A=aplAci, ac=ACIDOS[A.acido];
+  if(!A.predioId){ toast('⚠️ Elige el predio'); return; }
+  if(A.epoca && !epocaCompatible(A.epoca, A.cultivo)){ toast('⚠️ La época no corresponde al cultivo: vuelve a elegirla'); return; }
+  const r=aciCalc();
+  if(!(r.kg>0)){ toast('⚠️ Indica los kilos de ácido cargados'); return; }
+  if(!(r.vol>0)){ toast('⚠️ Indica el volumen del estanque'); return; }
+  if(!(r.totalSol>0)){ toast('⚠️ Anota los litros aplicados en al menos un sector'); return; }
+  if(r.totalSol>r.vol+0.5 && !confirm(`Aplicaste ${fmtNum(r.totalSol,0)} L y el estanque tiene ${fmtNum(r.vol,0)} L.\n\n¿Guardar igual?`)) return;
+  const malos=r.filas.filter(x=>x.alarma);
+  if(malos.length && !confirm(acidoTextoAlarma(malos, A.acido))) return;
+
+  const prod=acidoProducto();
+  const unidad=(prod&&prod.unidad)||'kg';
+  // Concentración en la unidad del producto de bodega (L si se lleva en litros).
+  const conc = String(unidad).toUpperCase()==='L' ? r.lPorL : r.kg/r.vol;
+  const cantEst = String(unidad).toUpperCase()==='L' ? r.lAcidoEst : r.kg;
+  const sectoresData=r.filas.map(x=>({sector:x.sector, litros:x.litrosSol, ha:x.ha}));
+  const desc = prod ? [{productoId:prod.id, nombre:ac.nombre, cantidad:r.totalSol*conc}] : [];
+  const sinDescontar = prod ? [] : [{nombre:ac.nombre, cantidadCargada:r.kg, cantidadAplicada:r.totalSol*r.kg/r.vol, unidad:'kg', motivo:'sin producto de bodega'}];
+  const bodDesc=A.predioId;
+  const usoInicial={
+    fecha:A.fecha, litros:r.totalSol, sectores:sectoresData,
+    descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre, cantidad:d.cantidad})),
+    acidoSectores: r.filas.map(x=>({sector:x.sector, litrosSol:x.litrosSol, lAcido:x.lAcido, lHa:x.lHa})),
+    alarmaAcido: malos.length>0,
+    registradoPor:currentUser.uid,
+    registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+    ts:Date.now()
+  };
+  const datos={
+    tipo:'fertirriego', subtipo:'acido', acido:A.acido, densidad:ac.densidad,
+    fecha:A.fecha, predioId:A.predioId, cultivo:A.cultivo||'', epoca:A.epoca||'', bodegaDescuento:bodDesc,
+    ...datosTemporadaEdit(A.predioId, A.epoca, A.cultivo, A.fecha),
+    capacidad:r.vol, kgAcido:r.kg, litrosAcido:r.lAcidoEst,
+    sales:[{productoId:prod?prod.id:'', nombre:ac.nombre, productoNombre:prod?prod.nombre:'', cantidadKg:cantEst, concentracion:conc, unidad}],
+    sectores:sectoresData, totalLitros:r.totalSol, sinDescontar,
+    usos: editando ? (Array.isArray(aplEdit.doc.usos)&&aplEdit.doc.usos.length
+                      ? [Object.assign({}, aplEdit.doc.usos[0], usoInicial)] : [usoInicial])
+                   : [usoInicial],
+    alarmaAcido: malos.length>0,
+    estanque:1, estanquesDia:1,
+    descontado: desc,
+    cerrado: r.totalSol >= r.vol-0.5
+  };
+  loading(true, editando?'Guardando cambios…':'Registrando…');
+  try{
+    if(editando){
+      await aplGuardarEdicion(datos, desc, bodDesc);
+    }else{
+      await enCola(db.collection('aplicaciones').add({
+        ...datos,
+        registradoPor:currentUser.uid,
+        registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
+        createdAt:Date.now()
+      }), `${ac.nombre} del ${fD(A.fecha)}`);
+      if(desc.length) await enCola(ajustarStockBodega(desc, bodDesc, -1), 'Descuento de bodega');
+    }
+    const pid=A.predioId;
+    aplEdit=null;
+    aplAci=nuevoAcidoForm(pid);
+    renderAcidoForm();
+    renderAplList();
+    avisoGuardado((editando?'✅ Estanque de ácido corregido':'✅ Estanque de ácido registrado')
+      + (malos.length?' · ⚠️ quedó con alarma de dosis':'') + (prod?'':' · ⚠️ sin descontar de bodega'));
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
 
 
 // ══════════════════════════════════════════════
@@ -4330,6 +4707,7 @@ function selPredio(id){
   const preds=userPredios();
   if(!id||!preds.includes(id))return;
   activePred=id;
+  if(typeof regEdit!=='undefined' && regEdit) regSalirEdicion();   // v43 · la corrección era del predio anterior
   document.querySelectorAll('.ptab').forEach(t=>{
     t.className='ptab'+(preds.includes(t.dataset.id)?'':' disabled');
     if(t.dataset.id===id)t.classList.add('ptab-'+{transito:'t',constancia:'c',paradero:'p'}[id]);
@@ -4775,8 +5153,9 @@ function eHTML(e,pred=activePred){
         <div class="ename" style="${(e.ausente||e.vacaciones)?'color:var(--muted);text-decoration:line-through':''}">${w?w.nombre:'—'}</div>
         <div class="emeta">${w?`👤 ${w.subjefe}${w._histor?' <span title="Trabajador ya no está en la lista del predio; nombre guardado en el registro" style="color:var(--muted)">(histórico)</span>':''} · `:''}${fD(e.fecha)}</div>
       </div>
-      ${canDel?`<button class="del-btn" onclick="delEntry('${e.id}')">✕</button>`:''}
+      ${canDel?`<div style="display:flex;gap:4px;align-items:center"><button class="del-btn" style="color:var(--dark)" title="Corregir esta entrada" onclick="regEditar('${e.id}')">✏️</button><button class="del-btn" onclick="delEntry('${e.id}')">✕</button></div>`:''}
     </div>
+    ${e.editadoPorNombre?`<div style="font-size:10px;color:var(--muted);margin-top:2px">✏️ corregida por ${escH(e.editadoPorNombre)}${e.editadoAt?' el '+escH(fD(new Date(e.editadoAt).toISOString().slice(0,10))):''}</div>`:''}
     ${reemplazoHTML}
     <div class="badges" style="margin:7px 0">
       <span class="badge b${pc}">${PREDIOS[pred].nombre}</span>
@@ -4953,7 +5332,8 @@ async function guardar(){
     if(totalM>LIMITES.mesasTotalDia)avisos.push(`Total del día: ${totalM} mesas (supera ${LIMITES.mesasTotalDia})`);
 
     // También revisar si ya hay otros registros hoy del mismo trabajador que sumen mucho
-    const previosHoy=rCache.filter(r=>r.fecha===selDate&&r.workerId===wId);
+    const fechaChk = regEdit ? regEdit.data.fecha : selDate;
+    const previosHoy=rCache.filter(r=>r.fecha===fechaChk&&r.workerId===wId&&!(regEdit&&r.id===regEdit.id));
     const mesasPrevias=previosHoy.reduce((s,e)=>s+((e.labores||[{mesas:e.mesas||0}]).reduce((ss,l)=>ss+(l.mesas||0),0)),0);
     const horasPrevias=previosHoy.reduce((s,e)=>s+((e.labores||[{horas:e.horas||0}]).reduce((ss,l)=>ss+(l.horas||0),0)),0);
     if(mesasPrevias+totalM>LIMITES.mesasTotalDia&&previosHoy.length)avisos.push(`Acumulado del día (con registros previos): ${mesasPrevias+totalM} mesas`);
@@ -4998,10 +5378,28 @@ async function guardar(){
     // v39 · nFotos viaja en la entrada para que el listado sepa que hay respaldo
     // sin tener que leer las imágenes.
     data.nFotos = fotosPend.length;
-    // El id se genera acá, no lo devuelve el servidor: así las fotos saben a qué
-    // entrada pertenecen aunque se esté registrando sin señal.
-    const refEntry = colRegistros(activePred).doc();
-    await enCola(refEntry.set(data), 'Registro de '+(wSel.nombre||'trabajador'));
+    let refEntry;
+    if(regEdit){
+      // v43 · Corrección: se reescribe la misma entrada. Se conservan la fecha,
+      // quién y cuándo la creó, y las fotos que ya tenía; la corrección queda
+      // anotada aparte.
+      const prev=regEdit.data;
+      data.fecha = prev.fecha;
+      data.ts = prev.ts || data.ts;
+      data.creadoPor = prev.creadoPor || data.creadoPor;
+      data.nFotos = (Number(prev.nFotos)||0) + fotosPend.length;
+      if(!cicloIdReg) data.cicloId = firebase.firestore.FieldValue.delete();
+      data.editadoPor = currentUser.uid;
+      data.editadoPorNombre = (currentProfile&&currentProfile.nombre)||currentUser.email;
+      data.editadoAt = Date.now();
+      refEntry = colRegistros(activePred).doc(regEdit.id);
+      await enCola(refEntry.update(data), 'Corrección de '+(wSel.nombre||'trabajador'));
+    }else{
+      // El id se genera acá, no lo devuelve el servidor: así las fotos saben a qué
+      // entrada pertenecen aunque se esté registrando sin señal.
+      refEntry = colRegistros(activePred).doc();
+      await enCola(refEntry.set(data), 'Registro de '+(wSel.nombre||'trabajador'));
+    }
     for(let i=0;i<fotosPend.length;i++){
       const f=fotosPend[i];
       await enCola(refEntry.collection('fotos').doc().set({
@@ -5019,9 +5417,95 @@ async function guardar(){
     document.getElementById('reemplazoDiv').style.display='none';
     document.getElementById('ausenteSection').style.display='none';
     initLaborRows();
-    avisoGuardado('✅ Entrada guardada');
+    const eraEdicion=!!regEdit;
+    regSalirEdicion();
+    avisoGuardado(eraEdicion?'✅ Entrada corregida':'✅ Entrada guardada');
   }catch(e){toast('Error: '+e.message)}
   loading(false);
+}
+
+// ══════════════════════════════════════════════
+// v43 · CORREGIR UNA ENTRADA DEL REGISTRO DIARIO
+// El ✏️ carga la entrada en el mismo formulario de arriba; "Guardar" la
+// reescribe en vez de crear otra. Mismo permiso que para eliminarla.
+// ══════════════════════════════════════════════
+let regEdit=null;   // {id, data}
+
+function regEditar(id){
+  const e=rCache.find(r=>r.id===id);
+  if(!e){ toast('No se encontró la entrada'); return; }
+  const w=wDe(e);
+  if(!(verTodosSubjefes()||(w&&w.subjefe===userSubjefe()))){ toast('Sin permiso para corregir esta entrada'); return; }
+  regEdit={id, data:{...e}};
+  // Subjefe → cultivo → ciclo → trabajador, en ese orden: cada selector se
+  // llena a partir del anterior.
+  const selSub=document.getElementById('selSub');
+  if(selSub && w && verTodosSubjefes()){ selSub.value=w.subjefe; }
+  onSubChange();
+  const selC=document.getElementById('selCultivo');
+  if(selC){ selC.value=e.cultivo||''; onCultivoChange(); }
+  const selCic=document.getElementById('selCiclo');
+  if(selCic && e.cicloId){
+    if(![...selCic.options].some(o=>o.value===e.cicloId)){
+      // El ciclo pudo cerrarse después: se agrega para no perderlo.
+      const c=(ciclosCache[(w&&w.subjefe)||'']||[]).find(c=>c.id===e.cicloId);
+      selCic.insertAdjacentHTML('beforeend',`<option value="${escH(e.cicloId)}">${escH(c?cicloLabel(c):'Ciclo guardado')}</option>`);
+      document.getElementById('selCicloRow').style.display='block';
+    }
+    selCic.value=e.cicloId;
+  }
+  const selW=document.getElementById('selW');
+  if(selW){
+    if(![...selW.options].some(o=>o.value===e.workerId)){
+      selW.insertAdjacentHTML('beforeend',`<option value="${escH(e.workerId)}">${escH((w&&w.nombre)||e.workerNombre||'Trabajador')}</option>`);
+    }
+    selW.value=e.workerId;
+  }
+  checkAusente();
+  document.getElementById('chkAusente').checked=!!e.ausente;
+  document.getElementById('chkLicencia').checked=!!e.licencia;
+  document.getElementById('chkVacaciones').checked=!!e.vacaciones;
+  toggleReemplazo();
+  const selR=document.getElementById('selReemplazo');
+  if(selR){
+    let v='';
+    if(e.reemplazoWorkerId==='reemplazo') v='sin|reemplazo';
+    else if(e.reemplazoWorkerId==='otro') v='otro|otro';
+    else if(e.reemplazoPredioId&&e.reemplazoWorkerId) v=e.reemplazoPredioId+'|'+e.reemplazoWorkerId;
+    selR.value=v;
+  }
+  // Labores
+  const cont=document.getElementById('laborRows'); cont.innerHTML='';
+  const labs=(e.labores&&e.labores.length)?e.labores:[{laborId:e.laborId,horas:e.horas,mesas:e.mesas}];
+  labs.forEach(()=>addLaborRow());
+  cont.querySelectorAll('.labor-row').forEach((row,i)=>{
+    const l=labs[i]||{};
+    const code=row.querySelector('.lr-code'), sel=row.querySelector('.lr-labor');
+    if(l.laborId){ sel.value=String(l.laborId); onLaborPicked(sel); code.value=String(l.laborId); }
+    row.querySelector('.lr-horas').value=l.horas||'';
+    row.querySelector('.lr-mesas').value=l.mesas||'';
+  });
+  document.getElementById('iO').value=e.obs||'';
+  if(typeof fotoSugerir==='function') fotoSugerir();
+  const b=document.getElementById('regBtnGuardar'); if(b) b.textContent='💾 Guardar corrección';
+  const c=document.getElementById('regBtnCancelar'); if(c) c.style.display='';
+  const card=b&&b.closest('.card'); if(card){ card.scrollIntoView({behavior:'smooth',block:'start'}); }
+  toast('✏️ Corrigiendo la entrada del '+fD(e.fecha));
+}
+function regSalirEdicion(){
+  regEdit=null;
+  const b=document.getElementById('regBtnGuardar'); if(b) b.textContent='＋ Guardar Entrada';
+  const c=document.getElementById('regBtnCancelar'); if(c) c.style.display='none';
+}
+function regCancelarEdicion(){
+  regSalirEdicion();
+  document.getElementById('iO').value='';
+  ['chkAusente','chkLicencia','chkVacaciones'].forEach(k=>document.getElementById(k).checked=false);
+  document.getElementById('reemplazoDiv').style.display='none';
+  const selW=document.getElementById('selW'); if(selW) selW.value='';
+  document.getElementById('ausenteSection').style.display='none';
+  initLaborRows();
+  toast('Corrección cancelada');
 }
 
 async function delEntry(id){
@@ -5036,6 +5520,7 @@ async function delEntry(id){
       await Promise.all(fs.docs.map(d=>d.ref.delete().catch(()=>{})));
     }catch(e){ /* sin fotos o sin acceso: se sigue con la entrada */ }
     await ref.delete();
+    if(regEdit && regEdit.id===id) regSalirEdicion();
     toast('🗑 Eliminada');
   }
   catch(e){toast('Error: '+e.message)}
@@ -7065,10 +7550,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v42';
-const MANUAL_FECHA='2026-09-15';
+const MANUAL_VERSION='v43';
+const MANUAL_FECHA='2026-09-23';
 
 const MANUAL_CAMBIOS=[
+  {v:'v43', f:'23-09-2026', txt:'<b>Registro diario:</b> las entradas ya guardadas se pueden corregir con el <b>✏️</b>, sin borrarlas. <b>Fertilización:</b> se arregló el campo de kilos de las sales, que se bloqueaba después de la primera cifra, y se agregaron <b>Nitrato de potasio K acid</b>, <b>Nitrato de potasio Prohidric</b> y <b>Ultrasol Pro P</b>. <b>Pimentón:</b> en las aplicaciones, en vez de época se elige el <b>mes de plantación</b>. <b>Nueva pestaña ⚗️ Ácidos</b> para el fosfórico y el nítrico: se anotan los kilos cargados y el volumen del estanque, y cada día los litros aplicados por sector. La app pasa a litros de ácido por hectárea y <b>alarma si pasa de 4 L/ha en el día</b>.'},
   {v:'v42', f:'15-09-2026', txt:'Se quitó la pantalla <b>Evaluación de encargados de riego</b>: ya no aparece en la barra de botones ni en este manual. Las evaluaciones que se hayan registrado antes siguen guardadas en el servidor, pero ya no se consultan desde la app.'},
   {v:'v41', f:'15-09-2026', txt:'<b>Un estanque puede aplicarse en varios días.</b> Antes había que registrar todo el gasto el mismo día que se preparaba. Ahora, si sobra mezcla, el estanque queda abierto y en "Últimas aplicaciones" aparece <b>➕ Seguir</b>: se elige la fecha y los litros por sector de ese día. Cada día descuenta de bodega solo lo que se aplicó, y en el informe de gasto ese consumo pesa en el día real de aplicación. Si sobró mezcla y se botó, se cierra el estanque con el botón del mismo modal.'},
   {v:'v40', f:'14-09-2026', txt:'<b>Tres bodegas, una por campo.</b> Como la empresa compra por centro de costo, los fertilizantes y lo de vía riego llegan directo a cada predio y se descuentan de la bodega de ese predio; cada encargado de bodega registra las compras que llegan a la suya. Los <b>fitosanitarios quedan en La Constancia</b>: las desinfecciones de los tres campos descuentan de ahí, salvo que el producto ya se haya despachado al campo, y en el formulario se ve y se puede corregir de qué bodega sale. Además, ahora un jefe o subjefe puede registrar desinfecciones sin cambiar de rol: gerencia marca la casilla <b>🍃 Puede registrar desinfecciones foliares</b> en Config › Usuarios.'},
@@ -7116,12 +7602,13 @@ const MANUAL_SECCIONES=[
     'En <b>Labores del día</b>, elige la labor y anota las <b>horas</b> y las <b>mesas</b>. Con "＋ Agregar labor" puedes cargar hasta 6 labores en una misma entrada.',
     'Escribe una <b>Observación</b> si hay algo que explicar (una lluvia, una falla, un cambio de sector, una labor mal hecha).',
     'Cuando escribes una observación se destaca el botón <b>📷 Tomar foto</b>: abre directamente la cámara del teléfono y la foto queda pegada a esa entrada. Al lado, <b>🖼️ Elegir</b> sirve para usar una foto que ya tienes en la galería. Hasta <b>3 fotos</b> por registro. Es opcional, pero cuando el comentario es sobre trabajo mal hecho, la foto es la que respalda al subjefe después.',
-    'Aprieta <b>＋ Guardar Entrada</b>. Abajo aparece la lista de lo ya registrado ese día.'
+    'Aprieta <b>＋ Guardar Entrada</b>. Abajo aparece la lista de lo ya registrado ese día.',
+    '¿Te equivocaste? Aprieta el <b>✏️</b> de la entrada en la lista de abajo: se carga arriba en el formulario, corriges lo que haga falta y aprietas <b>💾 Guardar corrección</b>. No se crea otra entrada y queda anotado quién la corrigió. <b>Cancelar corrección</b> deja todo como estaba.'
   ],
   tips:[
     'Si un valor se ve raro (más de 10 horas o más de 70 mesas en el día, sumando lo ya registrado), la app pregunta antes de guardar. No es un bloqueo: si el dato es correcto, acepta.',
     'Se puede hacer más de una entrada por trabajador en el mismo día; se suman.',
-    'Si te equivocaste, borra la entrada en la lista de abajo y vuelve a cargarla. Es mejor eso que dejar el dato malo. Al borrar una entrada se borran también sus fotos.',
+    'Para corregir usa el ✏️. Borrar (✕) queda para una entrada que sobra: al borrarla se borran también sus fotos.',
     'Las fotos se achican solas en el teléfono antes de guardarse, así que no llenan la memoria ni gastan datos de más. Toma la foto de cerca y con luz: una foto general de todo el módulo no sirve de respaldo.',
     'Si estás sin señal, la foto se guarda igual y se envía sola al volver la conexión, junto con el registro.',
     'Desde la v35 la entrada guarda el nombre del trabajador tal como estaba ese día. Si después se saca a esa persona de la lista del predio, sus registros viejos siguen mostrando su nombre, con la marca <b>(histórico)</b>. Por eso ya no hay problema en depurar la lista de trabajadores entre temporadas.'
@@ -7187,7 +7674,7 @@ const MANUAL_SECCIONES=[
   pasos:[
     'En Aplicaciones, entra a la pestaña <b>🍃 Foliar</b>.',
     'Después de interpretar la receta aparece <b>"Descuenta de la bodega de"</b>. Por defecto es <b>La Constancia</b>, donde se guardan los fitosanitarios de los tres campos. Si el producto ya se despachó a tu campo y hay stock, la app propone la bodega de tu predio. Puedes cambiarlo a mano; abajo se ve el stock de cada producto en la bodega elegida, y en rojo el que no tiene.',
-    'Pon la <b>Fecha</b>, el <b>Predio</b>, el <b>Cultivo</b> y la <b>Época</b>. Al elegir el predio, la época se llena sola con la del <b>ciclo abierto</b>; si el predio tiene varios ciclos abiertos de distinta época, o ninguno, hay que elegirla a mano. <b>Sin época no se puede guardar</b>: es lo que hace que la aplicación entre en su temporada en el informe de gasto.',
+    'Pon la <b>Fecha</b>, el <b>Predio</b>, el <b>Cultivo</b> y la <b>Época</b>. Si el cultivo es <b>pimentón</b>, en vez de época se elige el <b>mes de plantación</b>. Al elegir el predio, la época se llena sola con la del <b>ciclo abierto</b>; si el predio tiene varios ciclos abiertos de distinta época, o ninguno, hay que elegirla a mano. <b>Sin época no se puede guardar</b>: es lo que hace que la aplicación entre en su temporada en el informe de gasto.',
     'Escribe la <b>receta tal como la anotas en terreno</b>, con dosis por 100 L de agua. Ejemplo: <i>Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + ácido cítrico 30 g</i>.',
     'La app trata de reconocer cada producto en la bodega. El que quede en amarillo con "no reconocí", elígelo a mano de la lista.',
     'Al elegir el predio aparecen <b>todos sus módulos</b> en una lista. Anota el <b>mojamiento gastado en litros</b> solo en los que aplicaste; los que dejes en blanco no se guardan.',
@@ -7195,14 +7682,15 @@ const MANUAL_SECCIONES=[
     '¿Te equivocaste o faltó un producto? En "Últimas aplicaciones" aprieta el <b>✏️</b> del registro, corrige y guarda. El stock se devuelve y se vuelve a descontar solo.'
   ],
   tips:[
+    'Si eres jefe o subjefe y la pantalla te dice <b>"Solo consulta"</b>, te falta el permiso <b>🍃</b>: pídele a gerencia que lo marque en Config › Usuarios y después cierra sesión y vuelve a entrar.',
     'El mojamiento es la base del cálculo: si va mal, el descuento de stock y el informe de gasto quedan mal.',
     'Si no aparece un producto para elegir, primero hay que cargarlo en Bodega.',
     'Registra el mismo día. Una aplicación anotada tres días después casi siempre pierde el detalle de los módulos.'
   ]
 },
 {
-  id:'aplic-riego', ico:'💧', tit:'Aplicaciones — Fertilización y Vía riego', ver:()=>canAplicRiego(),
-  intro:'Fertirriego (sales al estanque) y aplicaciones vía riego (receta por hectárea). También descuentan stock.',
+  id:'aplic-riego', ico:'💧', tit:'Aplicaciones — Fertilización, Vía riego y Ácidos', ver:()=>canAplicRiego(),
+  intro:'Fertirriego (sales al estanque), aplicaciones vía riego (receta por hectárea) y ácidos. También descuentan stock.',
   pasos:[
     '<b>🧪 Fertilización:</b> arriba van la <b>fecha</b>, el <b>predio</b> y la <b>época</b> (se llena sola con la del ciclo abierto del predio, y es obligatoria). Abajo va un bloque por cada <b>estanque</b> del día, con su propio <b>cultivo</b>, su <b>capacidad en litros</b>, las <b>sales cargadas</b> en kilos y los <b>litros aplicados por sector</b>.',
     'En <b>Paradero 12</b> aparecen tres estanques, que es lo que se prepara cada día (dos de pimentón por grupos de sectores y uno de tomate/lechuga). En los otros predios aparece uno, y con <b>+ Otro estanque</b> se agregan los que falten. El estanque que dejes en blanco no se guarda.',
@@ -7212,6 +7700,10 @@ const MANUAL_SECCIONES=[
     'Al cargar kilos en una sal aparece abajo <b>"↳ descuenta de"</b> con el producto de bodega elegido. Revísalo: si dice <b>— sin descontar —</b> o el producto no es el correcto, elígelo tú de la lista. Lo que quede sin producto se aplica igual, pero <b>no sale de bodega</b>.',
     '<b>💧 Vía riego:</b> fecha, predio, cultivo y época. Escribe la <b>receta con dosis por hectárea</b> (ejemplo: <i>Ultraferro 2 kg + Zincfull 1 L + Serenade 2 L</i>), marca los <b>sectores aplicados</b> y aprieta "Registrar vía riego".',
     'Igual que en foliar: el producto que la app no reconozca hay que elegirlo a mano antes de guardar.',
+    '<b>Pimentón:</b> en cada estanque de pimentón aparece <b>Mes de plantación</b> y hay que elegirlo; la época de arriba queda para los estanques de tomate y especialidades. En vía riego pasa lo mismo al elegir pimentón como cultivo.',
+    '<b>⚗️ Ácidos</b> (fosfórico y nítrico): elige el predio y el ácido, anota los <b>kilos de ácido cargados</b> y el <b>volumen del estanque</b> en que se disolvió, y los <b>litros de solución aplicados hoy</b> en cada sector. La app pasa los kilos a litros con la densidad (fosfórico 1,68 y nítrico 1,40 kg/L) y muestra los <b>litros de ácido por hectárea</b> de cada sector.',
+    'Si un sector pasa de <b>4 L de ácido por hectárea en el día</b>, se marca en rojo y la app pide confirmar antes de guardar. Se suma todo lo aplicado ese día en el sector con el mismo ácido, aunque venga de otro estanque. Si se guarda igual, queda marcado con la alarma en "Últimas aplicaciones".',
+    'El estanque de ácido dura varios días igual que el de sales: los días siguientes se registran con <b>➕ Seguir</b>, y ahí también se ve la dosis por hectárea y salta la alarma.',
     'Para corregir algo ya registrado, aprieta el <b>✏️</b> en "Últimas aplicaciones": se reabre en su formulario, y al guardar el stock se recalcula solo.'
   ],
   tips:[
