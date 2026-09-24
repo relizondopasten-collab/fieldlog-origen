@@ -2104,15 +2104,26 @@ function matchProducto(nombreTxt){
   }
   return p||null;
 }
+function unidadReceta(u){
+  u=String(u||'').toLowerCase();
+  if(u==='cc'||u==='cm3'||u==='ml') return u==='ml'?'ml':'cc';
+  if(/^k/.test(u)) return 'kg';
+  if(/^g/.test(u)) return 'g';
+  if(/^l/.test(u)) return 'l';
+  return u;
+}
 // Interpreta "Producto 40 cc + Otro 100 g + ..." -> [{txt,dosis,unidad,productoId,nombre}]
 function parseReceta(texto){
   if(!texto||!texto.trim()) return [];
   return texto.split('+').map(parte=>{
     const raw=parte.replace(/\/\s*(100\s*l|ha)\b/ig,'').trim();  // quita "/100L" o "/ha"
     if(!raw) return null;
-    const m=raw.match(/([\d]+(?:[.,]\d+)?)\s*(cc|ml|kg|g|l)\b/i);
+    // v46 · Se aceptan también las formas en que se escribe en terreno:
+    // gr, grs, gramos, kgs, kilos, lt, lts, litros, cm3. Antes "30 grs" no
+    // calzaba con "g" y el producto quedaba "sin dosis".
+    const m=raw.match(/([\d]+(?:[.,]\d+)?)\s*(cc|cm3|ml|kgs?|kilos?|kilogramos?|gramos?|grs?|g|lts?|litros?|l)\b\.?/i);
     let dosis=null, unidad='', nombreTxt=raw;
-    if(m){ dosis=parseFloat(m[1].replace(',','.')); unidad=m[2].toLowerCase(); nombreTxt=raw.slice(0,m.index).trim(); }
+    if(m){ dosis=parseFloat(m[1].replace(',','.')); unidad=unidadReceta(m[2]); nombreTxt=raw.slice(0,m.index).trim(); }
     const prod=matchProducto(nombreTxt);
     return { txt:nombreTxt, dosis, unidad, productoId:prod?prod.id:'', nombre:prod?prod.nombre:nombreTxt };
   }).filter(Boolean);
@@ -8006,10 +8017,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v45';
+const MANUAL_VERSION='v46';
 const MANUAL_FECHA='2026-09-23';
 
 const MANUAL_CAMBIOS=[
+  {v:'v46', f:'24-09-2026', txt:'La receta ahora reconoce las unidades como se escriben en terreno: <b>gr, grs, gramos, kgs, kilos, lt, lts, litros, cm3</b>, además de cc, ml, g, kg y L. Antes "ácido cítrico 30 grs" quedaba "sin dosis" y no dejaba guardar.'},
   {v:'v45', f:'24-09-2026', txt:'<b>Registros históricos.</b> Para poner al día lo aplicado en meses anteriores: toda aplicación (foliar, fertilización, vía riego o ácido) con fecha <b>anterior al 14 de septiembre de 2026</b> se guarda completa y entra al informe de gasto, pero <b>no descuenta de bodega</b>: es solo registro de campo. Desde el 14 de septiembre todo descuenta de bodega, aunque se registre con atraso. En el formulario aparece un aviso morado 📜, y en "Últimas aplicaciones" queda marcada como <b>Registro histórico</b>.'},
   {v:'v44', f:'23-09-2026', txt:'<b>Recintos de bodega.</b> Cada campo tiene ahora sus recintos, con sus responsables. En La Constancia: Principal, Pesticidas, Bioestimulantes, Caseta de Riego y Proveedores. En El Tránsito: Packing y Caseta de Riego. En Paradero 12: Caseta de Riego y Bodega Paradero 12. El stock se lleva por recinto. Las <b>desinfecciones</b> salen siempre de <b>Bodega Pesticidas</b>. El <b>fertirriego, los ácidos y la vía riego</b> salen de la <b>Caseta de Riego</b> del campo; en La Constancia, la vía riego puede salir también de Bioestimulantes. Las <b>compras</b> las registra quien tenga 🛒 (Luciano), eligiendo el recinto. Los <b>despachos</b> quedan pendientes hasta que el responsable del recinto que recibe los confirma. Cada responsable puede ajustar el stock de su recinto por conteo.'},
   {v:'v43', f:'23-09-2026', txt:'<b>Registro diario:</b> las entradas ya guardadas se pueden corregir con el <b>✏️</b>, sin borrarlas. <b>Fertilización:</b> se arregló el campo de kilos de las sales, que se bloqueaba después de la primera cifra, y se agregaron <b>Nitrato de potasio K acid</b>, <b>Nitrato de potasio Prohidric</b> y <b>Ultrasol Pro P</b>. <b>Pimentón:</b> en las aplicaciones, en vez de época se elige el <b>mes de plantación</b>. <b>Nueva pestaña ⚗️ Ácidos</b> para el fosfórico y el nítrico: se anotan los kilos cargados y el volumen del estanque, y cada día los litros aplicados por sector. La app pasa a litros de ácido por hectárea y <b>alarma si pasa de 4 L/ha en el día</b>.'},
