@@ -628,6 +628,7 @@ body.vista-escritorio .modal-content{max-width:700px}
         <button class="btn btn-sm" id="aplTabVia" onclick="aplSetTab('viariego')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">💧 Vía riego</button>
         <button class="btn btn-sm" id="aplTabAcido" onclick="aplSetTab('acido')" style="flex:1;min-width:100px;background:var(--sand);color:var(--dark)">⚗️ Ácidos</button>
       </div>
+      <div id="aplHist"></div>
       <div id="aplBody"></div>
     </div>
 
@@ -2068,6 +2069,7 @@ function aplSetTab(t){
   else if(t==='riego') renderRiegoForm();
   else if(t==='viariego') renderViaRiegoForm();
   else if(t==='acido') renderAcidoForm();
+  aplActualizarHist();   // v45
 }
 
 // ── Intérprete de recetas (compartido foliar/riego) ──
@@ -2240,7 +2242,7 @@ function renderFoliarForm(){
 
   box.innerHTML=`
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value"></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value;aplActualizarHist()"></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplFolSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplFol.predioId)}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplFolSetCampo('cultivo',this.value)">${cultOpts}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">${epocaLabelCampo(aplFol.cultivo)}</label><select onchange="aplFolSetCampo('epoca',this.value)">${epocaOptsHTML(aplFol.cultivo, aplFol.epoca)}</select></div>
@@ -2385,7 +2387,7 @@ function renderViaRiegoForm(){
   }
 
   box.innerHTML=`
-    <div class="form-row"><label>Fecha</label><input type="date" value="${aplVia.fecha}" onchange="viaSetCampo('fecha',this.value)"></div>
+    <div class="form-row"><label>Fecha</label><input type="date" value="${aplVia.fecha}" onchange="viaSetCampo('fecha',this.value);aplActualizarHist()"></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="viaSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplVia.predioId)}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="viaSetCampo('cultivo',this.value)">${cultOpts}</select></div>
@@ -2511,6 +2513,8 @@ async function guardarViaRiego(){
   const sectoresData=r.secs.map(s=>({sector:String(s), ha:haSector(aplVia.predioId,s)}));
   // v44 · Cada producto lleva el recinto del que sale.
   const desc=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.cantidad, recinto:viaRecintoDe(it.productoId)}));
+  const hist=esHistorico(aplVia.fecha), consumoHist=hist?desc.map(d=>({...d})):[];   // v45
+  if(hist) desc.length=0;
   // v36 · calcVia() ignora los productos que no se reconocieron en bodega; se dejan
   // anotados en el documento para que la omisión sea visible después.
   const sinDescontar=aplVia.receta.filter(x=>!x.productoId)
@@ -2524,7 +2528,8 @@ async function guardarViaRiego(){
       tipo:'viariego', fecha:aplVia.fecha, predioId:aplVia.predioId, cultivo:aplVia.cultivo, epoca:aplVia.epoca||'', bodegaDescuento:bodDesc,
       ...datosTemporadaEdit(aplVia.predioId, aplVia.epoca, aplVia.cultivo, aplVia.fecha),
       receta:recetaData, sectores:sectoresData, haTotal:r.haTotal, sinDescontar,
-      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad, recinto:d.recinto}))
+      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad, recinto:d.recinto})),
+      ...marcaHistorico(hist, consumoHist)
     };
     if(editando){
       await aplGuardarEdicion(datos, desc, bodDesc);
@@ -2676,10 +2681,10 @@ async function calcResumen(){
       const a=doc.data();
       const us=(a.tipo==='fertirriego' && Array.isArray(a.usos) && a.usos.length) ? a.usos : null;
       if(us){
-        us.forEach(u=>eventos.push({a, fecha:u.fecha||a.fecha, descontado:u.descontado||[],
+        us.forEach(u=>eventos.push({a, fecha:u.fecha||a.fecha, descontado:consumoDe(u),   // v45 · incluye lo histórico
                                     sectores:u.sectores||[], destinos:[]}));
       }else{
-        eventos.push({a, fecha:a.fecha, descontado:a.descontado||[],
+        eventos.push({a, fecha:a.fecha, descontado:consumoDe(a),   // v45
                       sectores:a.sectores||[], destinos:a.destinos||[]});
       }
     });
@@ -3216,6 +3221,48 @@ async function ajustarStockBodega(descuentos, bodega, signo){
 // Compat: descuento de la Central
 async function ajustarStockCentral(descuentos, signo){ return ajustarStockBodega(descuentos, BODEGA_CENTRAL, signo); }
 
+// ══════════════════════════════════════════════
+// v45 · REGISTROS HISTÓRICOS
+// Para poner al día lo aplicado en meses anteriores sin enredar la bodega: una
+// aplicación con fecha ANTERIOR AL CORTE (FECHA_CORTE_BODEGA) se guarda completa
+// (receta, mojamiento, sectores, época) y entra al informe de gasto, pero NO
+// descuenta stock, porque ese producto nunca estuvo cargado en la bodega actual.
+// Lo que habría descontado queda en `consumo` (en vez de `descontado`), y el
+// documento lleva historico:true para mostrarlo destacado.
+// ══════════════════════════════════════════════
+function inicioSemanaIso(){
+  const d=new Date(todayIso+'T12:00:00');
+  const dow=(d.getDay()+6)%7;           // lunes = 0
+  d.setDate(d.getDate()-dow);
+  return d.toISOString().slice(0,10);
+}
+// Corte fijo (decisión de Rafael, 24-09-2026): lo aplicado ANTES del 14-09-2026
+// es solo registro de campo. Desde esa fecha todo descuenta de bodega, aunque
+// se registre con días o semanas de atraso.
+const FECHA_CORTE_BODEGA='2026-09-14';
+function esHistorico(fecha){ return !!fecha && fecha < FECHA_CORTE_BODEGA; }
+function marcaHistorico(hist, consumo){
+  return hist ? {historico:true, consumo:(consumo||[]).map(d=>({...d}))} : {historico:false, consumo:[]};
+}
+// Lo que se consumió en un evento, haya salido o no de bodega (informe de gasto).
+function consumoDe(x){ return (x && x.descontado && x.descontado.length) ? x.descontado : ((x && x.consumo) || []); }
+// Fecha del formulario que está a la vista.
+function aplFechaActiva(){
+  if(aplTab==='foliar') return aplFol&&aplFol.fecha;
+  if(aplTab==='riego') return aplRie&&aplRie.fecha;
+  if(aplTab==='viariego') return aplVia&&aplVia.fecha;
+  if(aplTab==='acido') return aplAci&&aplAci.fecha;
+  return '';
+}
+function aplActualizarHist(){
+  const el=document.getElementById('aplHist'); if(el) el.innerHTML=avisoHistoricoHTML(aplFechaActiva());
+}
+function avisoHistoricoHTML(fecha){
+  if(!esHistorico(fecha)) return '';
+  return `<div style="background:#EDE9FE;border:1px solid #C4B5FD;color:#5B21B6;border-radius:8px;padding:7px 10px;margin:6px 0;font-size:11.5px;line-height:1.5">
+    📜 <b>Registro histórico</b> (fecha anterior al ${escH(fD(FECHA_CORTE_BODEGA))}): se guarda y entra al informe de gasto, pero <b>no descuenta de bodega</b>.</div>`;
+}
+
 async function guardarFoliar(){
   const editando = !!(aplEdit && aplEdit.tipo==='foliar');
   if(editando){
@@ -3247,6 +3294,8 @@ async function guardarFoliar(){
   try{
     const totalLitros = destData.reduce((s,d)=>s+d.litros,0);
     const desc = descuentosFoliar(recetaData, totalLitros).filter(d=>d.productoId);
+    const hist=esHistorico(aplFol.fecha), consumoHist=hist?desc.map(d=>({...d})):[];   // v45
+    if(hist) desc.length=0;
     const sinDescontar = recetaData.filter(r=>!r.productoId)
       .map(r=>({nombre:r.nombre||'', cantidadCargada:r.dosis, unidad:r.unidad||'', motivo:'sin producto de bodega'}));
     const bodDesc=bodegaFoliarActiva();   // v40 · fitosanitarios desde La Constancia, salvo despacho
@@ -3255,7 +3304,8 @@ async function guardarFoliar(){
       tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'', bodegaDescuento:bodDesc,
       ...datosTemporadaEdit(aplFol.predioId, aplFol.epoca, aplFol.cultivo, aplFol.fecha),
       receta:recetaData, destinos:destData, sinDescontar,
-      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad}))
+      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
+      ...marcaHistorico(hist, consumoHist)
     };
     if(editando){
       await aplGuardarEdicion(datos, desc, bodDesc);
@@ -3358,13 +3408,16 @@ async function renderAplList(){
       // v37 · El ✏️ abre el registro en su formulario. Los documentos del modelo
       // antiguo ('riego', anteriores a la v36) no se pueden reabrir: su forma es otra.
       const puedeEd = a.tipo!=='riego' && canEditAplic(a);
-      return `<div style="padding:8px 0;border-bottom:1px solid var(--sand)">
+      // v45 · Registro histórico: se ve distinto y dice que no movió bodega.
+      const histH = (a.historico || usosDe(a).some(u=>u.historico))
+        ? `<div style="display:inline-block;background:#EDE9FE;color:#5B21B6;border-radius:6px;padding:2px 8px;margin-top:4px;font-size:10.5px;font-weight:600">📜 Registro histórico · no descontó bodega</div>` : '';
+      return `<div style="padding:8px 0;border-bottom:1px solid var(--sand)${histH?';background:#FAF8FF;border-left:3px solid #8B5CF6;padding-left:8px':''}">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
           <div style="flex:1">
             <div style="font-size:11px;color:var(--muted)">${etiqueta} ${escH(fD(a.fecha))} · ${escH(a.registradoPorNombre||'')} · ${totalTxt}</div>
             <div style="font-size:12px;color:var(--dark);font-weight:600;margin:2px 0">${receta}</div>
             <div style="font-size:11px;color:var(--muted)">${sub}</div>
-            ${sdH}${edH}
+            ${histH}${sdH}${edH}
           </div>
           <div style="display:flex;gap:4px;flex-shrink:0">
             ${(estanqueAbierto(a) && (canAplicEnPredio(a.predioId)||canEditAplicTodas()))?`<button class="btn btn-sm" style="background:#E7F3E8;color:#2E7D32;font-weight:600" title="Este estanque todavía tiene mezcla: registrar la aplicación de otro día" onclick="abrirUsoEstanque('${doc.id}')">➕ Seguir</button>`:''}
@@ -3734,7 +3787,7 @@ function renderRiegoForm(){
   }).join('');
 
   box.innerHTML=`
-    <div class="form-row"><label>Fecha</label><input type="date" value="${aplRie.fecha}" onchange="aplRieSetCampo('fecha',this.value)"></div>
+    <div class="form-row"><label>Fecha</label><input type="date" value="${aplRie.fecha}" onchange="aplRieSetCampo('fecha',this.value);aplActualizarHist()"></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplRieSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplRie.predioId)}</select></div>
       <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Época${aplRie.estanques.some(x=>esCultivoPim(x.cultivo))?' (tomate y especialidades)':' *'}</label><select onchange="aplRieSetCampo('epoca',this.value)">${`<option value="">— época —</option>`+TORDER.map(k=>`<option value="${k}"${k===aplRie.epoca?' selected':''}>${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select></div>
@@ -3822,7 +3875,8 @@ function renderUsoEstanque(){
       <div style="margin-top:4px">${hist}</div>
     </div>
     <div class="form-row"><label>Fecha de esta aplicación</label>
-      <input type="date" id="usoFecha" value="${todayIso}" onchange="usoSetFecha(this.value)"></div>
+      <input type="date" id="usoFecha" value="${todayIso}" onchange="usoSetFecha(this.value);document.getElementById('usoHist').innerHTML=avisoHistoricoHTML(this.value)"></div>
+    <div id="usoHist"></div>
     <div class="sec-div">Litros aplicados por sector</div>
     ${secs.length ? secs.map(sx=>`
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">
@@ -3862,11 +3916,13 @@ async function guardarUsoEstanque(){
     const conc=Number(s.concentracion)|| (cap>0 ? Number(s.cantidadKg)/cap : 0);
     return {productoId:s.productoId, nombre:s.nombre||'', cantidad:tot*conc};
   }).filter(d=>d.cantidad>0);
+  const histU=esHistorico(usoEdit.fecha||todayIso), consumoU=histU?desc.map(d=>({...d})):[];   // v45
+  if(histU) desc.length=0;
 
   loading(true,'Registrando…');
   try{
     const nuevoUso={
-      fecha: usoEdit.fecha||todayIso, litros: tot, sectores, descontado: desc,
+      fecha: usoEdit.fecha||todayIso, litros: tot, sectores, descontado: desc, consumo: consumoU, historico: histU,
       ...(acidoSecs ? {acidoSectores: acidoSecs.map(x=>({sector:x.sector, litrosSol:x.litrosSol, lAcido:x.lAcido, lHa:x.lHa})),
                        alarmaAcido: acidoSecs.some(x=>x.alarma)} : {}),
       registradoPor: currentUser.uid,
@@ -4054,14 +4110,15 @@ async function guardarRiego(){
       const sinDescontar=r.items.filter(it=>!it.productoId)
         .map(it=>({nombre:it.nombre, cantidadCargada:it.cantKg, cantidadAplicada:it.totalAplicado, unidad:it.unidad, motivo:'sin producto de bodega'}));
       sinDescontar.forEach(x=>avisosSinBodega.push(x.nombre));
-      faltantesStock(desc, bodDesc).forEach(n=>avisosFaltan.push(n));
+      const hist=esHistorico(aplRie.fecha), consumoHist=hist?desc.map(d=>({...d})):[];   // v45
+      if(hist) desc.length=0; else faltantesStock(desc, bodDesc).forEach(n=>avisosFaltan.push(n));
 
       // v41 · Un estanque puede aplicarse en varios días. El primer uso es el de
       // hoy; los siguientes se agregan con "Seguir aplicando" desde el listado.
       // sectores/totalLitros/descontado quedan como el ACUMULADO del estanque,
       // para que la conciliación y los informes viejos sigan leyendo lo mismo.
       const usoInicial={
-        fecha:aplRie.fecha, litros:r.totalLitros, sectores:sectoresData,
+        fecha:aplRie.fecha, litros:r.totalLitros, sectores:sectoresData, consumo:consumoHist,
         descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
         registradoPor:currentUser.uid,
         registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
@@ -4077,7 +4134,8 @@ async function guardarRiego(){
                        : [usoInicial],
         estanque: editando ? (Number(aplEdit.doc.estanque)||1) : (e+1),
         estanquesDia: editando ? (Number(aplEdit.doc.estanquesDia)||1) : usados.length,
-        descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad}))
+        descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
+        ...marcaHistorico(hist, consumoHist)
       };
       if(editando){
         await aplGuardarEdicion(datos, desc, bodDesc);
@@ -4212,7 +4270,7 @@ function renderAcidoForm(){
         </div>`;
       }).join('');
   box.innerHTML=`
-    <div class="form-row"><label>Fecha</label><input type="date" value="${A.fecha}" onchange="aciSet('fecha',this.value)"></div>
+    <div class="form-row"><label>Fecha</label><input type="date" value="${A.fecha}" onchange="aciSet('fecha',this.value);aplActualizarHist()"></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aciSet('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts}</select></div>
       <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Ácido</label><select onchange="aciSet('acido',this.value)">
@@ -4304,10 +4362,12 @@ async function guardarAcido(){
   const cantEst = String(unidad).toUpperCase()==='L' ? r.lAcidoEst : r.kg;
   const sectoresData=r.filas.map(x=>({sector:x.sector, litros:x.litrosSol, ha:x.ha}));
   const desc = prod ? [{productoId:prod.id, nombre:ac.nombre, cantidad:r.totalSol*conc}] : [];
+  const hist=esHistorico(A.fecha), consumoHist=hist?desc.map(d=>({...d})):[];   // v45
+  if(hist) desc.length=0;
   const sinDescontar = prod ? [] : [{nombre:ac.nombre, cantidadCargada:r.kg, cantidadAplicada:r.totalSol*r.kg/r.vol, unidad:'kg', motivo:'sin producto de bodega'}];
   const bodDesc=recintoCaseta(A.predioId);   // v44
   const usoInicial={
-    fecha:A.fecha, litros:r.totalSol, sectores:sectoresData,
+    fecha:A.fecha, litros:r.totalSol, sectores:sectoresData, consumo:consumoHist,
     descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre, cantidad:d.cantidad})),
     acidoSectores: r.filas.map(x=>({sector:x.sector, litrosSol:x.litrosSol, lAcido:x.lAcido, lHa:x.lHa})),
     alarmaAcido: malos.length>0,
@@ -4328,6 +4388,7 @@ async function guardarAcido(){
     alarmaAcido: malos.length>0,
     estanque:1, estanquesDia:1,
     descontado: desc,
+    ...marcaHistorico(hist, consumoHist),
     cerrado: r.totalSol >= r.vol-0.5
   };
   loading(true, editando?'Guardando cambios…':'Registrando…');
@@ -7945,10 +8006,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v44';
+const MANUAL_VERSION='v45';
 const MANUAL_FECHA='2026-09-23';
 
 const MANUAL_CAMBIOS=[
+  {v:'v45', f:'24-09-2026', txt:'<b>Registros históricos.</b> Para poner al día lo aplicado en meses anteriores: toda aplicación (foliar, fertilización, vía riego o ácido) con fecha <b>anterior al 14 de septiembre de 2026</b> se guarda completa y entra al informe de gasto, pero <b>no descuenta de bodega</b>: es solo registro de campo. Desde el 14 de septiembre todo descuenta de bodega, aunque se registre con atraso. En el formulario aparece un aviso morado 📜, y en "Últimas aplicaciones" queda marcada como <b>Registro histórico</b>.'},
   {v:'v44', f:'23-09-2026', txt:'<b>Recintos de bodega.</b> Cada campo tiene ahora sus recintos, con sus responsables. En La Constancia: Principal, Pesticidas, Bioestimulantes, Caseta de Riego y Proveedores. En El Tránsito: Packing y Caseta de Riego. En Paradero 12: Caseta de Riego y Bodega Paradero 12. El stock se lleva por recinto. Las <b>desinfecciones</b> salen siempre de <b>Bodega Pesticidas</b>. El <b>fertirriego, los ácidos y la vía riego</b> salen de la <b>Caseta de Riego</b> del campo; en La Constancia, la vía riego puede salir también de Bioestimulantes. Las <b>compras</b> las registra quien tenga 🛒 (Luciano), eligiendo el recinto. Los <b>despachos</b> quedan pendientes hasta que el responsable del recinto que recibe los confirma. Cada responsable puede ajustar el stock de su recinto por conteo.'},
   {v:'v43', f:'23-09-2026', txt:'<b>Registro diario:</b> las entradas ya guardadas se pueden corregir con el <b>✏️</b>, sin borrarlas. <b>Fertilización:</b> se arregló el campo de kilos de las sales, que se bloqueaba después de la primera cifra, y se agregaron <b>Nitrato de potasio K acid</b>, <b>Nitrato de potasio Prohidric</b> y <b>Ultrasol Pro P</b>. <b>Pimentón:</b> en las aplicaciones, en vez de época se elige el <b>mes de plantación</b>. <b>Nueva pestaña ⚗️ Ácidos</b> para el fosfórico y el nítrico: se anotan los kilos cargados y el volumen del estanque, y cada día los litros aplicados por sector. La app pasa a litros de ácido por hectárea y <b>alarma si pasa de 4 L/ha en el día</b>.'},
   {v:'v42', f:'15-09-2026', txt:'Se quitó la pantalla <b>Evaluación de encargados de riego</b>: ya no aparece en la barra de botones ni en este manual. Las evaluaciones que se hayan registrado antes siguen guardadas en el servidor, pero ya no se consultan desde la app.'},
@@ -8078,6 +8140,7 @@ const MANUAL_SECCIONES=[
     '¿Te equivocaste o faltó un producto? En "Últimas aplicaciones" aprieta el <b>✏️</b> del registro, corrige y guarda. El stock se devuelve y se vuelve a descontar solo.'
   ],
   tips:[
+    'Una aplicación con fecha anterior al 14 de septiembre de 2026 es un <b>📜 registro histórico</b>: queda registrada y entra al informe de gasto, pero no descuenta de Pesticidas.',
     'Si eres jefe o subjefe y la pantalla te dice <b>"Solo consulta"</b>, te falta el permiso <b>🍃</b>: pídele a gerencia que lo marque en Config › Usuarios y después cierra sesión y vuelve a entrar.',
     'El mojamiento es la base del cálculo: si va mal, el descuento de stock y el informe de gasto quedan mal.',
     'Si no aparece un producto para elegir, primero hay que cargarlo en Bodega.',
@@ -8096,6 +8159,7 @@ const MANUAL_SECCIONES=[
     'Al cargar kilos en una sal aparece abajo <b>"↳ descuenta de"</b> con el producto de bodega elegido. Revísalo: si dice <b>— sin descontar —</b> o el producto no es el correcto, elígelo tú de la lista. Lo que quede sin producto se aplica igual, pero <b>no sale de bodega</b>.',
     '<b>💧 Vía riego:</b> fecha, predio, cultivo y época. Escribe la <b>receta con dosis por hectárea</b> (ejemplo: <i>Ultraferro 2 kg + Zincfull 1 L + Serenade 2 L</i>), marca los <b>sectores aplicados</b> y aprieta "Registrar vía riego".',
     'Igual que en foliar: el producto que la app no reconozca hay que elegirlo a mano antes de guardar.',
+    '<b>¿Registrando algo de semanas o meses atrás?</b> Si la fecha es anterior al <b>14 de septiembre de 2026</b>, aparece el aviso morado <b>📜 Registro histórico</b>: se guarda igual y cuenta en el informe de gasto, pero no descuenta de bodega. Sirve para poner al día lo aplicado antes de esa fecha. Lo que sea desde el 14 de septiembre descuenta de bodega aunque se registre con atraso.',
     '<b>Pimentón:</b> en cada estanque de pimentón aparece <b>Mes de plantación</b> y hay que elegirlo; la época de arriba queda para los estanques de tomate y especialidades. En vía riego pasa lo mismo al elegir pimentón como cultivo.',
     '<b>⚗️ Ácidos</b> (fosfórico y nítrico): elige el predio y el ácido, anota los <b>kilos de ácido cargados</b> y el <b>volumen del estanque</b> en que se disolvió, y los <b>litros de solución aplicados hoy</b> en cada sector. La app pasa los kilos a litros con la densidad (fosfórico 1,68 y nítrico 1,40 kg/L) y muestra los <b>litros de ácido por hectárea</b> de cada sector.',
     'Si un sector pasa de <b>4 L de ácido por hectárea en el día</b>, se marca en rojo y la app pide confirmar antes de guardar. Se suma todo lo aplicado ese día en el sector con el mismo ácido, aunque venga de otro estanque. Si se guarda igual, queda marcado con la alarma en "Últimas aplicaciones".',
