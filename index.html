@@ -586,7 +586,7 @@ body.vista-escritorio .modal-content{max-width:700px}
     <div class="sp" style="height:10px"></div>
     <div class="emp-hdr">
       <div class="emp-name">📊 Bodega — Planilla</div>
-      <div class="emp-sub">Catálogo y stock por predio · pensada para trabajar desde el computador</div>
+      <div class="emp-sub">Catálogo y stock por recinto · pensada para trabajar desde el computador</div>
     </div>
     <div class="card">
       <div class="plan-toolbar">
@@ -595,12 +595,19 @@ body.vista-escritorio .modal-content{max-width:700px}
         <button class="btn btn-sm btn-primary" id="planSaveBtn" onclick="planGuardar()">💾 Guardar cambios</button>
       </div>
       <div id="planInfo" class="plan-hint"></div>
+      <div id="planMigrar" style="display:none"></div>
       <div id="planGrid" class="plan-wrap"></div>
       <div class="plan-hint">💡 El <b>precio unitario</b> y el <b>total</b> se calculan solos. Los cambios no se guardan hasta que pulses "Guardar cambios".</div>
     </div>
 
+    <!-- v44 · Despachos que esperan confirmación de quien recibe -->
+    <div class="card" id="despCard" style="display:none">
+      <div class="card-title">📥 Despachos por confirmar</div>
+      <div id="despBody"></div>
+    </div>
+
     <div class="card">
-      <div class="card-title">⚖️ Conciliación — entregado vs usado por bodega</div>
+      <div class="card-title">⚖️ Conciliación — entregado vs usado por recinto</div>
       <div class="emp-sub" style="margin-bottom:8px">Compara lo que cada bodega <b>recibió</b> (compras + despachos) con lo que se <b>usó</b> en aplicaciones. Las fechas de entrega y uso no tienen que coincidir; ajusta el rango.</div>
       <div id="concBody"></div>
     </div>
@@ -807,6 +814,7 @@ body.vista-escritorio .modal-content{max-width:700px}
           </label>
           <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">Para jefes y subjefes que además hacen las desinfecciones. Habilita la pestaña Foliar sin cambiarles el rol.</div>
         </div>
+        <div style="font-size:10.5px;color:var(--muted);margin:0 0 8px;line-height:1.5">📦 Los recintos de bodega y el permiso 🛒 de compras se asignan después, con el ✏️ del usuario en la lista.</div>
         <button class="btn btn-primary" onclick="createUser()">Crear usuario</button>
       </div>
     </div>
@@ -1207,18 +1215,21 @@ function esBodegaCentral(){return esBodegaFito()}
 // planilla completa pero en solo lectura: canCatalogo() las deja fuera, así que
 // las celdas quedan deshabilitadas y no aparecen los botones de guardar,
 // agregar producto ni movimientos.
-function canBodega(){return isAdmin()||isBodeguero()||isJefe()}
+function canBodega(){return isAdmin()||isBodeguero()||isJefe()||userRecintos().length>0}   // v44 · + responsables de recinto
 // Catálogo, precios y stock de la planilla.
 // v37 · Antes esto era solo la bodega central. Ahora los dos bodegueros
 // (Gabriela y Nicolás) corrigen directamente nombres, cantidades y precios.
 function canCatalogo(){return isAdmin()||isBodeguero()}
 // v40 · Compras por centro de costo: cada bodeguero registra lo que llega a SU
 // bodega. Antes era solo la central, cuando todo entraba por La Constancia.
-function canComprar(){return isAdmin()||isBodeguero()}
+// v44 · Las compras las registra Luciano (permiso 🛒 en su usuario) y gerencia.
+// Él decide a qué recinto entra cada una.
+function canComprar(){return isAdmin()||!!(currentProfile&&currentProfile.puedeComprar)}
 // Bodegas a las que este usuario puede ingresar una compra.
 function prediosCompra(){return isAdmin()?PRED_ORDER.slice():prediosPermitidos()}
+function recintosCompra(){ return canComprar() ? RECINTO_ORDER.slice() : []; }   // v44
 // Despachar: desde las bodegas propias hacia cualquier otra.
-function canDespachar(){return isAdmin()||isBodeguero()}
+function canDespachar(){return canCatalogo()||userRecintos().length>0}   // v44 · desde un recinto propio
 // Predios sobre los que el usuario puede operar, en el orden estándar.
 function prediosPermitidos(){const u=userPredios();return PRED_ORDER.filter(x=>u.includes(x))}
 // Registrar una aplicación exige que el predio sea uno de los suyos.
@@ -1372,6 +1383,8 @@ function bootApp(){
 
   // Load catálogos (cultivos, módulos) — non-blocking, the app doesn't wait for these
   loadCatalogos();
+  // v44 · Aviso de despachos que esperan que este usuario confirme la recepción.
+  setTimeout(()=>{ revisarDespachosAlEntrar().catch(()=>{}); }, 1500);
 
   // Bodeguero y riego no trabajan por predio: entran directo a su pantalla
   // y no cargan datos de campo (las reglas tampoco se los permitirían).
@@ -1379,8 +1392,11 @@ function bootApp(){
     const ptabs=document.getElementById('ptabs');
     if(ptabs)ptabs.style.display='none';
     loading(false);
-    if(canBodega())            showScr('planilla',document.getElementById('btnBodega'));
+    // v44 · Un encargado de riego que además es responsable de su caseta entra
+    // igual a Aplicaciones, que es su trabajo diario; bodega entra a la planilla.
+    if(canBodega() && (isBodeguero()||!canVerAplic())) showScr('planilla',document.getElementById('btnBodega'));
     else if(canVerAplic())     showScr('aplic',document.getElementById('btnAplic'));
+    else if(canBodega())       showScr('planilla',document.getElementById('btnBodega'));
     else if(canVerGastos())    showScr('gastos',document.getElementById('btnGastos'));
     return;
   }
@@ -2118,11 +2134,27 @@ function bodegaFoliarSugerida(){
   });
   return todoEnPredio ? pid : BODEGA_FITO;
 }
-function bodegaFoliarActiva(){ return aplFol.bodega || bodegaFoliarSugerida(); }
+// v44 · Ya no se sugiere: las desinfecciones de los tres campos salen siempre
+// de Bodega Pesticidas (La Constancia), porque las dosifica Víctor González.
+function bodegaFoliarActiva(){ return RECINTO_FOLIAR; }
 function folSetBodega(v){ aplFol.bodega=v; renderFoliarForm(); }
 
 function folBodegaHTML(){
   if(!aplFol.predioId || !(aplFol.receta||[]).length) return '';
+  const sel=RECINTO_FOLIAR;
+  const detalle=(aplFol.receta||[]).filter(r=>r.productoId).map(r=>{
+    const p=productosCache.find(x=>x.id===r.productoId);
+    const st=stockEn(p, sel);
+    return `<span style="color:${st>0?'var(--muted)':'var(--red)'}">${escH(r.nombre||'')}: ${fmtNum(st,2)}${st>0?'':' (sin stock)'}</span>`;
+  }).join(' · ');
+  return `
+    <div style="background:var(--sand);border-radius:8px;padding:8px 10px;margin:8px 0">
+      <div style="font-size:11px;color:var(--muted)">Descuenta de</div>
+      <div style="font-size:12.5px;font-weight:700;color:var(--dark)">🧴 ${escH(nombreBodega(sel))}</div>
+      <div style="font-size:10.5px;margin-top:4px;line-height:1.5">${detalle}</div>
+    </div>`;
+}
+function folBodegaHTML_v40(){
   const pid=aplFol.predioId, sel=bodegaFoliarActiva(), sug=bodegaFoliarSugerida();
   const opciones=[BODEGA_FITO].concat(pid!==BODEGA_FITO?[pid]:[]);
   // Stock de cada producto en la bodega elegida: es lo que decide si alcanza.
@@ -2324,7 +2356,7 @@ function renderViaRiegoForm(){
           <span style="color:#2E7D32">✅</span><b style="flex:1">${escH(r.nombre)}</b>
           <span style="color:var(--muted)">${dosisTxt}</span>
           <button class="btn btn-danger btn-sm" onclick="viaDelItem(${i})" style="padding:3px 7px">✕</button>
-        </div>`;
+        </div>${viaRecintoHTML(r.productoId)}`;
       }
       return `<div style="border:1px solid #F0C36D;border-radius:8px;padding:7px;margin-bottom:6px;background:#FFF8E8">
         <div style="font-size:12px;color:#B45309;margin-bottom:4px">⚠ No reconocí <b>"${escH(r.txt)}"</b> — elígelo de la bodega:</div>
@@ -2371,6 +2403,36 @@ function renderViaRiegoForm(){
   viaRenderCalc();
 }
 
+// v44 · Recintos desde los que puede salir la vía riego del predio. En La
+// Constancia los bioestimulantes pueden estar en la Caseta o en su bodega.
+function viaRecintosPosibles(pid){
+  if(pid==='constancia') return ['lc_caseta','lc_bioest'];
+  return recintoCaseta(pid) ? [recintoCaseta(pid)] : [];
+}
+// Recinto de un producto: el elegido a mano; si no, la Caseta, salvo que la
+// Caseta no tenga y la otra opción sí.
+function viaRecintoDe(productoId){
+  const pos=viaRecintosPosibles(aplVia.predioId);
+  if(!pos.length) return '';
+  aplVia.recintos=aplVia.recintos||{};
+  if(aplVia.recintos[productoId] && pos.includes(aplVia.recintos[productoId])) return aplVia.recintos[productoId];
+  const p=productosCache.find(x=>x.id===productoId);
+  const conStock=pos.find(k=>stockEn(p,k)>0);
+  return conStock || pos[0];
+}
+function viaSetRecinto(productoId, k){ aplVia.recintos=aplVia.recintos||{}; aplVia.recintos[productoId]=k; renderViaRiegoForm(); }
+function viaRecintoHTML(productoId){
+  const pos=viaRecintosPosibles(aplVia.predioId);
+  if(pos.length<2) return '';
+  const sel=viaRecintoDe(productoId);
+  const p=productosCache.find(x=>x.id===productoId);
+  return `<div style="display:flex;gap:6px;align-items:center;margin:-2px 0 7px 22px">
+    <span style="font-size:10px;color:var(--muted);white-space:nowrap">↳ sale de</span>
+    <select onchange="viaSetRecinto('${productoId}',this.value)" style="flex:1;font-size:11px;padding:3px 5px">
+      ${pos.map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(RECINTOS[k].nombre)} (${fmtNum(stockEn(p,k),2)})</option>`).join('')}
+    </select></div>`;
+}
+
 function calcVia(){
   const secs=Object.keys(aplVia.sectores).filter(s=>aplVia.sectores[s]);
   const haTotal=secs.reduce((sum,s)=>sum+(haSector(aplVia.predioId,s)||0),0);
@@ -2409,7 +2471,7 @@ function viaSetCampo(campo,val){
   const cultAntes=aplVia.cultivo;
   aplVia[campo]=val;
   if(campo==='predioId'){
-    aplVia.sectores={};
+    aplVia.sectores={}; aplVia.recintos={};
     aplVia.epoca=epocaSugerida(val, aplVia.cultivo);   // v38 · época del ciclo abierto
     renderViaRiegoForm(); return;
   }
@@ -2447,7 +2509,8 @@ async function guardarViaRiego(){
 
   const recetaData=aplVia.receta.map(x=>{ const cv=aStock(x.dosis,x.unidad); return {productoId:x.productoId, nombre:x.nombre, unidad:x.unidad, dosis:x.dosis, base:cv.base}; });
   const sectoresData=r.secs.map(s=>({sector:String(s), ha:haSector(aplVia.predioId,s)}));
-  const desc=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.cantidad}));
+  // v44 · Cada producto lleva el recinto del que sale.
+  const desc=r.items.map(it=>({productoId:it.productoId, nombre:it.nombre, cantidad:it.cantidad, recinto:viaRecintoDe(it.productoId)}));
   // v36 · calcVia() ignora los productos que no se reconocieron en bodega; se dejan
   // anotados en el documento para que la omisión sea visible después.
   const sinDescontar=aplVia.receta.filter(x=>!x.productoId)
@@ -2455,13 +2518,13 @@ async function guardarViaRiego(){
 
   loading(true, editando?'Guardando cambios…':'Registrando…');
   try{
-    const bodDesc=aplVia.predioId||'constancia';
+    const bodDesc=recintoCaseta(aplVia.predioId);   // v44
     const faltan=faltantesStock(desc, bodDesc);
     const datos={
       tipo:'viariego', fecha:aplVia.fecha, predioId:aplVia.predioId, cultivo:aplVia.cultivo, epoca:aplVia.epoca||'', bodegaDescuento:bodDesc,
       ...datosTemporadaEdit(aplVia.predioId, aplVia.epoca, aplVia.cultivo, aplVia.fecha),
       receta:recetaData, sectores:sectoresData, haTotal:r.haTotal, sinDescontar,
-      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad}))
+      descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad, recinto:d.recinto}))
     };
     if(editando){
       await aplGuardarEdicion(datos, desc, bodDesc);
@@ -3046,6 +3109,65 @@ function exportGastoPDF(){
 // v40 · Con la compra por centro de costo las tres son bodegas de igual rango.
 // La Constancia se distingue solo por guardar los fitosanitarios de los tres campos.
 const BODEGA_NOMBRES = {constancia:'Bodega La Constancia', transito:'Bodega El Tránsito', paradero:'Bodega Paradero 12'};
+
+// ══════════════════════════════════════════════
+// v44 · RECINTOS DE BODEGA
+// Cada campo tiene varios recintos donde se guarda producto, cada uno con sus
+// responsables. El stock de /productos pasa a llevarse POR RECINTO:
+// stock:{lc_principal, lc_pesticidas, …}. Las claves antiguas (transito,
+// constancia, paradero) quedan hasta que gerencia corre la migración desde la
+// planilla; ahí se suman al recinto elegido y desaparecen.
+//
+// De dónde descuenta cada aplicación:
+//   foliar (los tres campos) → Bodega Pesticidas de La Constancia
+//   fertirriego y ácidos     → Caseta de Riego del campo
+//   vía riego                → Caseta de Riego del campo; en La Constancia,
+//                              Caseta o Bodega Bioestimulantes (por producto)
+//   Bodega de Proveedores    → nunca: el producto se despacha antes a un recinto
+// Las IDs no se cambian nunca: están guardadas en stock, movimientos y
+// aplicaciones. El nombre y los responsables sí se pueden corregir acá.
+// ══════════════════════════════════════════════
+const RECINTOS={
+  lc_principal:  {predio:'constancia', nombre:'Bodega Principal',       resp:['Nicolás Flores']},
+  lc_pesticidas: {predio:'constancia', nombre:'Bodega Pesticidas',      resp:['Víctor González']},
+  lc_bioest:     {predio:'constancia', nombre:'Bodega Bioestimulantes', resp:['Nicolás Flores']},
+  lc_caseta:     {predio:'constancia', nombre:'Caseta de Riego',        resp:['Gabriel Contreras','José Cordero','Carlos Vergara']},
+  lc_proveedores:{predio:'constancia', nombre:'Bodega de Proveedores',  resp:['Luciano Pinto'], sinAplicar:true},
+  et_packing:    {predio:'transito',   nombre:'Bodega Packing',         resp:['Claudio Flores','Gabriela Escobar']},
+  et_caseta:     {predio:'transito',   nombre:'Caseta de Riego',        resp:['Manuel Méndez']},
+  p12_caseta:    {predio:'paradero',   nombre:'Caseta de Riego',        resp:['Paulo Gallarce']},
+  p12_bodega:    {predio:'paradero',   nombre:'Bodega Paradero 12',     resp:['Gabriela Escobar']}
+};
+const RECINTO_ORDER=Object.keys(RECINTOS);
+const RECINTO_FOLIAR='lc_pesticidas';
+const BODEGAS_LEGADO=['constancia','transito','paradero'];
+const CORTO_PREDIO={constancia:'LC', transito:'ET', paradero:'P12'};
+function esRecinto(k){ return !!RECINTOS[k]; }
+function recintosDePredio(pid){ return RECINTO_ORDER.filter(k=>RECINTOS[k].predio===pid); }
+function recintoCaseta(pid){ return ({constancia:'lc_caseta', transito:'et_caseta', paradero:'p12_caseta'})[pid]||''; }
+// "Caseta de Riego · El Tránsito"; las claves antiguas se rotulan como tales.
+function nombreBodega(k, corto){
+  if(RECINTOS[k]){ const r=RECINTOS[k]; return corto ? `${CORTO_PREDIO[r.predio]} · ${r.nombre}` : `${r.nombre} · ${PREDIOS[r.predio].nombre}`; }
+  if(BODEGA_NOMBRES[k]) return BODEGA_NOMBRES[k]+' (antes de recintos)';
+  return k||'—';
+}
+// Documentos anteriores a la v44 guardan el PREDIO como bodega. Para devolver o
+// descontar hoy, se traduce al recinto de donde saldría ahora ese consumo.
+function resolverRecinto(bod, tipo, predioId){
+  if(esRecinto(bod)) return bod;
+  if(tipo==='foliar') return RECINTO_FOLIAR;
+  return recintoCaseta(predioId || bod) || recintoCaseta(bod) || bod;
+}
+function userRecintos(){
+  const r=(currentProfile&&Array.isArray(currentProfile.recintos))?currentProfile.recintos:[];
+  return r.filter(esRecinto);
+}
+function esResponsableRecinto(k){ return isAdmin() || userRecintos().includes(k); }
+// Recintos desde los que el usuario puede despachar o ajustar: los suyos; los
+// bodegueros y gerencia, todos (mantienen el catálogo completo).
+function recintosOperables(){ return canCatalogo() ? RECINTO_ORDER.slice() : userRecintos(); }
+function stockEn(p, k){ return num(((p&&p.stock)||{})[k]); }
+function stockTotal(p){ const st=(p&&p.stock)||{}; return Object.keys(st).reduce((s,k)=>s+num(st[k]),0); }
 // Consumo foliar en base de stock (L/kg): aStock(dosis,unidad).val × litros/100
 function descuentosFoliar(recetaData, totalLitros){
   return recetaData.map(r=>{
@@ -3063,7 +3185,7 @@ function faltantesStock(descuentos, bodega){
   const faltan=[];
   descuentos.forEach(d=>{
     const p=productosCache.find(x=>x.id===d.productoId);
-    const disp=(p&&p.stock)?Number(p.stock[bod])||0:0;
+    const disp=(p&&p.stock)?Number(p.stock[d.recinto||bod])||0:0;
     if(disp < d.cantidad-1e-9) faltan.push(d.nombre);
   });
   return faltan;
@@ -3078,15 +3200,16 @@ async function ajustarStockBodega(descuentos, bodega, signo){
   const tareas=[];
   for(const d of descuentos){
     if(!d.productoId || !d.cantidad) continue;
+    const k = d.recinto || bod;   // v44 · un producto puede salir de otro recinto (vía riego en La Constancia)
     tareas.push(
       db.collection('productos').doc(d.productoId).update({
-        ['stock.'+bod]: firebase.firestore.FieldValue.increment(signo*d.cantidad),
+        ['stock.'+k]: firebase.firestore.FieldValue.increment(signo*d.cantidad),
         updatedAt: Date.now()
       }).catch(e=>{ console.warn('stock '+d.productoId+':', e&&e.message); })
     );
     const p=productosCache.find(x=>x.id===d.productoId);
-    if(p){ if(!p.stock)p.stock={transito:0,constancia:0,paradero:0};
-      p.stock[bod]=(Number(p.stock[bod])||0)+signo*d.cantidad; }
+    if(p){ if(!p.stock)p.stock={};
+      p.stock[k]=(Number(p.stock[k])||0)+signo*d.cantidad; }
   }
   return Promise.all(tareas);
 }
@@ -3262,7 +3385,7 @@ async function delAplicacion(id){
     const snap=await db.collection('aplicaciones').doc(id).get();
     const dat=snap.exists?snap.data():{};
     const desc=dat.descontado||[];
-    const bodDev=dat.bodegaDescuento||'constancia';  // viejos → Central (de donde salieron)
+    const bodDev=resolverRecinto(dat.bodegaDescuento||dat.predioId||'constancia', dat.tipo, dat.predioId);  // v44 · al recinto de hoy
     await db.collection('aplicaciones').doc(id).delete();
     if(desc.length) await ajustarStockBodega(desc, bodDev, +1);  // devolver a su bodega
     renderAplList();
@@ -3314,7 +3437,7 @@ async function aplEditar(id){
 
     if(!Object.keys(ciclosAllCache||{}).length) await loadCiclosAll();
 
-    aplEdit={ id, tipo, doc:a, descontado:(a.descontado||[]).slice(), bodega:a.bodegaDescuento||a.predioId||'constancia' };
+    aplEdit={ id, tipo, doc:a, descontado:(a.descontado||[]).slice(), bodega:resolverRecinto(a.bodegaDescuento||a.predioId||'constancia', tipo, a.predioId) };
 
     if(tipo==='fertirriego' && a.subtipo==='acido'){
       // v43 · Estanque de ácido: se reabre en su propio formulario.
@@ -3331,7 +3454,8 @@ async function aplEditar(id){
       (a.destinos||[]).forEach(d=>{ if(d && d.modulo!=null) aplFol.litros[String(d.modulo)]=String(d.litros!=null?d.litros:''); });
     }else if(tipo==='viariego'){
       aplVia={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
-        recetaTxt:recetaATexto(a.receta), receta:recetaAEstado(a.receta), sectores:{} };
+        recetaTxt:recetaATexto(a.receta), receta:recetaAEstado(a.receta), sectores:{}, recintos:{} };
+      (a.descontado||[]).forEach(d=>{ if(d.productoId && esRecinto(d.recinto)) aplVia.recintos[d.productoId]=d.recinto; });   // v44
       (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) aplVia.sectores[String(x.sector)]=true; });
     }else{
       const est=nuevoEstanque();
@@ -3497,7 +3621,7 @@ function estanqueAct(e){ return (aplRie&&aplRie.estanques&&aplRie.estanques[e])|
 
 // Sales del estanque `e`, ya vinculadas con el producto de bodega que descuenta.
 function salesEstanque(e){
-  const bodega=(aplRie&&aplRie.predioId)||'';
+  const bodega=recintoCaseta((aplRie&&aplRie.predioId)||'');   // v44
   const est=estanqueAct(e);
   return FERTIRRIEGO_SALES.map((sal,i)=>{
     const cands=candidatosSal(sal, bodega);
@@ -3772,7 +3896,7 @@ async function guardarUsoEstanque(){
       editadoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
       editadoAt:Date.now()
     }), `Aplicación del ${fD(nuevoUso.fecha)} (estanque)`);
-    await enCola(ajustarStockBodega(desc, a.bodegaDescuento||a.predioId, -1), 'Descuento de bodega');
+    await enCola(ajustarStockBodega(desc, resolverRecinto(a.bodegaDescuento||a.predioId, a.tipo, a.predioId), -1), 'Descuento de bodega');
 
     usoEdit=null; closeModal(); renderAplList();
     avisoGuardado(`✅ Aplicación registrada · ${fmtNum(tot,0)} L descontados del estanque`);
@@ -3916,7 +4040,7 @@ async function guardarRiego(){
 
   loading(true, editando?'Guardando cambios…':'Registrando…');
   try{
-    const bodDesc=aplRie.predioId||'constancia';
+    const bodDesc=recintoCaseta(aplRie.predioId);   // v44 · Caseta de Riego del campo
     const avisosFaltan=[], avisosSinBodega=[];
     for(const u of usados){
       const {e, est, r}=u;
@@ -4017,7 +4141,7 @@ function acidoLporLsol(kg, vol, dens){ return (kg>0 && vol>0 && dens>0) ? (kg/de
 function acidoProducto(){
   const ac=ACIDOS[aplAci.acido];
   if(aplAci.prodSel) return productosCache.find(p=>p.id===aplAci.prodSel)||null;
-  const c=candidatosSal({nombre:ac.nombre, alias:ac.alias}, aplAci.predioId);
+  const c=candidatosSal({nombre:ac.nombre, alias:ac.alias}, recintoCaseta(aplAci.predioId));
   return c[0]||null;
 }
 
@@ -4181,7 +4305,7 @@ async function guardarAcido(){
   const sectoresData=r.filas.map(x=>({sector:x.sector, litros:x.litrosSol, ha:x.ha}));
   const desc = prod ? [{productoId:prod.id, nombre:ac.nombre, cantidad:r.totalSol*conc}] : [];
   const sinDescontar = prod ? [] : [{nombre:ac.nombre, cantidadCargada:r.kg, cantidadAplicada:r.totalSol*r.kg/r.vol, unidad:'kg', motivo:'sin producto de bodega'}];
-  const bodDesc=A.predioId;
+  const bodDesc=recintoCaseta(A.predioId);   // v44
   const usoInicial={
     fecha:A.fecha, litros:r.totalSol, sectores:sectoresData,
     descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre, cantidad:d.cantidad})),
@@ -4253,7 +4377,7 @@ async function initPlanilla(){
       const x=d.data();
       return {
         id:d.id, nombre:x.nombre||'', categoria:x.categoria||'', unidad:x.unidad||'',
-        stock:{ transito:num(x.stock&&x.stock.transito), constancia:num(x.stock&&x.stock.constancia), paradero:num(x.stock&&x.stock.paradero) },
+        stock: Object.assign({}, x.stock||{}),   // v44 · recintos + claves antiguas mientras no se migre
         stockMin: x.stockMin!=null?x.stockMin:'', capEnvase:x.capEnvase!=null?x.capEnvase:'',
         envases:x.envases!=null?x.envases:'', precioEnv:x.precioEnv!=null?x.precioEnv:'',
         vencimiento:x.vencimiento||'', _dirty:false, _new:false
@@ -4262,11 +4386,19 @@ async function initPlanilla(){
   }catch(e){ grid.innerHTML=`<p style="font-size:12px;color:var(--red);padding:10px">Error: ${escH(e.message)}</p>`; return; }
   renderPlanilla();
   renderConciliacion();
+  renderDespachosPendientes();   // v44
 }
 var _concInit=1;
 
 function num(v){ if(v==null||v==="")return 0; const n=Number(String(v).replace(",",".")); return isNaN(n)?0:n; }
-function planTotal(p){ return num(p.stock.transito)+num(p.stock.constancia)+num(p.stock.paradero); }
+function planTotal(p){ return stockTotal(p); }
+// v44 · Columnas de stock: los nueve recintos y, mientras no se migre, las
+// tres bodegas antiguas que todavía tengan algo.
+function planHayLegado(){ return planProds.some(p=>BODEGAS_LEGADO.some(k=>Math.abs(num(p.stock[k]))>1e-9)); }
+function planColumnasStock(){
+  return RECINTO_ORDER.concat(planHayLegado() ? BODEGAS_LEGADO.filter(k=>planProds.some(p=>Math.abs(num(p.stock[k]))>1e-9)) : []);
+}
+const TINTE_PREDIO={constancia:'#F3F7EE', transito:'#EEF4F8', paradero:'#F8F2EA'};
 function planPrecioUnit(p){
   const pe=parseFloat(p.precioEnv), ce=parseFloat(p.capEnvase);
   return (!isNaN(pe)&&!isNaN(ce)&&ce>0) ? pe/ce : null;
@@ -4281,9 +4413,11 @@ function planRow(p, idx){
     <td class="pname"><input type="text" value="${escH(p.nombre)}" oninput="planSet(${idx},'nombre',this.value)" placeholder="Nombre"></td>
     <td>${cat}</td>
     <td>${uni}</td>
-    <td class="col-t"><input type="text" inputmode="decimal" value="${p.stock.transito||''}" oninput="planSetStock(${idx},'transito',this.value)"></td>
-    <td class="col-c"><input type="text" inputmode="decimal" value="${p.stock.constancia||''}" oninput="planSetStock(${idx},'constancia',this.value)"></td>
-    <td class="col-p"><input type="text" inputmode="decimal" value="${p.stock.paradero||''}" oninput="planSetStock(${idx},'paradero',this.value)"></td>
+    ${planColumnasStock().map(k=>{
+      const v=p.stock[k]; const neg=num(v)<-1e-9;
+      const bg=RECINTOS[k]?TINTE_PREDIO[RECINTOS[k].predio]:'#FEF3C7';
+      return `<td style="background:${bg}"><input type="text" inputmode="decimal" value="${v?escH(String(v)):''}" oninput="planSetStock(${idx},'${k}',this.value)"${neg?' style="color:var(--red);font-weight:700"':''}></td>`;
+    }).join('')}
     <td class="plan-total-num" id="tot-${idx}">${fmtNum(planTotal(p))}</td>
     <td><input type="text" inputmode="decimal" value="${p.stockMin}" oninput="planSet(${idx},'stockMin',this.value)"></td>
     <td><input type="text" inputmode="decimal" value="${p.capEnvase}" oninput="planSet(${idx},'capEnvase',this.value)" placeholder="kg/L x env"></td>
@@ -4307,12 +4441,21 @@ function renderPlanilla(){
   grid.innerHTML=`<table class="plan-table">
     <thead><tr>
       <th class="pname">Producto</th><th>Categoría</th><th>Unid.</th>
-      <th>Sub Tránsito</th><th>🏬 Central</th><th>Sub Paradero</th><th>Total</th>
+      ${planColumnasStock().map(k=>`<th title="${escH(nombreBodega(k))}${RECINTOS[k]?' — '+escH(RECINTOS[k].resp.join(', ')):''}"${BODEGAS_LEGADO.includes(k)?' style="background:#B45309"':''}>${escH(RECINTOS[k]?nombreBodega(k,true):(BODEGA_NOMBRES[k]+' (antigua)'))}</th>`).join('')}<th>Total</th>
       <th>Stock mín</th><th>Cap. envase</th><th>Envases</th><th>Precio envase</th><th>Precio unit.</th>
       <th>Vencim.</th><th>Mov.</th><th></th>
     </tr></thead>
-    <tbody>${rows||'<tr><td colspan="15" style="padding:16px;color:var(--muted)">Sin productos. Usa "+ Producto" o carga el inventario.</td></tr>'}</tbody>
+    <tbody>${rows||'<tr><td colspan="24" style="padding:16px;color:var(--muted)">Sin productos. Usa "+ Producto" o carga el inventario.</td></tr>'}</tbody>
   </table>`;
+  // v44 · Aviso y botón de migración mientras quede stock en las bodegas antiguas.
+  const mig=document.getElementById('planMigrar');
+  if(mig){
+    mig.style.display = planHayLegado() ? '' : 'none';
+    mig.innerHTML = planHayLegado() ? `<div style="background:#FEF3C7;border-radius:8px;padding:8px 10px;font-size:11.5px;color:#92400E;margin-bottom:8px">
+      Hay stock cargado en las <b>bodegas antiguas</b> (columnas en naranjo). Las aplicaciones ya descuentan de los recintos.
+      ${canManageUsers()?`<button class="btn btn-sm" style="background:#B45309;color:#fff;margin-left:6px" onclick="abrirMigracionRecintos()">🔀 Pasar a recintos</button>`:' Gerencia tiene que pasarlo a los recintos.'}
+    </div>` : '';
+  }
   // Quien no mantiene el catálogo ve la planilla en solo lectura: mueve stock
   // por despachos y aplicaciones, no editando celdas.
   if(!canCatalogo()){
@@ -4357,7 +4500,7 @@ function planSetStock(idx,predio,val){
 
 function planAddProd(){
   planProds.push({ nombre:'', categoria:'', unidad:'',
-    stock:{transito:0,constancia:0,paradero:0}, stockMin:'', capEnvase:'', envases:'', precioEnv:'',
+    stock:{}, stockMin:'', capEnvase:'', envases:'', precioEnv:'',
     vencimiento:'', _dirty:false, _new:true });
   planFiltroTxt=''; const b=document.getElementById('planBuscar'); if(b)b.value='';
   renderPlanilla();
@@ -4395,7 +4538,7 @@ async function planGuardar(){
     const pu=planPrecioUnit(p);
     const data={
       nombre:p.nombre.trim(), categoria:p.categoria||'', unidad:p.unidad||'',
-      stock:{ transito:num(p.stock.transito), constancia:num(p.stock.constancia), paradero:num(p.stock.paradero) },
+      stock: Object.fromEntries(Object.keys(p.stock||{}).map(k=>[k, num(p.stock[k])])),   // v44
       stockMin: p.stockMin===''?null:num(p.stockMin),
       capEnvase: p.capEnvase===''?null:num(p.capEnvase),
       envases: p.envases===''?null:num(p.envases),
@@ -4435,10 +4578,18 @@ async function calcConciliacion(){
     const mov=await db.collection('movimientos').get();
     mov.docs.forEach(doc=>{
       const m=doc.data(); if(!enRango(m.fecha||'')) return;
-      if(m.tipo==='compra' && m.predio){ const o=cell(m.predio,m.productoId); o.nombre=m.nombre||o.nombre; o.entregado+=Number(m.total)||0; }
+      if(m.tipo==='compra' && (m.recinto||m.predio)){ const o=cell(m.recinto||m.predio,m.productoId); o.nombre=m.nombre||o.nombre; o.entregado+=Number(m.total)||0; }
       else if(m.tipo==='despacho'){
-        if(m.destino){ const oi=cell(m.destino,m.productoId); oi.nombre=m.nombre||oi.nombre; oi.entregado+=Number(m.cantidad)||0; }
+        // v44 · Pendiente: salió del origen pero todavía no entra al destino.
+        // Rechazado o anulado: no movió nada (el stock volvió al origen).
+        if(m.estado==='rechazado'||m.estado==='anulado') return;
+        if(m.destino && m.estado!=='pendiente'){ const oi=cell(m.destino,m.productoId); oi.nombre=m.nombre||oi.nombre; oi.entregado+=Number(m.cantidad)||0; }
         if(m.origen){ const oo=cell(m.origen,m.productoId); oo.nombre=m.nombre||oo.nombre; oo.entregado-=Number(m.cantidad)||0; }
+      }
+      else if(m.tipo==='ajuste' && m.recinto){ const o=cell(m.recinto,m.productoId); o.nombre=m.nombre||o.nombre; o.entregado+=Number(m.diferencia)||0; }
+      else if(m.tipo==='migracion'){
+        const oi=cell(m.destino,m.productoId); oi.nombre=m.nombre||oi.nombre; oi.entregado+=Number(m.cantidad)||0;
+        const oo=cell(m.origen,m.productoId); oo.nombre=m.nombre||oo.nombre; oo.entregado-=Number(m.cantidad)||0;
       }
     });
     // Aplicaciones: uso descontado, atribuido a la bodega de descuento
@@ -4460,13 +4611,13 @@ async function calcConciliacion(){
         if(!enRango(parte.fecha||'')) return;
         (parte.descontado||[]).forEach(d=>{
           if(!d.productoId) return;
-          const o=cell(bod,d.productoId); o.usado+=Number(d.cantidad)||0;
+          const o=cell(d.recinto||bod,d.productoId); o.usado+=Number(d.cantidad)||0;
           if(!o.nombre){ const p=productosCache.find(x=>x.id===d.productoId); o.nombre=p?p.nombre:d.productoId; }
         });
       });
     });
     // Armar por bodega (todas o la elegida)
-    const orden = pred ? [pred] : ['constancia','transito','paradero'];
+    const orden = pred ? [pred] : RECINTO_ORDER.concat(BODEGAS_LEGADO);   // v44
     const grupos=[];
     orden.forEach(b=>{
       const m=acc[b]||{};
@@ -4475,7 +4626,7 @@ async function calcConciliacion(){
         return {nombre:o.nombre||pid, entregado:o.entregado, usado:o.usado, dif:o.entregado-o.usado};
       }).filter(f=>Math.abs(f.entregado)>1e-9 || Math.abs(f.usado)>1e-9)
         .sort((a,b)=>Math.abs(a.dif)<1e-9 && Math.abs(b.dif)>=1e-9?1:(a.dif-b.dif) || a.nombre.localeCompare(b.nombre));
-      if(filas.length) grupos.push({bodega:b, label:BODEGA_NOMBRES[b]||b, filas});
+      if(filas.length) grupos.push({bodega:b, label:nombreBodega(b), filas});
     });
     concState.grupos=grupos; concState.calc=true;
   }catch(e){ concState.grupos=[]; concState.calc=true; toast('Error: '+e.message); }
@@ -4484,7 +4635,8 @@ async function calcConciliacion(){
 
 function renderConciliacion(){
   const box=document.getElementById('concBody'); if(!box) return;
-  const predOpts=`<option value="">Todas las bodegas</option>`+['constancia','transito','paradero'].map(b=>`<option value="${b}"${b===concState.predio?' selected':''}>${escH(BODEGA_NOMBRES[b])}</option>`).join('');
+  const predOpts=`<option value="">Todos los recintos</option>`+recintoOptsHTML(RECINTO_ORDER, concState.predio)
+    +`<optgroup label="Antes de recintos">`+BODEGAS_LEGADO.map(b=>`<option value="${b}"${b===concState.predio?' selected':''}>${escH(BODEGA_NOMBRES[b])}</option>`).join('')+`</optgroup>`;
   let cuerpo='';
   if(!concState.calc){
     cuerpo='<p style="font-size:12px;color:var(--muted);padding:8px 0">Elige bodega y rango, luego pulsa Calcular.</p>';
@@ -4516,12 +4668,12 @@ function renderConciliacion(){
           </tbody></table></div>
       </div>`).join('');
     cuerpo+=`<div style="font-size:11px;color:var(--muted);margin-top:10px">
-      <b>Entregado</b> = compras + despachos recibidos − despachos salientes · <b>Usado</b> = aplicaciones descontadas ·
+      <b>Entregado</b> = compras + despachos recibidos − despachos enviados ± ajustes · <b>Usado</b> = aplicaciones descontadas · un despacho sin confirmar ya salió del origen pero todavía no entra al destino ·
       <b>Diferencia</b> = entregado − usado. <span style="color:#2E7D32">0</span> = cuadra · <span style="color:#B45309">positivo</span> = entregado sin usar (queda en bodega) · <span style="color:#C0392B">negativo ⚠</span> = se usó más de lo entregado (revisar un despacho sin registrar).</div>`;
   }
   box.innerHTML=`
     <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px">
-      <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Bodega</label>
+      <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Recinto</label>
         <select onchange="concState.predio=this.value">${predOpts}</select></div>
       <div><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Desde</label>
         <input type="date" value="${concState.desde}" onchange="concState.desde=this.value"></div>
@@ -4536,44 +4688,60 @@ function renderConciliacion(){
 // Movimientos en colección 'movimientos'. Stock se ajusta con transacción.
 // ══════════════════════════════════════════════
 
+// v44 · Selector de recintos agrupado por campo.
+function recintoOptsHTML(lista, sel, conStockDe){
+  return PRED_ORDER.map(pid=>{
+    const ks=lista.filter(k=>RECINTOS[k]&&RECINTOS[k].predio===pid);
+    if(!ks.length) return '';
+    return `<optgroup label="${escH(PREDIOS[pid].nombre)}">`+ks.map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(RECINTOS[k].nombre)}${conStockDe?` (${fmtNum(stockEn(conStockDe,k),2)})`:''}</option>`).join('')+`</optgroup>`;
+  }).join('');
+}
+
 function abrirMovProducto(idx){
   const p=planProds[idx];
   if(!p.id){ toast('⚠️ Guarda el producto antes de registrar movimientos'); return; }
   const uni=p.unidad||'u';
-  const predOpts=(sel)=>Object.keys(PREDIOS).map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(BODEGA_NOMBRES[k]||PREDIOS[k].nombre)}</option>`).join('');
-  // El origen de un despacho solo puede ser una bodega propia
-  const misBod=prediosPermitidos();
-  const origenOpts=(sel)=>misBod.map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(BODEGA_NOMBRES[k]||PREDIOS[k].nombre)}</option>`).join('');
-  const origenDef=misBod.includes(BODEGA_CENTRAL)?BODEGA_CENTRAL:(misBod[0]||'');
-  const destinoDef=PRED_ORDER.find(k=>k!==origenDef)||'';
-  const st=p.stock;
+  const oper=recintosOperables();
+  const origenDef=oper.find(k=>stockEn(p,k)>0)||oper[0]||'';
+  const destinoDef=RECINTO_ORDER.find(k=>k!==origenDef)||'';
+  const conStock=planColumnasStock().filter(k=>Math.abs(stockEn(p,k))>1e-9);
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">📦 ${escH(p.nombre)}</div>
-    <div class="modal-sub">Stock: 
-      <b>${fmtNum(st.constancia)}</b> La Constancia · <b>${fmtNum(st.transito)}</b> El Tránsito · <b>${fmtNum(st.paradero)}</b> Paradero 12 ${escH(uni)}</div>
+    <div class="modal-sub" style="line-height:1.6">${conStock.length
+      ? conStock.map(k=>`<b${stockEn(p,k)<0?' style="color:var(--red)"':''}>${fmtNum(stockEn(p,k),2)}</b> ${escH(nombreBodega(k,true))}`).join(' · ')+` ${escH(uni)}`
+      : 'Sin stock en ningún recinto'}</div>
 
     ${canComprar()?`
     <div class="sec-div">🛒 Registrar compra (entra stock)</div>
-    <div class="form-row"><label>Bodega que recibe</label><select id="mcPredio">${
-      prediosCompra().map(k=>`<option value="${k}"${k===(prediosCompra()[0]||'')?' selected':''}>${escH(BODEGA_NOMBRES[k]||PREDIOS[k].nombre)}</option>`).join('')
-    }</select></div>
+    <div class="form-row"><label>Recinto que recibe</label><select id="mcPredio">${recintoOptsHTML(recintosCompra(), 'lc_proveedores')}</select></div>
     <div style="display:flex;gap:8px">
       <div class="form-row" style="flex:1"><label>N° envases</label><input type="text" inputmode="decimal" id="mcEnv" oninput="movCalc()" placeholder="Ej: 5"></div>
       <div class="form-row" style="flex:1"><label>Capacidad c/u (${escH(uni)})</label><input type="text" inputmode="decimal" id="mcCap" value="${p.capEnvase!=null&&p.capEnvase!==''?p.capEnvase:''}" oninput="movCalc()" placeholder="Ej: 20"></div>
     </div>
     <div class="form-row"><label>Precio por envase ($)</label><input type="text" inputmode="decimal" id="mcPrecio" oninput="movCalc()" placeholder="Ej: 50000"></div>
+    <div class="form-row"><label>Proveedor</label><input type="text" id="mcProv" placeholder="Opcional"></div>
     <div class="form-row"><label>Fecha</label><input type="date" id="mcFecha" value="${todayIso}"></div>
     <div id="mcResumen" style="font-size:12px;color:var(--muted);margin:2px 0 8px"></div>
     <button class="btn btn-primary" onclick="movCompra(${idx})">Registrar compra</button>`:''}
 
-    <div class="sec-div" style="margin-top:16px">🔄 Despacho (mover stock entre bodegas)</div>
+    ${oper.length?`
+    <div class="sec-div" style="margin-top:16px">🔄 Despacho a otro recinto</div>
     <div style="display:flex;gap:8px;align-items:flex-end">
-      <div class="form-row" style="flex:1"><label>Desde</label><select id="mdOrigen">${origenOpts(origenDef)}</select></div>
-      <div class="form-row" style="flex:1"><label>Hacia</label><select id="mdDestino">${predOpts(destinoDef)}</select></div>
+      <div class="form-row" style="flex:1"><label>Desde</label><select id="mdOrigen">${recintoOptsHTML(oper, origenDef, p)}</select></div>
+      <div class="form-row" style="flex:1"><label>Hacia</label><select id="mdDestino">${recintoOptsHTML(RECINTO_ORDER, destinoDef)}</select></div>
     </div>
     <div class="form-row"><label>Cantidad (${escH(uni)})</label><input type="text" inputmode="decimal" id="mdCant" placeholder="Ej: 10"></div>
     <div class="form-row"><label>Fecha</label><input type="date" id="mdFecha" value="${todayIso}"></div>
-    <button class="btn btn-secondary" onclick="movDespacho(${idx})">Registrar despacho</button>
+    <div style="font-size:10.5px;color:var(--muted);margin:-2px 0 8px;line-height:1.5">Sale de inmediato del recinto de origen. Entra al de destino cuando su responsable confirme que lo recibió.</div>
+    <button class="btn btn-secondary" onclick="movDespacho(${idx})">Enviar despacho</button>
+
+    <div class="sec-div" style="margin-top:16px">✍️ Ajuste de stock (conteo)</div>
+    <div style="display:flex;gap:8px;align-items:flex-end">
+      <div class="form-row" style="flex:1"><label>Recinto</label><select id="maRecinto">${recintoOptsHTML(oper, origenDef, p)}</select></div>
+      <div class="form-row" style="flex:1"><label>Stock contado (${escH(uni)})</label><input type="text" inputmode="decimal" id="maCant" placeholder="Lo que hay"></div>
+    </div>
+    <div class="form-row"><label>Motivo</label><input type="text" id="maMotivo" placeholder="Ej: conteo de fin de mes, envase roto"></div>
+    <button class="btn btn-secondary" onclick="movAjuste(${idx})">Registrar ajuste</button>`:''}
   `;
   document.getElementById('overlay').classList.add('open');
 }
@@ -4590,49 +4758,51 @@ function movCalc(){
   }else box.innerHTML='';
 }
 
+function quienSoy(){ return {uid:currentUser.uid, nombre:(currentProfile&&currentProfile.nombre)||currentUser.email}; }
+
 async function movCompra(idx){
   if(!canComprar()){ toast('Sin permiso para registrar compras'); return; }
   const p=planProds[idx];
-  const predio=document.getElementById('mcPredio').value;
-  // v40 · La compra entra a un centro de costo: solo a una bodega propia.
-  if(!prediosCompra().includes(predio)){ toast('⚠️ Solo puedes registrar compras que lleguen a tu bodega'); return; }
+  const recinto=document.getElementById('mcPredio').value;
+  if(!esRecinto(recinto)){ toast('⚠️ Elige el recinto que recibe'); return; }
   const env=num(document.getElementById('mcEnv').value);
   const cap=num(document.getElementById('mcCap').value);
   const pre=num(document.getElementById('mcPrecio').value);
+  const prov=(document.getElementById('mcProv').value||'').trim();
   const fecha=document.getElementById('mcFecha').value;
   const total=env*cap;
   if(total<=0){ toast('⚠️ Indica envases y capacidad'); return; }
   const pu=cap>0?pre/cap:null;
-
+  const yo=quienSoy();
   loading(true,'Registrando compra…');
   try{
     await db.runTransaction(async tx=>{
       const ref=db.collection('productos').doc(p.id);
       const snap=await tx.get(ref);
       const d=snap.data();
-      const st=Object.assign({transito:0,constancia:0,paradero:0}, d.stock||{});
-      st[predio]=num(st[predio])+total;
+      const st=Object.assign({}, d.stock||{});
+      st[recinto]=num(st[recinto])+total;
       const upd={stock:st, updatedAt:Date.now()};
       if(cap>0) upd.capEnvase=cap;
       if(env>0) upd.envases=env;
       if(pre>0){ upd.precioEnv=pre; upd.precioUnit=pu; }
       tx.update(ref, upd);
-      const movRef=db.collection('movimientos').doc();
-      tx.set(movRef, {tipo:'compra', productoId:p.id, nombre:p.nombre, predio,
+      tx.set(db.collection('movimientos').doc(), {tipo:'compra', productoId:p.id, nombre:p.nombre,
+        recinto, predio:RECINTOS[recinto].predio, proveedor:prov||null,
         envases:env, capEnvase:cap, precioEnv:pre||null, total, precioUnit:pu,
-        fecha, registradoPor:currentUser.uid,
-        registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email, createdAt:Date.now()});
+        fecha, registradoPor:yo.uid, registradoPorNombre:yo.nombre, createdAt:Date.now()});
     });
-    // actualizar estado local
-    p.stock[predio]=num(p.stock[predio])+total;
+    p.stock[recinto]=num(p.stock[recinto])+total;
     if(cap>0)p.capEnvase=cap; if(env>0)p.envases=env;
     if(pre>0){p.precioEnv=pre;}
     closeModal(); renderPlanilla();
-    toast(`✅ Compra registrada (+${fmtNum(total)})`);
+    toast(`✅ Compra registrada en ${nombreBodega(recinto,true)} (+${fmtNum(total)})`);
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
 
+// v44 · El despacho queda PENDIENTE: sale del origen al enviarlo y entra al
+// destino cuando el responsable de ese recinto confirma que lo recibió.
 async function movDespacho(idx){
   if(!canDespachar()){ toast('Sin permiso'); return; }
   const p=planProds[idx];
@@ -4640,32 +4810,241 @@ async function movDespacho(idx){
   const destino=document.getElementById('mdDestino').value;
   const cant=num(document.getElementById('mdCant').value);
   const fecha=document.getElementById('mdFecha').value;
-  if(!userPredios().includes(origen)){ toast('⚠️ Solo puedes despachar desde tu bodega'); return; }
+  if(!recintosOperables().includes(origen)){ toast('⚠️ Solo puedes despachar desde un recinto a tu cargo'); return; }
+  if(!esRecinto(destino)){ toast('⚠️ Elige el recinto de destino'); return; }
   if(origen===destino){ toast('⚠️ El origen y el destino deben ser distintos'); return; }
   if(cant<=0){ toast('⚠️ Indica la cantidad'); return; }
-
-  loading(true,'Registrando despacho…');
+  const yo=quienSoy();
+  loading(true,'Enviando despacho…');
   try{
     await db.runTransaction(async tx=>{
       const ref=db.collection('productos').doc(p.id);
       const snap=await tx.get(ref);
       const d=snap.data();
-      const st=Object.assign({transito:0,constancia:0,paradero:0}, d.stock||{});
-      if(num(st[origen])<cant) throw new Error(`Stock insuficiente en ${BODEGA_NOMBRES[origen]||origen} (hay ${fmtNum(st[origen])})`);
+      const st=Object.assign({}, d.stock||{});
+      if(num(st[origen])<cant) throw new Error(`Stock insuficiente en ${nombreBodega(origen,true)} (hay ${fmtNum(st[origen])})`);
       st[origen]=num(st[origen])-cant;
-      st[destino]=num(st[destino])+cant;
       tx.update(ref, {stock:st, updatedAt:Date.now()});
-      const movRef=db.collection('movimientos').doc();
-      tx.set(movRef, {tipo:'despacho', productoId:p.id, nombre:p.nombre, origen, destino, cantidad:cant,
-        fecha, registradoPor:currentUser.uid,
-        registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email, createdAt:Date.now()});
+      tx.set(db.collection('movimientos').doc(), {tipo:'despacho', estado:'pendiente', productoId:p.id, nombre:p.nombre,
+        unidad:p.unidad||'', origen, destino, cantidad:cant, fecha,
+        registradoPor:yo.uid, registradoPorNombre:yo.nombre, createdAt:Date.now()});
     });
     p.stock[origen]=num(p.stock[origen])-cant;
-    p.stock[destino]=num(p.stock[destino])+cant;
-    closeModal(); renderPlanilla();
-    toast(`✅ Despacho registrado`);
+    closeModal(); renderPlanilla(); renderDespachosPendientes();
+    toast(`✅ Despacho enviado · falta que ${nombreBodega(destino,true)} confirme la recepción`);
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
+}
+
+// Ajuste por conteo: deja el stock del recinto en lo contado y anota la diferencia.
+async function movAjuste(idx){
+  const p=planProds[idx];
+  const recinto=document.getElementById('maRecinto').value;
+  const txt=document.getElementById('maCant').value;
+  const motivo=(document.getElementById('maMotivo').value||'').trim();
+  if(!recintosOperables().includes(recinto)){ toast('⚠️ Solo puedes ajustar un recinto a tu cargo'); return; }
+  if(txt===''||isNaN(num(txt))||num(txt)<0){ toast('⚠️ Indica el stock contado'); return; }
+  if(!motivo){ toast('⚠️ Escribe el motivo del ajuste'); return; }
+  const nuevo=num(txt), yo=quienSoy();
+  loading(true,'Registrando ajuste…');
+  try{
+    let anterior=0;
+    await db.runTransaction(async tx=>{
+      const ref=db.collection('productos').doc(p.id);
+      const d=(await tx.get(ref)).data();
+      const st=Object.assign({}, d.stock||{});
+      anterior=num(st[recinto]);
+      st[recinto]=nuevo;
+      tx.update(ref, {stock:st, updatedAt:Date.now()});
+      tx.set(db.collection('movimientos').doc(), {tipo:'ajuste', productoId:p.id, nombre:p.nombre, unidad:p.unidad||'',
+        recinto, anterior, nuevo, diferencia:nuevo-anterior, motivo, fecha:todayIso,
+        registradoPor:yo.uid, registradoPorNombre:yo.nombre, createdAt:Date.now()});
+    });
+    p.stock[recinto]=nuevo;
+    closeModal(); renderPlanilla();
+    toast(`✅ Ajuste registrado (${nuevo-anterior>=0?'+':''}${fmtNum(nuevo-anterior,2)})`);
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+// ── Despachos pendientes ──
+let despPendCache=[];
+async function cargarDespachosPendientes(){
+  try{
+    const snap=await db.collection('movimientos').where('estado','==','pendiente').get();
+    despPendCache=snap.docs.map(d=>({id:d.id, ...d.data()})).filter(m=>m.tipo==='despacho')
+      .sort((a,b)=>(Number(a.createdAt)||0)-(Number(b.createdAt)||0));
+  }catch(e){ despPendCache=[]; }
+  return despPendCache;
+}
+function despPuedoRecibir(m){ return esResponsableRecinto(m.destino); }
+function despPuedoAnular(m){ return isAdmin() || (currentUser && m.registradoPor===currentUser.uid) || userRecintos().includes(m.origen); }
+function despPorRecibir(){ return despPendCache.filter(despPuedoRecibir); }
+
+async function renderDespachosPendientes(){
+  const card=document.getElementById('despCard'), box=document.getElementById('despBody');
+  if(!card||!box) return;
+  await cargarDespachosPendientes();
+  actualizarBadgeDespachos();
+  const recibir=despPendCache.filter(despPuedoRecibir);
+  const enviados=despPendCache.filter(m=>!despPuedoRecibir(m) && (despPuedoAnular(m)||canCatalogo()));
+  if(!recibir.length && !enviados.length){ card.style.display='none'; return; }
+  card.style.display='';
+  const fila=(m,acciones)=>`<div style="padding:7px 0;border-bottom:1px solid var(--sand);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <div style="flex:1;min-width:180px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--dark)">${escH(m.nombre||'')} · ${fmtNum(m.cantidad,2)} ${escH(m.unidad||'')}</div>
+      <div style="font-size:11px;color:var(--muted)">${escH(nombreBodega(m.origen,true))} → <b>${escH(nombreBodega(m.destino,true))}</b> · ${escH(fD(m.fecha||''))} · envió ${escH(m.registradoPorNombre||'')}</div>
+    </div>${acciones}</div>`;
+  box.innerHTML =
+    (recibir.length?`<div style="font-size:11px;font-weight:700;color:var(--dark);margin-bottom:2px">Para recibir en tus recintos</div>`+
+      recibir.map(m=>fila(m,`<button class="btn btn-sm" style="background:#2E7D32;color:#fff" onclick="recibirDespacho('${m.id}')">✅ Recibido</button>
+        <button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" onclick="rechazarDespacho('${m.id}')">✖ No llegó</button>`)).join(''):'')
+    +(enviados.length?`<div style="font-size:11px;font-weight:700;color:var(--dark);margin:10px 0 2px">Enviados, esperando confirmación</div>`+
+      enviados.map(m=>fila(m, despPuedoAnular(m)?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" onclick="rechazarDespacho('${m.id}',true)">Anular</button>`:'')).join(''):'');
+}
+
+async function recibirDespacho(id){
+  const m=despPendCache.find(x=>x.id===id);
+  if(!m || !despPuedoRecibir(m)){ toast('Sin permiso para recibir este despacho'); return; }
+  const yo=quienSoy();
+  loading(true,'Confirmando…');
+  try{
+    await db.runTransaction(async tx=>{
+      const mref=db.collection('movimientos').doc(id);
+      const mv=(await tx.get(mref)).data();
+      if(!mv || mv.estado!=='pendiente') throw new Error('Este despacho ya no está pendiente');
+      const ref=db.collection('productos').doc(mv.productoId);
+      const d=(await tx.get(ref)).data();
+      const st=Object.assign({}, d.stock||{});
+      st[mv.destino]=num(st[mv.destino])+num(mv.cantidad);
+      tx.update(ref, {stock:st, updatedAt:Date.now()});
+      tx.update(mref, {estado:'recibido', recibidoPor:yo.uid, recibidoPorNombre:yo.nombre, recibidoAt:Date.now(), fechaRecepcion:todayIso});
+    });
+    const p=planProds.find(x=>x.id===m.productoId); if(p) p.stock[m.destino]=num(p.stock[m.destino])+num(m.cantidad);
+    const pc=productosCache.find(x=>x.id===m.productoId); if(pc){ pc.stock=pc.stock||{}; pc.stock[m.destino]=num(pc.stock[m.destino])+num(m.cantidad); }
+    renderPlanilla(); renderDespachosPendientes();
+    toast('✅ Recepción confirmada');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+// "No llegó" (lo marca quien recibe) o "Anular" (quien envió): el producto vuelve al origen.
+async function rechazarDespacho(id, anular){
+  const m=despPendCache.find(x=>x.id===id);
+  if(!m || !(anular ? despPuedoAnular(m) : despPuedoRecibir(m))){ toast('Sin permiso'); return; }
+  const motivo=prompt(anular?'¿Por qué se anula el despacho?':'¿Qué pasó con este despacho? (queda anotado y el producto vuelve al recinto de origen)');
+  if(motivo===null) return;
+  const yo=quienSoy();
+  loading(true,'Guardando…');
+  try{
+    await db.runTransaction(async tx=>{
+      const mref=db.collection('movimientos').doc(id);
+      const mv=(await tx.get(mref)).data();
+      if(!mv || mv.estado!=='pendiente') throw new Error('Este despacho ya no está pendiente');
+      const ref=db.collection('productos').doc(mv.productoId);
+      const d=(await tx.get(ref)).data();
+      const st=Object.assign({}, d.stock||{});
+      st[mv.origen]=num(st[mv.origen])+num(mv.cantidad);
+      tx.update(ref, {stock:st, updatedAt:Date.now()});
+      tx.update(mref, {estado: anular?'anulado':'rechazado', motivoRechazo:motivo||'',
+        rechazadoPor:yo.uid, rechazadoPorNombre:yo.nombre, rechazadoAt:Date.now()});
+    });
+    const p=planProds.find(x=>x.id===m.productoId); if(p) p.stock[m.origen]=num(p.stock[m.origen])+num(m.cantidad);
+    renderPlanilla(); renderDespachosPendientes();
+    toast(anular?'Despacho anulado · el stock volvió al origen':'Marcado como no recibido · el stock volvió al origen');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+// Aviso en el botón Bodega: cuántos despachos esperan que YO los reciba.
+function actualizarBadgeDespachos(){
+  const b=document.getElementById('btnBodega'); if(!b) return;
+  const n=despPorRecibir().length;
+  let s=b.querySelector('.desp-badge');
+  if(!n){ if(s) s.remove(); return; }
+  if(!s){ s=document.createElement('span'); s.className='desp-badge';
+    s.style.cssText='background:var(--red);color:#fff;border-radius:9px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:4px'; b.appendChild(s); }
+  s.textContent=n;
+}
+async function revisarDespachosAlEntrar(){
+  if(!canBodega()) return;
+  await cargarDespachosPendientes();
+  actualizarBadgeDespachos();
+  const n=despPorRecibir().length;
+  if(n) toast(`📥 Tienes ${n} despacho${n>1?'s':''} por confirmar en Bodega`);
+}
+
+// ── Migración de las bodegas antiguas a recintos (una vez, gerencia) ──
+function recintoMigracionSugerido(p, legado){
+  const cat=normNombre(p.categoria||'');
+  const esFito = cat.includes('fitosanit') || cat.includes('desinfect');
+  const esBio  = cat.includes('bioestim');
+  const esFert = cat.includes('fertiliz');
+  if(legado==='constancia'){
+    if(esFito) return 'lc_pesticidas';
+    if(esBio)  return 'lc_bioest';
+    if(esFert) return 'lc_caseta';
+    return 'lc_principal';
+  }
+  if(legado==='transito')  return (esFert||esBio) ? 'et_caseta'  : 'et_packing';
+  if(legado==='paradero')  return (esFert||esBio) ? 'p12_caseta' : 'p12_bodega';
+  return '';
+}
+let migFilas=[];
+function abrirMigracionRecintos(){
+  if(!canManageUsers()){ toast('Solo gerencia'); return; }
+  migFilas=[];
+  planProds.forEach(p=>BODEGAS_LEGADO.forEach(k=>{
+    const q=num(p.stock[k]);
+    if(p.id && Math.abs(q)>1e-9) migFilas.push({productoId:p.id, nombre:p.nombre, categoria:p.categoria||'', unidad:p.unidad||'', legado:k, cantidad:q, destino:recintoMigracionSugerido(p,k)});
+  }));
+  const conteo=RECINTO_ORDER.map(k=>[k, migFilas.filter(f=>f.destino===k).length]).filter(x=>x[1]);
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">🔀 Pasar el stock antiguo a los recintos</div>
+    <div class="modal-sub">${migFilas.length} saldos en las bodegas antiguas. Revisa el recinto de destino de cada uno: la propuesta sale de la categoría del producto (fitosanitarios → Pesticidas; bioestimulantes → Bioestimulantes o Caseta; fertilizantes → Caseta de Riego; el resto → bodega principal del campo).</div>
+    <div style="max-height:52vh;overflow:auto;border:1px solid var(--sand);border-radius:8px;margin:8px 0">
+      <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+        <thead><tr style="background:var(--sand)"><th style="padding:4px;text-align:left">Producto</th><th style="padding:4px">Antes</th><th style="padding:4px;text-align:right">Cantidad</th><th style="padding:4px">Pasa a</th></tr></thead>
+        <tbody>${migFilas.map((f,i)=>`<tr style="border-bottom:1px solid var(--sand)">
+          <td style="padding:4px">${escH(f.nombre)}<div style="font-size:10px;color:var(--muted)">${escH(f.categoria||'sin categoría')}</div></td>
+          <td style="padding:4px;text-align:center">${escH(CORTO_PREDIO[f.legado])}</td>
+          <td style="padding:4px;text-align:right${f.cantidad<0?';color:var(--red);font-weight:700':''}">${fmtNum(f.cantidad,2)} ${escH(f.unidad)}</td>
+          <td style="padding:4px"><select onchange="migFilas[${i}].destino=this.value" style="font-size:11px">${recintoOptsHTML(recintosDePredio(f.legado), f.destino)}</select></td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Se <b>suma</b> al recinto (si ya se descontó algo de ahí desde esta versión, queda compensado) y la columna antigua desaparece. Queda un movimiento "migración" por cada saldo. Los negativos también se pasan: son consumos que nunca tuvieron compra o despacho registrados.</div>
+    <button class="btn btn-primary" onclick="ejecutarMigracionRecintos()">Pasar ${migFilas.length} saldos</button>
+    <button class="btn btn-secondary" style="margin-top:6px" onclick="closeModal()">Cancelar</button>`;
+  document.getElementById('overlay').classList.add('open');
+}
+async function ejecutarMigracionRecintos(){
+  if(!canManageUsers()) return;
+  if(migFilas.some(f=>!esRecinto(f.destino))){ toast('⚠️ Falta elegir el destino de algún saldo'); return; }
+  if(!confirm(`Se van a pasar ${migFilas.length} saldos a los recintos. ¿Seguir?`)) return;
+  const yo=quienSoy();
+  loading(true,'Pasando stock…');
+  let ok=0, err=0;
+  for(const f of migFilas){
+    try{
+      await db.collection('productos').doc(f.productoId).update({
+        ['stock.'+f.destino]: firebase.firestore.FieldValue.increment(f.cantidad),
+        ['stock.'+f.legado]: firebase.firestore.FieldValue.delete(),
+        updatedAt: Date.now()
+      });
+      await db.collection('movimientos').add({tipo:'migracion', productoId:f.productoId, nombre:f.nombre, unidad:f.unidad,
+        origen:f.legado, destino:f.destino, cantidad:f.cantidad, fecha:todayIso,
+        registradoPor:yo.uid, registradoPorNombre:yo.nombre, createdAt:Date.now()});
+      const p=planProds.find(x=>x.id===f.productoId);
+      if(p){ p.stock[f.destino]=num(p.stock[f.destino])+f.cantidad; delete p.stock[f.legado]; }
+      const pc=productosCache.find(x=>x.id===f.productoId);
+      if(pc&&pc.stock){ pc.stock[f.destino]=num(pc.stock[f.destino])+f.cantidad; delete pc.stock[f.legado]; }
+      ok++;
+    }catch(e){ err++; console.warn(e); }
+  }
+  try{ await db.collection('config').doc('bodega').set({migradoRecintos:!err, migradoAt:Date.now(), migradoPor:yo.nombre}, {merge:true}); }catch(e){}
+  loading(false); closeModal(); renderPlanilla();
+  toast(err?`Pasados ${ok}, ${err} con error: vuelve a intentar`:`✅ ${ok} saldos pasados a los recintos`);
 }
 
 
@@ -6262,8 +6641,8 @@ const ROLE_HINTS={
   admin:'Gerencia. Con "Todos los predios" queda como superadmin: crea usuarios, edita costos y puede borrar registros. Acotado a un predio, manda solo en ese predio.',
   jefe:'Registra y corrige en los predios que marques, y ve todos los informes. No accede a bodega ni a usuarios.',
   subjefe:'Trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
-  bodeguero:'Solo la Planilla de Bodega de las bodegas que marques: stock, despachos y conciliación. No registra aplicaciones. El de La Constancia (central) además crea productos, edita precios y registra compras.',
-  riego:'Registra fertirriego y vía riego de sus predios. No ve foliares, ni la planilla, ni el informe de gasto.',
+  bodeguero:'Planilla de Bodega: catálogo, precios y stock de todos los recintos, despachos y conciliación. No registra aplicaciones. Las compras las registra quien tenga 🛒. Marca abajo sus recintos para que pueda confirmar lo que le llega.',
+  riego:'Registra fertirriego, vía riego y ácidos de sus predios. Si le marcas su Caseta de Riego, además ve la planilla y confirma lo que le despachan.',
   foliar:'Registra únicamente aplicaciones foliares (desinfecciones) de sus predios. No ve fertirriego, ni la planilla, ni el informe de gasto.',
   gastos:'Solo el informe de gasto de los predios que marques. Sin acceso a registro de campo, aplicaciones ni bodega. Pensado para quien revisa costos desde fuera del campo.',
   bpa:'Asesor de Buenas Prácticas. Solo lectura: ve las aplicaciones registradas de los predios que marques. No registra ni modifica nada.'
@@ -6303,7 +6682,7 @@ async function loadUsers(){
       return `<div class="user-row">
       <div class="ur-info">
         <div class="ur-name">${u.nombre||u.email}</div>
-        <div class="ur-meta">${escH(u.email)} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}" ${rolMalo?'style="background:#FEE2E2;color:var(--red)"':''}>${escH(ROLES[u.role]||((u.role||'sin rol')+' ⚠'))}</span> · ${escH(prediosLabel(u))}${u.subjefe?' · '+escH(u.subjefe):''}${u.puedeFoliar?' · <span title="Puede registrar desinfecciones foliares">🍃</span>':''}</div>
+        <div class="ur-meta">${escH(u.email)} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}" ${rolMalo?'style="background:#FEE2E2;color:var(--red)"':''}>${escH(ROLES[u.role]||((u.role||'sin rol')+' ⚠'))}</span> · ${escH(prediosLabel(u))}${u.subjefe?' · '+escH(u.subjefe):''}${u.puedeFoliar?' · <span title="Puede registrar desinfecciones foliares">🍃</span>':''}${u.puedeComprar?' · <span title="Registra compras">🛒</span>':''}${(Array.isArray(u.recintos)&&u.recintos.length)?' · 📦 '+escH(u.recintos.filter(esRecinto).map(k=>nombreBodega(k,true)).join(', ')):''}</div>
       </div>
       ${propio?'':`<button class="btn btn-sm" onclick="openUserEdit('${u.uid}')" style="background:var(--sand);color:var(--dark);width:auto;padding:6px 10px">✏️</button>`}
     </div>`}).join('')||'<div style="font-size:12px;color:var(--muted)">Sin usuarios aún</div>';
@@ -6350,7 +6729,21 @@ function openUserEdit(uid){
         <input type="checkbox" id="euFoliar"${u.puedeFoliar?' checked':''} style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">
         🍃 Puede registrar desinfecciones foliares
       </label>
-      <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">Habilita la pestaña Foliar en Aplicaciones, en los predios que tenga a cargo, sin cambiarle el rol. Los fitosanitarios se descuentan de La Constancia, salvo que ya se hayan despachado a su campo.</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">Habilita la pestaña Foliar en Aplicaciones, en los predios que tenga a cargo, sin cambiarle el rol. Los fitosanitarios se descuentan siempre de Bodega Pesticidas (La Constancia).</div>
+    </div>
+    <!-- v44 · Recintos de bodega a su cargo y permiso de compras -->
+    <div class="form-row"><label>📦 Recintos de bodega a su cargo</label>
+      <div style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:8px 12px">
+        ${PRED_ORDER.map(pid=>`<div style="font-size:10.5px;font-weight:700;color:var(--muted);margin:4px 0 2px">${escH(PREDIOS[pid].nombre)}</div>`+
+          recintosDePredio(pid).map(k=>`<label style="display:flex;align-items:center;gap:8px;margin:0 0 3px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="euRecintoChk" value="${k}"${(u.recintos||[]).includes(k)?' checked':''} style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">${escH(RECINTOS[k].nombre)} <span style="color:var(--muted);font-size:10.5px">(${escH(RECINTOS[k].resp.join(', '))})</span></label>`).join('')).join('')}
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">En sus recintos puede despachar, confirmar lo que le llega y ajustar el stock por conteo.</div>
+    </div>
+    <div class="form-row">
+      <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer">
+        <input type="checkbox" id="euComprar"${u.puedeComprar?' checked':''} style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">
+        🛒 Registra compras (elige a qué recinto entran)
+      </label>
     </div>
     <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:9px">El cambio se aplica la próxima vez que esa persona inicie sesión. Si está con la app abierta, tiene que cerrar sesión y volver a entrar.</div>
     <button class="btn btn-primary" onclick="saveUserEdit()">Guardar cambios</button>
@@ -6405,7 +6798,9 @@ async function saveUserEdit(){
     await colUsers().doc(uid).update({
       nombre: nombre || u.nombre || (u.email||'').split('@')[0],
       role, predios, predioId, subjefe,
-      puedeFoliar: !!document.getElementById('euFoliar').checked   // v40
+      puedeFoliar: !!document.getElementById('euFoliar').checked,   // v40
+      recintos: [...document.querySelectorAll('.euRecintoChk')].filter(c=>c.checked).map(c=>c.value),   // v44
+      puedeComprar: !!document.getElementById('euComprar').checked   // v44
     });
     closeModal();
     await loadUsers();
@@ -7550,10 +7945,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v43';
+const MANUAL_VERSION='v44';
 const MANUAL_FECHA='2026-09-23';
 
 const MANUAL_CAMBIOS=[
+  {v:'v44', f:'23-09-2026', txt:'<b>Recintos de bodega.</b> Cada campo tiene ahora sus recintos, con sus responsables. En La Constancia: Principal, Pesticidas, Bioestimulantes, Caseta de Riego y Proveedores. En El Tránsito: Packing y Caseta de Riego. En Paradero 12: Caseta de Riego y Bodega Paradero 12. El stock se lleva por recinto. Las <b>desinfecciones</b> salen siempre de <b>Bodega Pesticidas</b>. El <b>fertirriego, los ácidos y la vía riego</b> salen de la <b>Caseta de Riego</b> del campo; en La Constancia, la vía riego puede salir también de Bioestimulantes. Las <b>compras</b> las registra quien tenga 🛒 (Luciano), eligiendo el recinto. Los <b>despachos</b> quedan pendientes hasta que el responsable del recinto que recibe los confirma. Cada responsable puede ajustar el stock de su recinto por conteo.'},
   {v:'v43', f:'23-09-2026', txt:'<b>Registro diario:</b> las entradas ya guardadas se pueden corregir con el <b>✏️</b>, sin borrarlas. <b>Fertilización:</b> se arregló el campo de kilos de las sales, que se bloqueaba después de la primera cifra, y se agregaron <b>Nitrato de potasio K acid</b>, <b>Nitrato de potasio Prohidric</b> y <b>Ultrasol Pro P</b>. <b>Pimentón:</b> en las aplicaciones, en vez de época se elige el <b>mes de plantación</b>. <b>Nueva pestaña ⚗️ Ácidos</b> para el fosfórico y el nítrico: se anotan los kilos cargados y el volumen del estanque, y cada día los litros aplicados por sector. La app pasa a litros de ácido por hectárea y <b>alarma si pasa de 4 L/ha en el día</b>.'},
   {v:'v42', f:'15-09-2026', txt:'Se quitó la pantalla <b>Evaluación de encargados de riego</b>: ya no aparece en la barra de botones ni en este manual. Las evaluaciones que se hayan registrado antes siguen guardadas en el servidor, pero ya no se consultan desde la app.'},
   {v:'v41', f:'15-09-2026', txt:'<b>Un estanque puede aplicarse en varios días.</b> Antes había que registrar todo el gasto el mismo día que se preparaba. Ahora, si sobra mezcla, el estanque queda abierto y en "Últimas aplicaciones" aparece <b>➕ Seguir</b>: se elige la fecha y los litros por sector de ese día. Cada día descuenta de bodega solo lo que se aplicó, y en el informe de gasto ese consumo pesa en el día real de aplicación. Si sobró mezcla y se botó, se cierra el estanque con el botón del mismo modal.'},
@@ -7673,7 +8069,7 @@ const MANUAL_SECCIONES=[
   intro:'Registro de las desinfecciones foliares. Lo que registres acá descuenta stock de la bodega.',
   pasos:[
     'En Aplicaciones, entra a la pestaña <b>🍃 Foliar</b>.',
-    'Después de interpretar la receta aparece <b>"Descuenta de la bodega de"</b>. Por defecto es <b>La Constancia</b>, donde se guardan los fitosanitarios de los tres campos. Si el producto ya se despachó a tu campo y hay stock, la app propone la bodega de tu predio. Puedes cambiarlo a mano; abajo se ve el stock de cada producto en la bodega elegida, y en rojo el que no tiene.',
+    'Después de interpretar la receta aparece <b>"Descuenta de Bodega Pesticidas · La Constancia"</b>: de ahí salen las desinfecciones de los tres campos, porque ahí se dosifican. Abajo se ve el stock de cada producto, y en rojo el que no tiene.',
     'Pon la <b>Fecha</b>, el <b>Predio</b>, el <b>Cultivo</b> y la <b>Época</b>. Si el cultivo es <b>pimentón</b>, en vez de época se elige el <b>mes de plantación</b>. Al elegir el predio, la época se llena sola con la del <b>ciclo abierto</b>; si el predio tiene varios ciclos abiertos de distinta época, o ninguno, hay que elegirla a mano. <b>Sin época no se puede guardar</b>: es lo que hace que la aplicación entre en su temporada en el informe de gasto.',
     'Escribe la <b>receta tal como la anotas en terreno</b>, con dosis por 100 L de agua. Ejemplo: <i>Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + ácido cítrico 30 g</i>.',
     'La app trata de reconocer cada producto en la bodega. El que quede en amarillo con "no reconocí", elígelo a mano de la lista.',
@@ -7758,20 +8154,23 @@ const MANUAL_SECCIONES=[
   ]
 },
 {
-  id:'bodega', ico:'📦', tit:'Bodega — planilla y conciliación', ver:()=>canBodega(),
-  intro:'Stock por bodega, precios y comparación entre lo entregado y lo usado. Está pensada para trabajarla desde el computador.',
+  id:'bodega', ico:'📦', tit:'Bodega — recintos, despachos y conciliación', ver:()=>canBodega(),
+  intro:'Stock por recinto, precios, compras, despachos y comparación entre lo entregado y lo usado. La planilla está pensada para el computador; confirmar despachos se puede hacer desde el teléfono.',
   pasos:[
-    'Busca el producto con el <b>🔍 buscador</b> de arriba.',
-    'Edita las celdas directamente en la planilla.',
-    'Aprieta <b>💾 Guardar cambios</b>. <b>Ojo:</b> mientras no lo aprietes, nada queda guardado.',
-    'El <b>precio unitario</b> y el <b>total</b> se calculan solos; no los escribas a mano.',
-    'Abajo, en <b>Conciliación</b>, compara lo que cada bodega recibió (compras + despachos) con lo que se usó en aplicaciones. Ajusta el rango de fechas: la entrega y el uso no tienen por qué caer el mismo mes.'
+    'Cada campo tiene sus <b>recintos</b>. <b>La Constancia:</b> Bodega Principal (Nicolás Flores), Pesticidas (Víctor González), Bioestimulantes (Nicolás Flores), Caseta de Riego (Gabriel Contreras, José Cordero y Carlos Vergara) y Bodega de Proveedores (Luciano Pinto). <b>El Tránsito:</b> Bodega Packing (Claudio Flores y Gabriela Escobar) y Caseta de Riego (Manuel Méndez). <b>Paradero 12:</b> Caseta de Riego (Paulo Gallarce) y Bodega Paradero 12 (Gabriela Escobar).',
+    'La planilla tiene <b>una columna por recinto</b>, agrupadas por campo (LC, ET, P12). Busca el producto con el <b>🔍 buscador</b>.',
+    '<b>Comprar</b> (quien tenga 🛒, hoy Luciano): 📦 del producto → Registrar compra → elige el <b>recinto que recibe</b>. Lo que se compra por volumen y queda guardado en el proveedor va a <b>Bodega de Proveedores</b>.',
+    '<b>Despachar</b>: 📦 del producto → Despacho → desde uno de tus recintos hacia otro. Sale al tiro del origen y queda <b>pendiente</b> hasta que el responsable del recinto que recibe lo confirma.',
+    '<b>Confirmar lo que te llega</b>: al entrar, la app avisa si tienes despachos por confirmar, y el botón Bodega muestra cuántos son. En la tarjeta <b>📥 Despachos por confirmar</b> aprieta <b>✅ Recibido</b>, y recién ahí entra a tu recinto. Si no llegó, aprieta <b>✖ No llegó</b>: el producto vuelve al origen y queda anotado el motivo.',
+    '<b>Ajustar por conteo</b>: 📦 del producto → Ajuste → recinto, lo que contaste y el motivo. Queda registrado como movimiento con la diferencia.',
+    'Quien mantiene el catálogo (bodega y gerencia) también puede editar las celdas directamente y apretar <b>💾 Guardar cambios</b>. Mientras no lo apriete, nada queda guardado.',
+    'Abajo, en <b>Conciliación</b>, compara lo que recibió cada recinto (compras, despachos confirmados y ajustes) con lo que se usó en aplicaciones. Ajusta el rango de fechas, porque la entrega y el uso no tienen por qué caer el mismo mes.'
   ],
   tips:[
-    'Una diferencia grande en conciliación casi siempre es una aplicación sin registrar, o registrada en el predio equivocado.',
-    'Una desinfección hecha en El Tránsito o Paradero 12 descuenta de <b>La Constancia</b>, no del campo donde se aplicó. Al conciliar, eso no es un error: es donde vive el fitosanitario.',
-    'Los <b>encargados de bodega</b> corrigen el nombre de un producto, las cantidades y los precios. Desde la v40, <b>cada bodega registra sus propias compras</b>: el selector "Bodega que recibe" solo muestra los predios que tienes a cargo, porque la compra entra a un centro de costo.',
-    'Los <b>fitosanitarios</b> se cargan en la bodega de <b>La Constancia</b>, aunque se usen en los tres campos: de ahí descuentan las desinfecciones. Los fertilizantes y lo de vía riego se cargan en la bodega del campo al que llegaron.',
+    '<b>De dónde sale cada aplicación:</b> las desinfecciones foliares de los tres campos salen de <b>Pesticidas</b>. Fertirriego, ácidos y vía riego salen de la <b>Caseta de Riego del campo</b>. En La Constancia la vía riego puede salir de la Caseta o de <b>Bioestimulantes</b>, y se elige por producto. De la <b>Bodega de Proveedores</b> no sale ninguna aplicación: primero hay que despachar el producto a un recinto del campo.',
+    'Por eso, para que no quede stock negativo en la Caseta, los fertilizantes tienen que <b>despacharse a la Caseta</b> antes de usarse.',
+    'Una diferencia grande en conciliación casi siempre es una aplicación sin registrar, un despacho sin confirmar o una aplicación registrada en el predio equivocado.',
+    'Mientras queden saldos en las <b>bodegas antiguas</b> (columnas en naranjo), gerencia ve el botón <b>🔀 Pasar a recintos</b>. Ahí revisa producto por producto a qué recinto pasa cada saldo y los traslada. Se hace una sola vez.',
     'Las <b>jefaturas de predio</b> entran a esta pantalla en <b>solo lectura</b>: ven el stock y la conciliación, pero no editan celdas ni mueven productos.',
     'Usa la vista de escritorio (botón 🖥️) para esta pantalla; en el celular la planilla queda apretada.'
   ]
@@ -7784,6 +8183,7 @@ const MANUAL_SECCIONES=[
     '<b>Costos del personal</b> (gerencia con todos los predios): sueldo mínimo mensual, bono o extra fijo y jornada semanal. De ahí sale el costo por hora de los informes; actualízalo cuando cambie el sueldo mínimo legal.',
     '<b>Usuarios del sistema</b> (gerencia con todos los predios): se crea un acceso por persona, con su correo, una contraseña inicial que tú le entregas, el rol y los predios. Al elegir el rol, la app explica en una línea qué podrá hacer esa persona.',
     '<b>Corregir un usuario:</b> en la lista, el lápiz ✏️ abre la edición de rol, predios y nombre. El cambio se aplica la próxima vez que esa persona inicie sesión. Si tiene la app abierta, debe cerrar sesión y volver a entrar.',
+    '<b>📦 Recintos a cargo y 🛒 compras</b> (v44): con el ✏️ del usuario se marcan los recintos de bodega de los que es responsable y si registra compras. En sus recintos puede despachar, confirmar lo que le llega y ajustar por conteo. Los encargados de caseta con rol de riego siguen entrando a Aplicaciones, y además ven Bodega.',
     '<b>🍃 Puede registrar desinfecciones foliares:</b> casilla aparte del rol, tanto al crear como al editar. Le habilita la pestaña Foliar de Aplicaciones en sus predios, sin quitarle nada de lo suyo. Es lo que se usa para los jefes de predio y el subjefe que hacen las desinfecciones. En la lista de usuarios aparecen marcados con 🍃.'
   ],
   tips:[
@@ -7800,8 +8200,9 @@ const MANUAL_SECCIONES=[
     '<b>Admin / Gerencia:</b> con "Todos los predios" es superadmin: crea usuarios, edita costos y puede borrar registros. Acotado a un predio, manda solo en ese predio.',
     '<b>Jefe de predio:</b> registra y corrige en sus predios y ve todos los informes. No entra a bodega ni a usuarios.',
     '<b>Subjefe:</b> trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
-    '<b>Encargado de bodega:</b> solo la planilla de bodega de las bodegas que tenga a cargo: stock, despachos y conciliación. No registra aplicaciones. El de La Constancia, además, crea productos, edita precios y registra compras.',
-    '<b>Encargado de riego:</b> registra fertirriego y vía riego de sus predios. No ve foliares, ni la planilla, ni el informe de gasto.',
+    '<b>Encargado de bodega:</b> planilla de bodega de todos los recintos: catálogo, precios, stock, despachos y conciliación. No registra aplicaciones. Confirma lo que llega a sus recintos.',
+    '<b>Encargado de riego:</b> registra fertirriego, vía riego y ácidos de sus predios. Si es responsable de la Caseta de Riego, además ve Bodega, confirma lo que le despachan y ajusta el stock de su caseta.',
+    '<b>Permisos extra</b>, aparte del rol: <b>📦 recintos a cargo</b> (despachar, recibir y ajustar en esos recintos), <b>🛒 compras</b> (registrar compras a cualquier recinto) y <b>🍃 desinfecciones</b>.',
     '<b>Jefe de desinfecciones:</b> registra solo aplicaciones foliares de sus predios.',
     '<b>Informes de gasto:</b> solo el informe de gasto de los predios asignados, sin acceso a campo, aplicaciones ni bodega.',
     '<b>Asesor BPA:</b> solo lectura. Ve las aplicaciones registradas de sus predios. No registra ni modifica nada.'
