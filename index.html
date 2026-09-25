@@ -991,7 +991,9 @@ const colUsers    = () => db.collection('users');
 // APP STATE
 // ══════════════════════════════════════════════
 const today    = new Date();
-const todayIso = today.toISOString().slice(0,10);
+// v48 · Fecha LOCAL. Con toISOString() (UTC), desde las 21:00 en Chile (20:00
+// en invierno) la app proponía la fecha de mañana en todos los formularios.
+const todayIso = new Date(today.getTime()-today.getTimezoneOffset()*60000).toISOString().slice(0,10);
 let activePred = 'transito';
 let selDate    = todayIso;
 let semOffset  = 0;  // 0=semana actual, -1=semana anterior, -2=dos semanas atrás
@@ -1297,7 +1299,7 @@ function canVerPantalla(name){
 }
 
 function weekDates(){
-  const d=new Date(today),dow=d.getDay(),mon=new Date(d);
+  const d=new Date(todayIso+'T12:00:00'),dow=d.getDay(),mon=new Date(d);   // v48 · mediodía local: sin corrimiento de día por UTC
   mon.setDate(d.getDate()-(dow===0?6:dow-1)+(semOffset*7));
   return Array.from({length:5},(_,i)=>{const dd=new Date(mon);dd.setDate(mon.getDate()+i);return dd.toISOString().slice(0,10)});
 }
@@ -3378,15 +3380,18 @@ async function renderAplList(){
       }else if(a.tipo==='fertirriego' && a.subtipo==='acido'){
         // v43 · Estanque de ácido
         etiqueta='⚗️';
-        const ac=ACIDOS[a.acido]||{nombre:a.acido||'Ácido'};
-        receta=`${escH(ac.nombre)} ${fmtNum(a.kgAcido)} kg (${fmtNum(a.litrosAcido,1)} L) en ${fmtNum(a.capacidad,0)} L`;
+        // v48 · directo del bidón, mezcla nítrico + fosfórico o (v43) diluido en agua
+        if(a.modo==='mezcla') receta='Mezcla '+(a.acidos||[]).map(x=>`${escH((ACIDOS[x.acido]||{}).corto||x.nombre||x.acido)} ${fmtNum(x.kg)} kg (${fmtNum(x.litros,1)} L)`).join(' + ')+` = ${fmtNum(a.capacidad,1)} L`;
+        else if(a.modo==='directo') receta=`${escH(nombreAcido(a.acido))} directo del bidón · ${fmtNum(a.litrosAcido,2)} L (${fmtNum(a.kgAcido,1)} kg)`;
+        else receta=`${escH(nombreAcido(a.acido))} ${fmtNum(a.kgAcido)} kg (${fmtNum(a.litrosAcido,1)} L) en ${fmtNum(a.capacidad,0)} L`;
         const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
         sub=usosDe(a).map(u=>`${escH(fD(u.fecha))}: `+((u.acidoSectores&&u.acidoSectores.length)
             ? u.acidoSectores.map(x=>`${escH(x.sector)} ${fmtNum(x.lAcido,1)} L${x.lHa!=null?` (<span style="${x.lHa>ACIDO_MAX_LHA_DIA?'color:var(--red);font-weight:700':''}">${fmtNum(x.lHa,2)} L/ha</span>)`:''}`).join(', ')
             : (u.sectores||[]).map(x=>escH(x.sector)).join(', '))).join(' · ');
         const disp=litrosDisponibles(a);
         const dispTxt = estanqueAbierto(a) ? ` · <b style="color:#2E7D32">quedan ${fmtNum(disp,0)}L</b>` : (a.cerrado?' · cerrado':'');
-        totalTxt=`${escH(pred)}${a.cultivo?' · '+escH(a.cultivo):''}${a.epoca?' · '+(TNAMES[a.epoca]||a.epoca):''} · ${fmtNum(a.totalLitros,0)}L de solución aplicados${dispTxt}`;
+        const queL = a.modo==='directo' ? 'de ácido' : a.modo==='mezcla' ? 'de mezcla' : 'de solución';
+        totalTxt=`${escH(pred)}${a.cultivo?' · '+escH(a.cultivo):''}${a.epoca?' · '+(TNAMES[a.epoca]||a.epoca):''} · ${fmtNum(a.totalLitros,a.modo?1:0)}L ${queL} aplicados${dispTxt}`;
         if(usosDe(a).some(u=>u.alarmaAcido)) sub+=`<div style="background:#FEE2E2;color:var(--red);border-radius:6px;padding:3px 8px;margin-top:4px;font-size:10.5px;font-weight:600">⚠️ Sobre ${ACIDO_MAX_LHA_DIA} L/ha en un día</div>`;
       }else if(a.tipo==='fertirriego'){
         etiqueta='🧪';
@@ -3514,10 +3519,23 @@ async function aplEditar(id){
 
     if(tipo==='fertirriego' && a.subtipo==='acido'){
       // v43 · Estanque de ácido: se reabre en su propio formulario.
-      aplAci={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
-        acido:a.acido||'fosforico', kg:String(a.kgAcido!=null?a.kgAcido:''), volumen:String(a.capacidad!=null?a.capacidad:''),
-        prodSel:((a.sales||[])[0]||{}).productoId||'', litros:{} };
-      (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) aplAci.litros[String(x.sector)]=String(x.litros!=null?x.litros:''); });
+      // v48 · Un registro v43 (ácido disuelto en agua) se reabre como "directo",
+      // con los litros de ácido puro que llegaron a cada sector.
+      aplAci=nuevoAcidoForm(a.predioId||'');
+      Object.assign(aplAci, {fecha:a.fecha||todayIso, cultivo:a.cultivo||'', epoca:a.epoca||''});
+      aplAci.modo = a.modo==='mezcla' ? 'mezcla' : 'directo';
+      (a.sales||[]).forEach(sl=>{ const k=ACIDOS_ORDEN.find(z=>ACIDOS[z].nombre===sl.nombre); if(k && sl.productoId) aplAci.prodSel[k]=sl.productoId; });
+      if(aplAci.modo==='mezcla'){
+        (a.acidos||[]).forEach(x=>{ if(ACIDOS[x.acido]) aplAci.kg[x.acido]=String(x.kg!=null?x.kg:''); });
+        (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) aplAci.litros[String(x.sector)]=String(x.litros!=null?x.litros:''); });
+      }else{
+        aplAci.acido = ACIDOS[a.acido] ? a.acido : 'nitrico';
+        if(a.modo==='directo') (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) aplAci.litros[String(x.sector)]=String(x.litros!=null?x.litros:''); });
+        else {
+          const f=sumaPorL(porLDeDoc(a));
+          (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) aplAci.litros[String(x.sector)]=String(Math.round((Number(x.litros)||0)*f*100)/100); });
+        }
+      }
     }else if(tipo==='foliar'){
       // v40 · Al corregir se conserva la bodega desde la que se descontó: si no,
       // la corrección devolvería el stock a una bodega y lo sacaría de otra.
@@ -3877,8 +3895,7 @@ function usoRenderCalc(){
     </div>` : '';
   // v43 · Estanque de ácido: litros de ácido por hectárea en cada sector.
   if(a.subtipo==='acido' && tot>0){
-    box.innerHTML += acidoSectoresHTML(acidoPorSector(a.predioId, a.acido, usoEdit.fecha||todayIso,
-      acidoLporLsol(Number(a.kgAcido), Number(a.capacidad), Number(a.densidad)||ACIDOS[a.acido].densidad), usoEdit.litros, null));
+    box.innerHTML += acidoSectoresHTML(acidoPorSector(a.predioId, usoEdit.fecha||todayIso, porLDeDoc(a), usoEdit.litros, null));
   }
 }
 
@@ -3926,10 +3943,9 @@ async function guardarUsoEstanque(){
   // v43 · Ácido: alarma si supera el máximo por hectárea en el día.
   let acidoSecs=null;
   if(a.subtipo==='acido'){
-    acidoSecs=acidoPorSector(a.predioId, a.acido, usoEdit.fecha||todayIso,
-      acidoLporLsol(Number(a.kgAcido), Number(a.capacidad), Number(a.densidad)||ACIDOS[a.acido].densidad), usoEdit.litros, null);
+    acidoSecs=acidoPorSector(a.predioId, usoEdit.fecha||todayIso, porLDeDoc(a), usoEdit.litros, null);
     const malos=acidoSecs.filter(x=>x.alarma);
-    if(malos.length && !confirm(acidoTextoAlarma(malos, a.acido))) return;
+    if(malos.length && !confirm(acidoTextoAlarma(malos))) return;
   }
   // El descuento del día es proporcional a los litros aplicados hoy.
   const desc=(a.sales||[]).filter(s=>s.productoId).map(s=>{
@@ -3943,7 +3959,7 @@ async function guardarUsoEstanque(){
   try{
     const nuevoUso={
       fecha: usoEdit.fecha||todayIso, litros: tot, sectores, descontado: desc, consumo: consumoU, historico: histU,
-      ...(acidoSecs ? {acidoSectores: acidoSecs.map(x=>({sector:x.sector, litrosSol:x.litrosSol, lAcido:x.lAcido, lHa:x.lHa})),
+      ...(acidoSecs ? {acidoSectores: acidoSecs.map(acidoFilaGuardada),
                        alarmaAcido: acidoSecs.some(x=>x.alarma)} : {}),
       registradoPor: currentUser.uid,
       registradoPorNombre: (currentProfile&&currentProfile.nombre)||currentUser.email,
@@ -4186,50 +4202,71 @@ async function guardarRiego(){
 }
 
 // ══════════════════════════════════════════════
-// v43 · ÁCIDOS (fosfórico y nítrico)
+// v43 · ÁCIDOS (fosfórico y nítrico) — rehecho en la v48
 //
-// El ácido se compra y se carga por KILOS, disuelto en un estanque cuyo volumen
-// cambia de una vez a otra. Lo que interesa controlar es cuántos LITROS de
-// ácido llegan a cada sector por hectárea en un día: sobre 4 L/ha/día hay
-// alarma. Paso de kg a L con la densidad: nítrico 1,40 y fosfórico 1,68 kg/L.
+// Los ácidos NO se disuelven en agua: se aplican puros.
+//   · Un solo ácido → sale directo del bidón. Se anotan los LITROS DE ÁCIDO
+//     aplicados en cada sector (modo 'directo'). No hay estanque ni ➕ Seguir.
+//   · Nítrico + fosfórico → se mezclan en un estanque, sin agua (modo
+//     'mezcla'). Se anotan los KILOS de cada ácido cargados y, por sector, los
+//     LITROS DE MEZCLA aplicados. El volumen de la mezcla es la suma de los
+//     volúmenes de cada ácido (kg / densidad). Si sobra, el estanque queda
+//     abierto y se sigue con ➕ Seguir.
+// Densidades (dadas por Rafael): nítrico 1,40 y fosfórico 1,68 kg/L.
 //
-//   L de ácido por L de solución = (kg / densidad) / volumen del estanque
-//   L de ácido del sector        = L de solución aplicados × lo anterior
-//   L/ha del día                 = Σ L de ácido del sector ese día / ha del sector
+// porL[ácido] = L de ese ácido por cada L de líquido aplicado:
+//   directo → 1 · mezcla → V_ácido / V_mezcla
+//   (documentos v43, 'diluido' en agua → (kg / densidad) / volumen del estanque)
 //
-// Se guarda como un estanque de fertirriego más (tipo 'fertirriego',
-// subtipo 'acido'). Así hereda lo de la v41 —un estanque que dura varios días,
-// "➕ Seguir", "Cerrar estanque"—, el informe de gasto, la conciliación y las
-// reglas de Firestore, sin tocarlas.
+// ALARMA: la SUMA de los dos ácidos no puede pasar de 4 L/ha en un día en un
+// sector, sumando todo lo registrado ese día (otros registros, otros estanques).
+//
+// Se guarda como fertirriego (tipo 'fertirriego', subtipo 'acido'), así hereda
+// el informe de gasto, la conciliación, ➕ Seguir y las reglas de Firestore.
 // ══════════════════════════════════════════════
 const ACIDOS={
-  fosforico:{nombre:'Ácido fosfórico', densidad:1.68, alias:['ACIDO FOSFORICO','AC FOSFORICO','AC. FOSFORICO','FOSFORICO','H3PO4']},
-  nitrico:  {nombre:'Ácido nítrico',   densidad:1.40, alias:['ACIDO NITRICO','AC NITRICO','AC. NITRICO','NITRICO','HNO3']}
+  fosforico:{nombre:'Ácido fosfórico', corto:'fosfórico', densidad:1.68, alias:['ACIDO FOSFORICO','AC FOSFORICO','AC. FOSFORICO','FOSFORICO','H3PO4']},
+  nitrico:  {nombre:'Ácido nítrico',   corto:'nítrico',   densidad:1.40, alias:['ACIDO NITRICO','AC NITRICO','AC. NITRICO','NITRICO','HNO3']}
 };
+const ACIDOS_ORDEN=['nitrico','fosforico'];
 const ACIDO_MAX_LHA_DIA=4;
 let aplAci=null;
 let aplDocsCache=[];
 
 function nuevoAcidoForm(pid){
-  return {fecha:todayIso, predioId:pid||'', cultivo:'', epoca:'', acido:'fosforico', kg:'', volumen:'', prodSel:'', litros:{}};
+  return {fecha:todayIso, predioId:pid||'', cultivo:'', epoca:'', modo:'directo', acido:'nitrico',
+          kg:{nitrico:'', fosforico:''}, prodSel:{nitrico:'', fosforico:''}, litros:{}};
 }
 function acidoLporLsol(kg, vol, dens){ return (kg>0 && vol>0 && dens>0) ? (kg/dens)/vol : 0; }
+function nombreAcido(k){ return (ACIDOS[k]&&ACIDOS[k].nombre) || (k==='mezcla'?'Mezcla de ácidos':(k||'Ácido')); }
 
-// Producto de bodega del ácido: el elegido a mano o el que calce por nombre.
-function acidoProducto(){
-  const ac=ACIDOS[aplAci.acido];
-  if(aplAci.prodSel) return productosCache.find(p=>p.id===aplAci.prodSel)||null;
+// L de cada ácido por L de líquido aplicado, según cómo se guardó el documento.
+function porLDeDoc(a){
+  if(a && a.porL && typeof a.porL==='object') return a.porL;
+  // v43: un ácido disuelto en agua.
+  const k=a&&a.acido; if(!ACIDOS[k]) return {};
+  return {[k]: acidoLporLsol(Number(a.kgAcido), Number(a.capacidad), Number(a.densidad)||ACIDOS[k].densidad)};
+}
+function sumaPorL(porL){ return Object.keys(porL||{}).reduce((s,k)=>s+(Number(porL[k])||0),0); }
+
+// Producto de bodega de un ácido: el elegido a mano o el que calce por nombre.
+function acidoProducto(k){
+  const ac=ACIDOS[k]; if(!ac) return null;
+  const sel=aplAci.prodSel&&aplAci.prodSel[k];
+  if(sel) return productosCache.find(p=>p.id===sel)||null;
   const c=candidatosSal({nombre:ac.nombre, alias:ac.alias}, recintoCaseta(aplAci.predioId));
   return c[0]||null;
 }
+// Ácidos que entran en el registro que se está llenando.
+function acidosDelForm(){ return aplAci.modo==='mezcla' ? ACIDOS_ORDEN.slice() : [aplAci.acido]; }
 
-// Litros de ácido que ya se aplicaron ese día en ese sector, con el mismo
-// ácido, en OTROS estanques (o en otros días del mismo). Sale de lo cargado en
+// Litros de ácido (nítrico + fosfórico) ya aplicados ese día en ese sector en
+// OTROS registros (o en otros días del mismo estanque). Sale de lo cargado en
 // "Últimas aplicaciones".
-function acidoPrevioDia(predioId, acido, fecha, sector, excluirDocId, excluirUsoIdx){
+function acidoPrevioDia(predioId, fecha, sector, excluirDocId, excluirUsoIdx){
   let tot=0;
   (aplDocsCache||[]).forEach(d=>{
-    if(d.subtipo!=='acido' || d.acido!==acido || d.predioId!==predioId) return;
+    if(d.subtipo!=='acido' || d.predioId!==predioId) return;
     usosDe(d).forEach((u,i)=>{
       if(u.fecha!==fecha) return;
       if(d.id===excluirDocId && (excluirUsoIdx==null || excluirUsoIdx===i)) return;
@@ -4239,46 +4276,63 @@ function acidoPrevioDia(predioId, acido, fecha, sector, excluirDocId, excluirUso
   return tot;
 }
 
-// Filas por sector: litros de solución, litros de ácido, L/ha del día y alarma.
-function acidoPorSector(predioId, acido, fecha, lPorL, litrosMap, excluirDocId, excluirUsoIdx){
+// Filas por sector: litros aplicados, litros de cada ácido, L/ha del día y alarma.
+function acidoPorSector(predioId, fecha, porL, litrosMap, excluirDocId, excluirUsoIdx){
+  const f=sumaPorL(porL);
   return Object.keys(litrosMap||{}).filter(sx=>num(litrosMap[sx])>0).map(sx=>{
     const litrosSol=num(litrosMap[sx]);
-    const lAcido=litrosSol*lPorL;
+    const porAcido={};
+    Object.keys(porL||{}).forEach(k=>{ porAcido[k]=litrosSol*(Number(porL[k])||0); });
+    const lAcido=litrosSol*f;
     const ha=haSector(predioId, sx);
-    const previo=acidoPrevioDia(predioId, acido, fecha, sx, excluirDocId, excluirUsoIdx);
+    const previo=acidoPrevioDia(predioId, fecha, sx, excluirDocId, excluirUsoIdx);
     const lHa = (ha && ha>0) ? lAcido/ha : null;
     const lHaDia = (ha && ha>0) ? (lAcido+previo)/ha : null;
-    return {sector:String(sx), litrosSol, lAcido, ha, lHa, previo, lHaDia,
+    return {sector:String(sx), litrosSol, lAcido, porAcido, ha, lHa, previo, lHaDia,
             alarma: lHaDia!=null && lHaDia>ACIDO_MAX_LHA_DIA+1e-9};
   });
 }
+function acidoFilaGuardada(x){
+  const o={sector:x.sector, litrosSol:x.litrosSol, lAcido:x.lAcido, lHa:x.lHa};
+  if(x.porAcido && Object.keys(x.porAcido).length>1) o.porAcido=x.porAcido;
+  return o;
+}
 function acidoSectoresHTML(filas){
   if(!filas.length) return '';
-  return `<div class="sec-div">Ácido por sector (máx. ${ACIDO_MAX_LHA_DIA} L/ha/día)</div>`+filas.map(x=>`
+  const mezcla=filas.some(x=>x.porAcido && Object.keys(x.porAcido).length>1);
+  return `<div class="sec-div">Ácido por sector (máx. ${ACIDO_MAX_LHA_DIA} L/ha/día, nítrico + fosfórico)</div>`+filas.map(x=>`
     <div style="display:flex;gap:6px;font-size:11.5px;padding:3px 6px;border-radius:6px;margin-bottom:2px;${x.alarma?'background:#FEE2E2;color:var(--red);font-weight:700':''}">
       <span style="flex:1">${escH(x.sector)}</span>
       <span>${fmtNum(x.lAcido,2)} L</span>
       <span style="width:118px;text-align:right">${x.lHa==null?'<span style="color:#B45309">sin superficie</span>':fmtNum(x.lHaDia,2)+' L/ha/día'}</span>
     </div>
-    ${x.previo>0?`<div style="font-size:10px;color:var(--muted);padding-left:6px;margin-bottom:2px">incluye ${fmtNum(x.previo,2)} L ya registrados ese día</div>`:''}`).join('')
-    + (filas.some(x=>x.alarma)?`<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:4px">⚠️ Sobre ${ACIDO_MAX_LHA_DIA} L/ha en el día. Revisa la dosis antes de guardar.</div>`:'');
+    ${mezcla?`<div style="font-size:10px;color:var(--muted);padding-left:6px;margin-bottom:2px">${ACIDOS_ORDEN.filter(k=>x.porAcido[k]!=null).map(k=>`${ACIDOS[k].corto} ${fmtNum(x.porAcido[k],2)} L`).join(' + ')}</div>`:''}
+    ${x.previo>0?`<div style="font-size:10px;color:var(--muted);padding-left:6px;margin-bottom:2px">incluye ${fmtNum(x.previo,2)} L de ácido ya registrados ese día</div>`:''}`).join('')
+    + (filas.some(x=>x.alarma)?`<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:4px">⚠️ Sobre ${ACIDO_MAX_LHA_DIA} L/ha de ácido en el día. Revisa la dosis antes de guardar.</div>`:'');
 }
-function acidoTextoAlarma(malos, acido){
-  return `⚠️ ALARMA ${ACIDOS[acido].nombre.toUpperCase()}\n\n`+
+function acidoTextoAlarma(malos){
+  return `⚠️ ALARMA ÁCIDO (nítrico + fosfórico)\n\n`+
     malos.map(x=>`• ${x.sector}: ${fmtNum(x.lHaDia,2)} L/ha en el día`).join('\n')+
-    `\n\nEl máximo es ${ACIDO_MAX_LHA_DIA} L/ha por día.\n\n¿Guardar igual? (quedará marcado con la alarma)`;
+    `\n\nEl máximo es ${ACIDO_MAX_LHA_DIA} L/ha por día, sumando los dos ácidos.\n\n¿Guardar igual? (quedará marcado con la alarma)`;
 }
 
 function renderAcidoForm(){
   const box=document.getElementById('aplBody'); if(!box) return;
   if(!aplAci) aplAci=nuevoAcidoForm('');
-  const A=aplAci, ac=ACIDOS[A.acido];
+  const A=aplAci, mezcla=A.modo==='mezcla';
   const predOpts=`<option value="">— predio —</option>`+prediosPermitidos().map(k=>`<option value="${k}"${k===A.predioId?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('');
   const cultList = cultivosCache.length ? cultivosCache.map(c=>c.nombre) : ['tomate','pimentón','especialidades'];
   const cultOpts=`<option value="">— cultivo (opcional) —</option>`+cultList.map(c=>`<option value="${escH(c)}"${c===A.cultivo?' selected':''}>${escH(c)}</option>`).join('');
-  const prod=acidoProducto();
-  const prodOpts=`<option value="">— sin descontar —</option>`+productosCache.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')))
-      .map(p=>`<option value="${p.id}"${prod&&p.id===prod.id?' selected':''}>${escH(p.nombre)}</option>`).join('');
+  const prodsOrden=productosCache.slice().sort((a,b)=>String(a.nombre||'').localeCompare(String(b.nombre||'')));
+  const prodFila=k=>{
+    const prod=acidoProducto(k);
+    const opts=`<option value="">— sin descontar —</option>`+prodsOrden.map(p=>`<option value="${p.id}"${prod&&p.id===prod.id?' selected':''}>${escH(p.nombre)}</option>`).join('');
+    return `<div style="display:flex;gap:6px;align-items:center;margin:2px 0">
+        <span style="font-size:10px;color:var(--muted);white-space:nowrap">↳ ${mezcla?escH(ACIDOS[k].corto)+' ':''}descuenta de</span>
+        <select onchange="aciSetProd('${k}',this.value)" style="flex:1;font-size:11px;padding:3px 5px">${opts}</select>
+      </div>
+      ${prod?'':`<div style="font-size:10.5px;color:var(--red);font-weight:700">No se encontró el ${escH(ACIDOS[k].corto)} en bodega: elige el producto o no se descontará stock.</div>`}`;
+  };
   const secs=A.predioId?sectoresDePredio(A.predioId):[];
   const secH = !A.predioId ? '<p style="font-size:11px;color:var(--muted)">Elige el predio para ver sus sectores.</p>'
     : !secs.length ? '<p style="font-size:11px;color:var(--muted)">Este predio no tiene sectores cargados.</p>'
@@ -4289,71 +4343,92 @@ function renderAcidoForm(){
           <input type="text" inputmode="decimal" placeholder="L" value="${escH(String(A.litros[sx]!=null?A.litros[sx]:''))}" oninput="aciSetLitros(${i},this.value)" style="width:80px;text-align:right">
         </div>`;
       }).join('');
+  const lab=t=>`<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">${t}</label>`;
+  const btnModo=(m,txt)=>`<button type="button" class="btn btn-sm" onclick="aciSet('modo','${m}')" style="flex:1;min-width:130px;${A.modo===m?'background:var(--dark);color:#fff':'background:var(--sand);color:var(--dark)'}">${txt}</button>`;
+  const cargaH = mezcla ? `
+    <div class="sec-div">Estanque de mezcla (sin agua)</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      ${ACIDOS_ORDEN.map(k=>`<div style="flex:1;min-width:120px">${lab(`Kilos de ${ACIDOS[k].corto} cargados`)}<input type="text" inputmode="decimal" placeholder="Ej: 70" value="${escH(String(A.kg[k]||''))}" oninput="aciSetKg('${k}',this.value)"></div>`).join('')}
+    </div>
+    ${ACIDOS_ORDEN.map(prodFila).join('')}
+    <div id="aciConc" style="font-size:11px;color:#2E7D32;margin:4px 0"></div>
+    <div class="sec-div">Litros de mezcla aplicados hoy, por sector</div>` : `
+    <div style="margin-top:6px">${lab('Ácido')}<select onchange="aciSet('acido',this.value)">
+      ${ACIDOS_ORDEN.map(k=>`<option value="${k}"${k===A.acido?' selected':''}>${escH(ACIDOS[k].nombre)} (${fmtNum(ACIDOS[k].densidad,2)} kg/L)</option>`).join('')}
+    </select></div>
+    ${prodFila(A.acido)}
+    <div id="aciConc"></div>
+    <div class="sec-div">Litros de ácido aplicados hoy, por sector (directo del bidón)</div>`;
   box.innerHTML=`
     <div class="form-row"><label>Fecha</label><input type="date" value="${A.fecha}" onchange="aciSet('fecha',this.value);aplActualizarHist()"></div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aciSet('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts}</select></div>
-      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Ácido</label><select onchange="aciSet('acido',this.value)">
-        ${Object.keys(ACIDOS).map(k=>`<option value="${k}"${k===A.acido?' selected':''}>${escH(ACIDOS[k].nombre)} (${fmtNum(ACIDOS[k].densidad,2)} kg/L)</option>`).join('')}
-      </select></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+      ${btnModo('directo','🛢️ Un ácido (directo)')}
+      ${btnModo('mezcla','⚗️ Nítrico + fosfórico')}
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aciSet('cultivo',this.value)">${cultOpts}</select></div>
-      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">${esCultivoPim(A.cultivo)?'Mes de plantación':'Época'}</label><select onchange="aciSet('epoca',this.value)">${epocaOptsHTML(A.cultivo, A.epoca)}</select></div>
+      <div style="flex:1;min-width:120px">${lab('Predio')}<select onchange="aciSet('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts}</select></div>
     </div>
-    <div class="sec-div">Estanque</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Kilos de ácido cargados</label><input type="text" inputmode="decimal" placeholder="Ej: 50" value="${escH(String(A.kg))}" oninput="aciSet('kg',this.value)"></div>
-      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Volumen del estanque (L)</label><input type="text" inputmode="decimal" placeholder="Ej: 500" value="${escH(String(A.volumen))}" oninput="aciSet('volumen',this.value)"></div>
+      <div style="flex:1;min-width:120px">${lab('Cultivo')}<select onchange="aciSet('cultivo',this.value)">${cultOpts}</select></div>
+      <div style="flex:1;min-width:120px">${lab(esCultivoPim(A.cultivo)?'Mes de plantación':'Época')}<select onchange="aciSet('epoca',this.value)">${epocaOptsHTML(A.cultivo, A.epoca)}</select></div>
     </div>
-    <div style="display:flex;gap:6px;align-items:center;margin:4px 0 2px">
-      <span style="font-size:10px;color:var(--muted);white-space:nowrap">↳ descuenta de</span>
-      <select onchange="aciSet('prodSel',this.value)" style="flex:1;font-size:11px;padding:3px 5px">${prodOpts}</select>
-    </div>
-    ${prod?'':'<div style="font-size:10.5px;color:var(--red);font-weight:700">No se encontró el ácido en bodega: elige el producto o no se descontará stock.</div>'}
-    <div id="aciConc" style="font-size:11px;color:#2E7D32;margin:4px 0"></div>
-    <div class="sec-div">Litros de solución del estanque aplicados hoy, por sector</div>
+    ${cargaH}
     ${secH}
     <div id="aciCalc"></div>
-    ${aplBotonGuardar('guardarAcido()','Registrar estanque de ácido')}
-    ${aplEdit?'':'<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Si sobra solución, el estanque queda abierto y los días siguientes se registran con ➕ Seguir en Últimas aplicaciones.</div>'}`;
+    ${aplBotonGuardar('guardarAcido()', mezcla?'Registrar mezcla de ácidos':'Registrar ácido')}
+    ${aplEdit||!mezcla?'':'<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Si sobra mezcla, el estanque queda abierto y los días siguientes se registran con ➕ Seguir en Últimas aplicaciones.</div>'}`;
   aciRenderCalc();
 }
 function aciSet(campo,val){
   const cultAntes=aplAci.cultivo;
   aplAci[campo]=val;
-  if(campo==='predioId'){ aplAci.litros={}; aplAci.prodSel=''; renderAcidoForm(); return; }
-  if(campo==='acido'){ aplAci.prodSel=''; renderAcidoForm(); return; }
-  if(campo==='prodSel'){ renderAcidoForm(); return; }
+  if(campo==='predioId'){ aplAci.litros={}; aplAci.prodSel={nitrico:'',fosforico:''}; renderAcidoForm(); return; }
+  if(campo==='acido'||campo==='modo'){ renderAcidoForm(); return; }
   if(campo==='cultivo'){
     if(!epocaCompatible(aplAci.epoca,val)) aplAci.epoca='';
     if(esCultivoPim(val)!==esCultivoPim(cultAntes) || !aplAci.epoca) renderAcidoForm();
     return;
   }
-  if(campo==='kg'||campo==='volumen') aciRenderCalc();
+  if(campo==='fecha') aciRenderCalc();
 }
+function aciSetKg(k,val){ aplAci.kg[k]=val; aciRenderCalc(); }
+function aciSetProd(k,val){ aplAci.prodSel[k]=val; renderAcidoForm(); }
 function aciSetLitros(i,val){
   const sx=sectoresDePredio(aplAci.predioId)[i]; if(sx==null) return;
   aplAci.litros[sx]=val; aciRenderCalc();
 }
 function aciCalc(){
-  const A=aplAci, ac=ACIDOS[A.acido];
-  const kg=num(A.kg), vol=num(A.volumen);
-  const lPorL=acidoLporLsol(kg, vol, ac.densidad);
+  const A=aplAci, mezcla=A.modo==='mezcla';
+  const comps=acidosDelForm().map(k=>{
+    const d=ACIDOS[k].densidad;
+    if(!mezcla) return {acido:k, densidad:d, kg:null, litros:null};
+    const kg=num(A.kg[k]); return {acido:k, densidad:d, kg, litros:kg>0?kg/d:0};
+  });
+  let porL={}, vol=null;
+  if(mezcla){
+    vol=comps.reduce((s,c)=>s+c.litros,0);
+    comps.forEach(c=>{ porL[c.acido]= vol>0 ? c.litros/vol : 0; });
+  }else porL={[A.acido]:1};
   const excl = aplEdit ? aplEdit.id : null;
-  const filas=acidoPorSector(A.predioId, A.acido, A.fecha, lPorL, A.litros, excl, excl?0:null);
+  const filas=acidoPorSector(A.predioId, A.fecha, porL, A.litros, excl, excl?0:null);
   const totalSol=filas.reduce((s,x)=>s+x.litrosSol,0);
-  return {kg, vol, lAcidoEst: kg>0?kg/ac.densidad:0, lPorL, filas, totalSol};
+  if(!mezcla){ comps[0].litros=totalSol; comps[0].kg=totalSol*comps[0].densidad; }
+  return {mezcla, comps, porL, vol, filas, totalSol};
 }
 function aciRenderCalc(){
-  const r=aciCalc(), ac=ACIDOS[aplAci.acido];
+  const r=aciCalc();
   const c=document.getElementById('aciConc');
-  if(c) c.innerHTML = (r.kg>0) ? `${fmtNum(r.kg,2)} kg = <b>${fmtNum(r.lAcidoEst,2)} L</b> de ${escH(ac.nombre.toLowerCase())}${r.vol>0?` · ${fmtNum(r.lPorL*1000,2)} mL de ácido por L de solución`:''}` : '';
+  if(c) c.innerHTML = (r.mezcla && r.vol>0)
+    ? r.comps.map(x=>`${escH(ACIDOS[x.acido].corto)} ${fmtNum(x.kg,2)} kg = <b>${fmtNum(x.litros,2)} L</b> (${fmtNum(r.porL[x.acido]*100,0)}%)`).join(' · ')+`<br>Mezcla: <b>${fmtNum(r.vol,1)} L</b>`
+    : '';
   const box=document.getElementById('aciCalc'); if(!box) return;
-  if(!(r.lPorL>0) || !r.filas.length){ box.innerHTML=''; return; }
-  box.innerHTML = acidoSectoresHTML(r.filas) + `<div style="font-size:11px;color:var(--dark);margin-top:6px">
-    <b>${fmtNum(r.totalSol,0)} L</b> de solución · <b>${fmtNum(r.totalSol*r.lPorL,2)} L</b> de ácido (${fmtNum(r.totalSol*r.lPorL*ac.densidad,2)} kg)
-    ${r.vol>0&&r.totalSol>r.vol+0.5?'<br><span style="color:var(--red)">Aplicaste más litros de los que tiene el estanque.</span>':''}</div>`;
+  if(!r.filas.length || (r.mezcla && !(r.vol>0))){ box.innerHTML=''; return; }
+  box.innerHTML = acidoSectoresHTML(r.filas) + `<div style="font-size:11px;color:var(--dark);margin-top:6px">`+
+    (r.mezcla
+      ? `<b>${fmtNum(r.totalSol,1)} L</b> de mezcla: ${r.comps.map(x=>`${escH(ACIDOS[x.acido].corto)} ${fmtNum(r.totalSol*r.porL[x.acido],2)} L (${fmtNum(r.totalSol*r.porL[x.acido]*x.densidad,2)} kg)`).join(' + ')}
+         ${r.totalSol>r.vol+0.5?'<br><span style="color:var(--red)">Aplicaste más litros de los que tiene el estanque.</span>':''}`
+      : `<b>${fmtNum(r.totalSol,2)} L</b> de ${escH(ACIDOS[r.comps[0].acido].corto)} = ${fmtNum(r.comps[0].kg,2)} kg`)
+    +`</div>`;
 }
 
 async function guardarAcido(){
@@ -4364,44 +4439,59 @@ async function guardarAcido(){
     if(!canAplicRiego()){ toast('Sin permiso'); return; }
     if(!canAplicEnPredio(aplAci.predioId)){ toast('⚠️ Solo puedes registrar en tu predio'); return; }
   }
-  const A=aplAci, ac=ACIDOS[A.acido];
+  const A=aplAci;
   if(!A.predioId){ toast('⚠️ Elige el predio'); return; }
   if(A.epoca && !epocaCompatible(A.epoca, A.cultivo)){ toast('⚠️ La época no corresponde al cultivo: vuelve a elegirla'); return; }
   const r=aciCalc();
-  if(!(r.kg>0)){ toast('⚠️ Indica los kilos de ácido cargados'); return; }
-  if(!(r.vol>0)){ toast('⚠️ Indica el volumen del estanque'); return; }
-  if(!(r.totalSol>0)){ toast('⚠️ Anota los litros aplicados en al menos un sector'); return; }
-  if(r.totalSol>r.vol+0.5 && !confirm(`Aplicaste ${fmtNum(r.totalSol,0)} L y el estanque tiene ${fmtNum(r.vol,0)} L.\n\n¿Guardar igual?`)) return;
+  if(r.mezcla){
+    const falta=r.comps.find(x=>!(x.kg>0));
+    if(falta){ toast(`⚠️ Indica los kilos de ${ACIDOS[falta.acido].corto}. Si va un solo ácido, usa "Un ácido (directo)"`); return; }
+  }
+  if(!(r.totalSol>0)){ toast(r.mezcla?'⚠️ Anota los litros de mezcla aplicados en al menos un sector':'⚠️ Anota los litros de ácido aplicados en al menos un sector'); return; }
+  if(r.mezcla && r.totalSol>r.vol+0.5 && !confirm(`Aplicaste ${fmtNum(r.totalSol,1)} L y la mezcla tiene ${fmtNum(r.vol,1)} L.\n\n¿Guardar igual?`)) return;
   const malos=r.filas.filter(x=>x.alarma);
-  if(malos.length && !confirm(acidoTextoAlarma(malos, A.acido))) return;
+  if(malos.length && !confirm(acidoTextoAlarma(malos))) return;
 
-  const prod=acidoProducto();
-  const unidad=(prod&&prod.unidad)||'kg';
-  // Concentración en la unidad del producto de bodega (L si se lleva en litros).
-  const conc = String(unidad).toUpperCase()==='L' ? r.lPorL : r.kg/r.vol;
-  const cantEst = String(unidad).toUpperCase()==='L' ? r.lAcidoEst : r.kg;
-  const sectoresData=r.filas.map(x=>({sector:x.sector, litros:x.litrosSol, ha:x.ha}));
-  const desc = prod ? [{productoId:prod.id, nombre:ac.nombre, cantidad:r.totalSol*conc}] : [];
+  // Una "sal" por ácido. concentracion = cantidad del producto (en SU unidad)
+  // por L de líquido aplicado; así ➕ Seguir y la corrección descuentan igual
+  // que en el fertirriego.
+  const sales=[], sinDescontar=[];
+  r.comps.forEach(x=>{
+    const k=x.acido, ac=ACIDOS[k], prod=acidoProducto(k);
+    const unidad=(prod&&prod.unidad)||'kg';
+    const enL=String(unidad).toUpperCase()==='L';
+    const conc=r.porL[k]*(enL?1:x.densidad);
+    sales.push({productoId:prod?prod.id:'', nombre:ac.nombre, productoNombre:prod?prod.nombre:'',
+                cantidadKg: enL ? x.litros : x.kg, concentracion:conc, unidad});
+    if(!prod) sinDescontar.push({nombre:ac.nombre, cantidadCargada:x.kg, cantidadAplicada:r.totalSol*r.porL[k]*x.densidad, unidad:'kg', motivo:'sin producto de bodega'});
+  });
+  const desc=sales.filter(s=>s.productoId).map(s=>({productoId:s.productoId, nombre:s.nombre, cantidad:r.totalSol*s.concentracion}));
   const hist=esHistorico(A.fecha), consumoHist=hist?desc.map(d=>({...d})):[];   // v45
   if(hist) desc.length=0;
-  const sinDescontar = prod ? [] : [{nombre:ac.nombre, cantidadCargada:r.kg, cantidadAplicada:r.totalSol*r.kg/r.vol, unidad:'kg', motivo:'sin producto de bodega'}];
+  const sectoresData=r.filas.map(x=>({sector:x.sector, litros:x.litrosSol, ha:x.ha}));
   const bodDesc=recintoCaseta(A.predioId);   // v44
   const usoInicial={
     fecha:A.fecha, litros:r.totalSol, sectores:sectoresData, consumo:consumoHist,
     descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre, cantidad:d.cantidad})),
-    acidoSectores: r.filas.map(x=>({sector:x.sector, litrosSol:x.litrosSol, lAcido:x.lAcido, lHa:x.lHa})),
+    acidoSectores: r.filas.map(acidoFilaGuardada),
     alarmaAcido: malos.length>0,
     registradoPor:currentUser.uid,
     registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
     ts:Date.now()
   };
+  const acidosData=r.comps.map(x=>({acido:x.acido, nombre:ACIDOS[x.acido].nombre, densidad:x.densidad, kg:x.kg, litros:x.litros}));
+  const capacidad = r.mezcla ? r.vol : r.totalSol;
   const datos={
-    tipo:'fertirriego', subtipo:'acido', acido:A.acido, densidad:ac.densidad,
+    tipo:'fertirriego', subtipo:'acido', modo:r.mezcla?'mezcla':'directo',
+    acido: r.mezcla?'mezcla':r.comps[0].acido,
+    densidad: r.mezcla?null:r.comps[0].densidad,
+    acidos:acidosData, porL:r.porL,
     fecha:A.fecha, predioId:A.predioId, cultivo:A.cultivo||'', epoca:A.epoca||'', bodegaDescuento:bodDesc,
     ...datosTemporadaEdit(A.predioId, A.epoca, A.cultivo, A.fecha),
-    capacidad:r.vol, kgAcido:r.kg, litrosAcido:r.lAcidoEst,
-    sales:[{productoId:prod?prod.id:'', nombre:ac.nombre, productoNombre:prod?prod.nombre:'', cantidadKg:cantEst, concentracion:conc, unidad}],
-    sectores:sectoresData, totalLitros:r.totalSol, sinDescontar,
+    capacidad,
+    kgAcido: acidosData.reduce((s,x)=>s+(Number(x.kg)||0),0),
+    litrosAcido: acidosData.reduce((s,x)=>s+(Number(x.litros)||0),0),
+    sales, sectores:sectoresData, totalLitros:r.totalSol, sinDescontar,
     usos: editando ? (Array.isArray(aplEdit.doc.usos)&&aplEdit.doc.usos.length
                       ? [Object.assign({}, aplEdit.doc.usos[0], usoInicial)] : [usoInicial])
                    : [usoInicial],
@@ -4409,8 +4499,9 @@ async function guardarAcido(){
     estanque:1, estanquesDia:1,
     descontado: desc,
     ...marcaHistorico(hist, consumoHist),
-    cerrado: r.totalSol >= r.vol-0.5
+    cerrado: r.mezcla ? (r.totalSol >= r.vol-0.5) : true
   };
+  const etiqueta = r.mezcla ? 'Mezcla de ácidos' : ACIDOS[r.comps[0].acido].nombre;
   loading(true, editando?'Guardando cambios…':'Registrando…');
   try{
     if(editando){
@@ -4421,16 +4512,16 @@ async function guardarAcido(){
         registradoPor:currentUser.uid,
         registradoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email,
         createdAt:Date.now()
-      }), `${ac.nombre} del ${fD(A.fecha)}`);
+      }), `${etiqueta} del ${fD(A.fecha)}`);
       if(desc.length) await enCola(ajustarStockBodega(desc, bodDesc, -1), 'Descuento de bodega');
     }
-    const pid=A.predioId;
+    const pid=A.predioId, modo=A.modo;
     aplEdit=null;
-    aplAci=nuevoAcidoForm(pid);
+    aplAci=nuevoAcidoForm(pid); aplAci.modo=modo;
     renderAcidoForm();
     renderAplList();
-    avisoGuardado((editando?'✅ Estanque de ácido corregido':'✅ Estanque de ácido registrado')
-      + (malos.length?' · ⚠️ quedó con alarma de dosis':'') + (prod?'':' · ⚠️ sin descontar de bodega'));
+    avisoGuardado((editando?`✅ ${etiqueta} corregido`:`✅ ${etiqueta} registrado`)
+      + (malos.length?' · ⚠️ quedó con alarma de dosis':'') + (sinDescontar.length?' · ⚠️ sin descontar de bodega':''));
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
@@ -4668,6 +4759,7 @@ async function calcConciliacion(){
         if(m.origen){ const oo=cell(m.origen,m.productoId); oo.nombre=m.nombre||oo.nombre; oo.entregado-=Number(m.cantidad)||0; }
       }
       else if(m.tipo==='ajuste' && m.recinto){ const o=cell(m.recinto,m.productoId); o.nombre=m.nombre||o.nombre; o.entregado+=Number(m.diferencia)||0; }
+      else if(m.tipo==='devolucion' && m.recinto){ const o=cell(m.recinto,m.productoId); o.nombre=m.nombre||o.nombre; o.entregado-=Number(m.cantidad)||0; }   // v48
       else if(m.tipo==='migracion'){
         const oi=cell(m.destino,m.productoId); oi.nombre=m.nombre||oi.nombre; oi.entregado+=Number(m.cantidad)||0;
         const oo=cell(m.origen,m.productoId); oo.nombre=m.nombre||oo.nombre; oo.entregado-=Number(m.cantidad)||0;
@@ -4803,7 +4895,24 @@ function abrirMovProducto(idx){
     <div class="form-row"><label>Proveedor</label><input type="text" id="mcProv" placeholder="Opcional"></div>
     <div class="form-row"><label>Fecha</label><input type="date" id="mcFecha" value="${todayIso}"></div>
     <div id="mcResumen" style="font-size:12px;color:var(--muted);margin:2px 0 8px"></div>
-    <button class="btn btn-primary" onclick="movCompra(${idx})">Registrar compra</button>`:''}
+    <button class="btn btn-primary" onclick="movCompra(${idx})">Registrar compra</button>
+
+    <div class="sec-div" style="margin-top:16px">↩️ Devolución al proveedor (sale stock)</div>
+    <div style="display:flex;gap:8px;align-items:flex-end">
+      <div class="form-row" style="flex:1"><label>Desde el recinto</label><select id="mvRecinto">${recintoOptsHTML(RECINTO_ORDER, RECINTO_ORDER.find(k=>stockEn(p,k)>0)||'lc_proveedores', p)}</select></div>
+      <div class="form-row" style="flex:1"><label>Cantidad (${escH(uni)})</label><input type="text" inputmode="decimal" id="mvCant" placeholder="Ej: 20"></div>
+    </div>
+    <div class="form-row"><label>Motivo</label><select id="mvMotivo">
+      ${Object.keys(MOTIVOS_DEVOLUCION).map(k=>`<option value="${k}">${escH(MOTIVOS_DEVOLUCION[k])}</option>`).join('')}
+    </select></div>
+    <div class="form-row"><label>Detalle</label><input type="text" id="mvDetalle" placeholder="Ej: envases dañados, lote vencido, llegó de más"></div>
+    <div style="display:flex;gap:8px">
+      <div class="form-row" style="flex:1"><label>Proveedor</label><input type="text" id="mvProv" value="${escH((productosCache.find(x=>x.id===p.id)||{}).proveedor||'')}" placeholder="A quién se devuelve"></div>
+      <div class="form-row" style="flex:1"><label>N° documento</label><input type="text" id="mvDoc" placeholder="Guía o nota de crédito (opcional)"></div>
+    </div>
+    <div class="form-row"><label>Fecha</label><input type="date" id="mvFecha" value="${todayIso}"></div>
+    <div style="font-size:10.5px;color:var(--muted);margin:-2px 0 8px;line-height:1.5">Sale al tiro del recinto. Queda registrada como movimiento, con el motivo y el valor al último precio de compra.</div>
+    <button class="btn btn-secondary" onclick="movDevolucion(${idx})">Registrar devolución</button>`:''}
 
     ${oper.length?`
     <div class="sec-div" style="margin-top:16px">🔄 Despacho a otro recinto</div>
@@ -4825,6 +4934,18 @@ function abrirMovProducto(idx){
     <button class="btn btn-secondary" onclick="movAjuste(${idx})">Registrar ajuste</button>`:''}
   `;
   document.getElementById('overlay').classList.add('open');
+  if(canComprar()) devolucionProveedorSugerido(p.id);   // v48
+}
+
+// v48 · Sugiere como proveedor de la devolución el de la última compra del producto.
+async function devolucionProveedorSugerido(productoId){
+  try{
+    const snap=await db.collection('movimientos').where('productoId','==',productoId).get();
+    const ult=snap.docs.map(d=>d.data()).filter(m=>m.tipo==='compra'&&m.proveedor)
+      .sort((a,b)=>String(b.fecha||'').localeCompare(String(a.fecha||''))||(Number(b.createdAt)||0)-(Number(a.createdAt)||0))[0];
+    const inp=document.getElementById('mvProv');
+    if(ult && inp && !inp.value.trim()) inp.value=ult.proveedor;
+  }catch(e){}
 }
 
 function movCalc(){
@@ -4878,6 +4999,49 @@ async function movCompra(idx){
     if(pre>0){p.precioEnv=pre;}
     closeModal(); renderPlanilla();
     toast(`✅ Compra registrada en ${nombreBodega(recinto,true)} (+${fmtNum(total)})`);
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
+// v48 · Devolución al proveedor: producto con problema o comprado de más.
+// Resta del recinto elegido y deja un movimiento 'devolucion'. La registra
+// gerencia o quien tenga 🛒 (Luciano), desde cualquier recinto.
+const MOTIVOS_DEVOLUCION={problema:'Producto con problema (calidad, daño, vencido)', exceso:'Se compró de más', otro:'Otro motivo'};
+async function movDevolucion(idx){
+  if(!canComprar()){ toast('Sin permiso para registrar devoluciones'); return; }
+  const p=planProds[idx];
+  const recinto=document.getElementById('mvRecinto').value;
+  const cant=num(document.getElementById('mvCant').value);
+  const motivo=document.getElementById('mvMotivo').value;
+  const detalle=(document.getElementById('mvDetalle').value||'').trim();
+  const prov=(document.getElementById('mvProv').value||'').trim();
+  const documento=(document.getElementById('mvDoc').value||'').trim();
+  const fecha=document.getElementById('mvFecha').value||todayIso;
+  if(!esRecinto(recinto)){ toast('⚠️ Elige el recinto desde donde sale'); return; }
+  if(!(cant>0)){ toast('⚠️ Indica la cantidad que se devuelve'); return; }
+  if(!MOTIVOS_DEVOLUCION[motivo]){ toast('⚠️ Elige el motivo'); return; }
+  if(motivo==='otro' && !detalle){ toast('⚠️ Escribe el detalle del motivo'); return; }
+  if(!prov){ toast('⚠️ Indica el proveedor'); return; }
+  const yo=quienSoy();
+  loading(true,'Registrando devolución…');
+  try{
+    await db.runTransaction(async tx=>{
+      const ref=db.collection('productos').doc(p.id);
+      const d=(await tx.get(ref)).data();
+      const st=Object.assign({}, d.stock||{});
+      if(num(st[recinto])<cant-1e-9) throw new Error(`Stock insuficiente en ${nombreBodega(recinto,true)} (hay ${fmtNum(num(st[recinto]),2)})`);
+      st[recinto]=num(st[recinto])-cant;
+      tx.update(ref, {stock:st, updatedAt:Date.now()});
+      const pu=Number(d.precioUnit)||null;
+      tx.set(db.collection('movimientos').doc(), {tipo:'devolucion', productoId:p.id, nombre:p.nombre, unidad:p.unidad||'',
+        recinto, predio:RECINTOS[recinto].predio, cantidad:cant, motivo, motivoTxt:MOTIVOS_DEVOLUCION[motivo],
+        detalle:detalle||null, proveedor:prov, documento:documento||null,
+        precioUnit:pu, monto: pu ? pu*cant : null,
+        fecha, registradoPor:yo.uid, registradoPorNombre:yo.nombre, createdAt:Date.now()});
+    });
+    p.stock[recinto]=num(p.stock[recinto])-cant;
+    closeModal(); renderPlanilla();
+    toast(`✅ Devolución registrada · −${fmtNum(cant,2)} ${p.unidad||''} de ${nombreBodega(recinto,true)}`);
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
 }
@@ -6423,7 +6587,7 @@ async function borrarCiclo(predioId,subjefe,cicloId){
 // PROGRAMACIÓN SEMANAL
 // ══════════════════════════════════════════════
 function getProgMonday(offset=0){
-  const d=new Date(today),dow=d.getDay();
+  const d=new Date(todayIso+'T12:00:00'),dow=d.getDay();   // v48 · mediodía local (antes, desde las 21:00 daba el martes)
   d.setDate(d.getDate()-(dow===0?6:dow-1)+offset*7);
   return d.toISOString().slice(0,10);
 }
@@ -8108,10 +8272,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v47';
-const MANUAL_FECHA='2026-09-23';
+const MANUAL_VERSION='v48';
+const MANUAL_FECHA='2026-09-24';
 
 const MANUAL_CAMBIOS=[
+  {v:'v48', f:'24-09-2026', txt:'<b>Ácidos:</b> ya no se anota volumen de estanque, porque los ácidos se aplican puros. Si va <b>un solo ácido</b>, sale directo del bidón y se anotan los <b>litros de ácido</b> por sector. Si van <b>nítrico y fosfórico juntos</b>, se anotan los kilos de cada uno cargados al estanque y los <b>litros de mezcla</b> por sector. La alarma de <b>4 L/ha en el día</b> ahora suma los dos ácidos. <b>Bodega:</b> nueva <b>↩️ Devolución al proveedor</b> para el producto con problema o comprado de más: descuenta del recinto y queda registrada con motivo, proveedor y documento. Además, desde las 21:00 la app ya no propone la fecha del día siguiente.'},
   {v:'v47', f:'24-09-2026', txt:'Nueva tarjeta <b>🗺️ Sectores de riego</b> en Config (gerencia): se corrigen el nombre, los metros lineales y la superficie de cada sector sin entrar a la consola de Firebase. También se puede pegar la lista completa.'},
   {v:'v46', f:'24-09-2026', txt:'La receta ahora reconoce las unidades como se escriben en terreno: <b>gr, grs, gramos, kgs, kilos, lt, lts, litros, cm3</b>, además de cc, ml, g, kg y L. Antes "ácido cítrico 30 grs" quedaba "sin dosis" y no dejaba guardar.'},
   {v:'v45', f:'24-09-2026', txt:'<b>Registros históricos.</b> Para poner al día lo aplicado en meses anteriores: toda aplicación (foliar, fertilización, vía riego o ácido) con fecha <b>anterior al 14 de septiembre de 2026</b> se guarda completa y entra al informe de gasto, pero <b>no descuenta de bodega</b>: es solo registro de campo. Desde el 14 de septiembre todo descuenta de bodega, aunque se registre con atraso. En el formulario aparece un aviso morado 📜, y en "Últimas aplicaciones" queda marcada como <b>Registro histórico</b>.'},
@@ -8265,9 +8430,10 @@ const MANUAL_SECCIONES=[
     'Igual que en foliar: el producto que la app no reconozca hay que elegirlo a mano antes de guardar.',
     '<b>¿Registrando algo de semanas o meses atrás?</b> Si la fecha es anterior al <b>14 de septiembre de 2026</b>, aparece el aviso morado <b>📜 Registro histórico</b>: se guarda igual y cuenta en el informe de gasto, pero no descuenta de bodega. Sirve para poner al día lo aplicado antes de esa fecha. Lo que sea desde el 14 de septiembre descuenta de bodega aunque se registre con atraso.',
     '<b>Pimentón:</b> en cada estanque de pimentón aparece <b>Mes de plantación</b> y hay que elegirlo; la época de arriba queda para los estanques de tomate y especialidades. En vía riego pasa lo mismo al elegir pimentón como cultivo.',
-    '<b>⚗️ Ácidos</b> (fosfórico y nítrico): elige el predio y el ácido, anota los <b>kilos de ácido cargados</b> y el <b>volumen del estanque</b> en que se disolvió, y los <b>litros de solución aplicados hoy</b> en cada sector. La app pasa los kilos a litros con la densidad (fosfórico 1,68 y nítrico 1,40 kg/L) y muestra los <b>litros de ácido por hectárea</b> de cada sector.',
-    'Si un sector pasa de <b>4 L de ácido por hectárea en el día</b>, se marca en rojo y la app pide confirmar antes de guardar. Se suma todo lo aplicado ese día en el sector con el mismo ácido, aunque venga de otro estanque. Si se guarda igual, queda marcado con la alarma en "Últimas aplicaciones".',
-    'El estanque de ácido dura varios días igual que el de sales: los días siguientes se registran con <b>➕ Seguir</b>, y ahí también se ve la dosis por hectárea y salta la alarma.',
+    '<b>⚗️ Ácidos</b> (nítrico y fosfórico). Los ácidos <b>no se disuelven en agua</b>: se aplican puros. Arriba se elige cómo va: <b>🛢️ Un ácido (directo)</b> o <b>⚗️ Nítrico + fosfórico</b>.',
+    '<b>Un ácido, directo del bidón:</b> elige el predio y el ácido, y anota los <b>litros de ácido aplicados</b> en cada sector. La app pasa a kilos con la densidad (nítrico 1,40 y fosfórico 1,68 kg/L) para descontar de bodega, y muestra los <b>litros de ácido por hectárea</b> de cada sector.',
+    '<b>Nítrico + fosfórico en un estanque:</b> anota los <b>kilos de cada ácido</b> cargados al estanque (sin agua). La app calcula los litros de mezcla y la proporción de cada ácido. Después anota los <b>litros de mezcla aplicados</b> en cada sector, y la app reparte cuánto nítrico y cuánto fosfórico llegó a cada uno. Si sobra mezcla, los días siguientes se registran con <b>➕ Seguir</b>.',
+    'Si un sector pasa de <b>4 L de ácido por hectárea en el día</b>, <b>sumando nítrico y fosfórico</b>, se marca en rojo y la app pide confirmar antes de guardar. Se suma todo lo aplicado ese día en el sector, aunque venga de otro registro o de otro estanque. Si se guarda igual, queda marcado con la alarma en "Últimas aplicaciones".',
     'Para corregir algo ya registrado, aprieta el <b>✏️</b> en "Últimas aplicaciones": se reabre en su formulario, y al guardar el stock se recalcula solo.'
   ],
   tips:[
@@ -8330,9 +8496,10 @@ const MANUAL_SECCIONES=[
     '<b>Comprar</b> (quien tenga 🛒, hoy Luciano): 📦 del producto → Registrar compra → elige el <b>recinto que recibe</b>. Lo que se compra por volumen y queda guardado en el proveedor va a <b>Bodega de Proveedores</b>.',
     '<b>Despachar</b>: 📦 del producto → Despacho → desde uno de tus recintos hacia otro. Sale al tiro del origen y queda <b>pendiente</b> hasta que el responsable del recinto que recibe lo confirma.',
     '<b>Confirmar lo que te llega</b>: al entrar, la app avisa si tienes despachos por confirmar, y el botón Bodega muestra cuántos son. En la tarjeta <b>📥 Despachos por confirmar</b> aprieta <b>✅ Recibido</b>, y recién ahí entra a tu recinto. Si no llegó, aprieta <b>✖ No llegó</b>: el producto vuelve al origen y queda anotado el motivo.',
+    '<b>Devolver al proveedor</b> (quien tenga 🛒, hoy Luciano, y gerencia): 📦 del producto → <b>↩️ Devolución al proveedor</b> → recinto desde donde sale, cantidad, motivo (producto con problema, se compró de más u otro), proveedor y, si hay, el N° de guía o nota de crédito. Sale al tiro del stock del recinto y queda registrada con el valor al último precio de compra.',
     '<b>Ajustar por conteo</b>: 📦 del producto → Ajuste → recinto, lo que contaste y el motivo. Queda registrado como movimiento con la diferencia.',
     'Quien mantiene el catálogo (bodega y gerencia) también puede editar las celdas directamente y apretar <b>💾 Guardar cambios</b>. Mientras no lo apriete, nada queda guardado.',
-    'Abajo, en <b>Conciliación</b>, compara lo que recibió cada recinto (compras, despachos confirmados y ajustes) con lo que se usó en aplicaciones. Ajusta el rango de fechas, porque la entrega y el uso no tienen por qué caer el mismo mes.'
+    'Abajo, en <b>Conciliación</b>, compara lo que recibió cada recinto (compras, despachos confirmados y ajustes, menos las devoluciones al proveedor) con lo que se usó en aplicaciones. Ajusta el rango de fechas, porque la entrega y el uso no tienen por qué caer el mismo mes.'
   ],
   tips:[
     '<b>De dónde sale cada aplicación:</b> las desinfecciones foliares de los tres campos salen de <b>Pesticidas</b>. Fertirriego, ácidos y vía riego salen de la <b>Caseta de Riego del campo</b>. En La Constancia la vía riego puede salir de la Caseta o de <b>Bioestimulantes</b>, y se elige por producto. De la <b>Bodega de Proveedores</b> no sale ninguna aplicación: primero hay que despachar el producto a un recinto del campo.',
