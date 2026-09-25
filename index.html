@@ -646,8 +646,10 @@ body.vista-escritorio .modal-content{max-width:700px}
     </div>
 
     <div class="card">
-      <div class="card-title">📋 Últimas aplicaciones</div>
+      <div class="card-title">📋 Aplicaciones registradas</div>
+      <div id="aplFiltros"></div>
       <div id="aplList"></div>
+      <div id="aplMas"></div>
     </div>
   </div>
 
@@ -3569,6 +3571,123 @@ async function guardarFoliar(){
   loading(false);
 }
 
+// ══════════════════════════════════════════════
+// v50 · HISTORIAL DE APLICACIONES
+// Antes la lista mostraba solo las 15 últimas registradas, sin filtros: las
+// foliares más antiguas no se podían revisar (lo pidió Katherine Castro).
+// Ahora se filtra por tipo, predio, fechas, producto y quién registró, se
+// ordena por registro o por fecha de aplicación, se pagina de a 30 y se baja
+// a Excel una fila por producto. Solo cambia la vista: los datos son los mismos
+// que ya se leían (una consulta por predio del usuario).
+// ══════════════════════════════════════════════
+let aplHistDocs=[];
+let aplHist={tipo:'', predio:'', desde:'', hasta:'', txt:'', por:'', orden:'registro', max:15};
+const APL_TIPOS_HIST=[['','Todos los tipos'],['foliar','🍃 Foliar'],['fertirriego','🧪 Fertilización'],['acido','⚗️ Ácidos'],['viariego','💧 Vía riego']];
+function aplTipoDe(a){ return a.tipo==='fertirriego' ? (a.subtipo==='acido'?'acido':'fertirriego') : (a.tipo||''); }
+// Fechas en que se aplicó (un estanque puede tener varios días).
+function aplFechasDe(a){ const f=usosDe(a).map(u=>u.fecha||a.fecha).filter(Boolean); return f.length?f:[a.fecha||'']; }
+// Nombres de los productos de la aplicación, para buscar.
+function aplProductosDe(a){
+  return [...(a.receta||[]).map(r=>r.nombre), ...(a.sales||[]).map(x=>x.nombre), ...(a.acidos||[]).map(x=>x.nombre||x.acido),
+          a.acido&&a.acido!=='mezcla'?nombreAcido(a.acido):''].filter(Boolean);
+}
+function aplHistFiltradas(){
+  const f=aplHist, txt=f.txt.trim().toLowerCase();
+  const filtrar=f.tipo||f.predio||f.desde||f.hasta||txt||f.por;
+  let lista=aplHistDocs.filter(doc=>{
+    const a=doc.data();
+    if(f.tipo && aplTipoDe(a)!==f.tipo) return false;
+    if(f.predio && a.predioId!==f.predio) return false;
+    if(f.desde||f.hasta){
+      if(!aplFechasDe(a).some(x=>(!f.desde||x>=f.desde)&&(!f.hasta||x<=f.hasta))) return false;
+    }
+    if(f.por && (a.registradoPorNombre||'')!==f.por) return false;
+    if(txt && !aplProductosDe(a).some(n=>String(n).toLowerCase().includes(txt))) return false;
+    return true;
+  });
+  if(f.orden==='fecha'){
+    const ult=a=>aplFechasDe(a).slice().sort().pop()||'';
+    lista=lista.slice().sort((x,y)=>ult(y.data()).localeCompare(ult(x.data()))||(Number(y.data().createdAt)||0)-(Number(x.data().createdAt)||0));
+  }
+  return lista;
+}
+function aplHistSet(k,v){ aplHist[k]=v; aplHist.max= (k==='max')?v:30; if(k!=='max' && !aplHist.tipo && !aplHist.predio && !aplHist.desde && !aplHist.hasta && !aplHist.txt && !aplHist.por) aplHist.max=15; aplHistPintar(); }
+function aplHistLimpiar(){ aplHist={tipo:'', predio:'', desde:'', hasta:'', txt:'', por:'', orden:'registro', max:15}; aplHistPintar(); }
+function aplHistFiltrosHTML(){
+  const box=document.getElementById('aplFiltros'); if(!box) return;
+  const f=aplHist;
+  const mis=prediosPermitidos();
+  const nombres=[...new Set(aplHistDocs.map(d=>d.data().registradoPorNombre||'').filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const activo=f.tipo||f.predio||f.desde||f.hasta||f.txt||f.por;
+  const n=aplHistFiltradas().length;
+  // El campo de texto se conserva si ya existe, para no perder el foco al escribir.
+  if(box.dataset.armado==='1'){
+    const c=document.getElementById('ahCuenta'); if(c) c.innerHTML=aplHistCuentaHTML(n,activo);
+    return;
+  }
+  box.dataset.armado='1';
+  box.innerHTML=`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px">
+    <div class="form-row" style="flex:1;min-width:130px;margin:0"><label>Tipo</label><select id="ahTipo" onchange="aplHistSet('tipo',this.value)">${APL_TIPOS_HIST.map(([v,t])=>`<option value="${v}"${v===f.tipo?' selected':''}>${t}</option>`).join('')}</select></div>
+    ${mis.length>1?`<div class="form-row" style="flex:1;min-width:130px;margin:0"><label>Predio</label><select id="ahPredio" onchange="aplHistSet('predio',this.value)"><option value="">Todos mis predios</option>${mis.map(pid=>`<option value="${pid}"${pid===f.predio?' selected':''}>${escH(PREDIOS[pid].nombre)}</option>`).join('')}</select></div>`:''}
+    <div class="form-row" style="flex:1;min-width:120px;margin:0"><label>Desde</label><input type="date" id="ahDesde" value="${f.desde}" onchange="aplHistSet('desde',this.value)"></div>
+    <div class="form-row" style="flex:1;min-width:120px;margin:0"><label>Hasta</label><input type="date" id="ahHasta" value="${f.hasta}" onchange="aplHistSet('hasta',this.value)"></div>
+    <div class="form-row" style="flex:1;min-width:140px;margin:0"><label>Producto</label><input type="text" id="ahTxt" value="${escH(f.txt)}" placeholder="🔍 Ej: Serenade" oninput="aplHistSet('txt',this.value)"></div>
+    <div class="form-row" style="flex:1;min-width:140px;margin:0"><label>Registró</label><select id="ahPor" onchange="aplHistSet('por',this.value)"><option value="">Cualquiera</option>${nombres.map(x=>`<option${x===f.por?' selected':''}>${escH(x)}</option>`).join('')}</select></div>
+    <div class="form-row" style="flex:1;min-width:150px;margin:0"><label>Orden</label><select id="ahOrden" onchange="aplHistSet('orden',this.value)"><option value="registro"${f.orden==='registro'?' selected':''}>Últimas registradas</option><option value="fecha"${f.orden==='fecha'?' selected':''}>Por fecha de aplicación</option></select></div>
+  </div>
+  <div id="ahCuenta" style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px">${aplHistCuentaHTML(n,activo)}</div>`;
+}
+function aplHistCuentaHTML(n,activo){
+  return `<span style="font-size:11.5px;color:var(--muted)">${activo?`${n} aplicacion${n===1?'':'es'} con estos filtros`:`${aplHistDocs.length} aplicaciones en total · mostrando las últimas registradas`}</span>
+    <span style="display:flex;gap:6px">${activo?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" onclick="aplHistLimpiarUI()">✕ Limpiar</button>`:''}
+    <button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" onclick="aplHistExcel()">⬇️ Excel</button></span>`;
+}
+function aplHistLimpiarUI(){ const b=document.getElementById('aplFiltros'); if(b) b.dataset.armado=''; aplHistLimpiar(); }
+// Consumo total de una aplicación (lo descontado o, si es histórica, lo que habría descontado).
+function aplConsumoTotal(a){
+  const lista=(Array.isArray(a.usos)&&a.usos.length) ? a.usos.flatMap(u=>consumoDe(u)) : consumoDe(a);
+  const out={};
+  lista.forEach(d=>{ if(!d.productoId) return; out[d.productoId]=(out[d.productoId]||0)+(Number(d.cantidad)||0); });
+  return out;
+}
+function aplLugaresTxt(a){
+  if(a.tipo==='foliar') return (a.destinos||[]).map(d=>`mód ${d.modulo||d.unidad||''}: ${fmtNum(d.litros,0)} L`).join(' · ');
+  if(a.subtipo==='acido') return usosDe(a).map(u=>(u.acidoSectores&&u.acidoSectores.length?u.acidoSectores.map(x=>`${x.sector} ${fmtNum(x.lAcido,1)} L`):(u.sectores||[]).map(x=>x.sector)).join(', ')).join(' · ');
+  if(a.tipo==='fertirriego') return usosDe(a).map(u=>(u.sectores||[]).map(x=>x.sector+(x.litros?` ${fmtNum(x.litros,0)} L`:'')).join(', ')).join(' · ');
+  return (a.sectores||a.destinos||[]).map(x=>x.sector||x.modulo||'').join(' · ');
+}
+function aplHistExcel(){
+  if(typeof XLSX==='undefined'){ toast('⚠️ Excel no disponible sin conexión'); return; }
+  const docs=aplHistFiltradas();
+  if(!docs.length){ toast('No hay aplicaciones con estos filtros'); return; }
+  const TIPO_TXT={foliar:'Foliar', fertirriego:'Fertilización', acido:'Ácido', viariego:'Vía riego', riego:'Riego (antiguo)'};
+  const filas=[];
+  docs.forEach(doc=>{
+    const a=doc.data(), t=aplTipoDe(a), cons=aplConsumoTotal(a);
+    const base={Fecha:aplFechasDe(a).map(fDMY).join(', '), Tipo:TIPO_TXT[t]||t, Predio:(PREDIOS[a.predioId]||{}).nombre||a.predioId||'',
+      Cultivo:a.cultivo||'', 'Época / mes plant.':a.epoca?(TNAMES[a.epoca]||a.epoca):'', 'Módulos / sectores':aplLugaresTxt(a),
+      'Agua o mezcla (L)': t==='foliar' ? (a.destinos||[]).reduce((s,d)=>s+(Number(d.litros)||0),0) : (Number(a.totalLitros)||null),
+      'Superficie (ha)': a.haTotal!=null?Number(a.haTotal):null,
+      'Histórico': (a.historico||usosDe(a).some(u=>u.historico))?'Sí (no descontó bodega)':'', 'Registró':a.registradoPorNombre||''};
+    let prods=[];
+    if(t==='foliar') prods=(a.receta||[]).map(r=>({id:r.productoId, n:r.nombre, dosis:r.dosis, u:(r.unidad||'')+'/100 L'}));
+    else if(t==='viariego') prods=(a.receta||[]).map(r=>({id:r.productoId, n:r.nombre, dosis:r.dosis, u:(r.unidad||'')+'/ha'}));
+    else if(t==='fertirriego') prods=(a.sales||[]).map(x=>({id:x.productoId, n:x.nombre, dosis:x.cantidadKg, u:(x.unidad||'kg')+' en estanque'}));
+    else if(t==='acido') prods=(a.sales&&a.sales.length?a.sales:(a.acidos||[])).map(x=>({id:x.productoId, n:x.nombre||x.acido, dosis:x.cantidadKg!=null?x.cantidadKg:x.kg, u:(x.unidad||'kg')}));
+    else prods=(a.receta||[]).map(r=>({id:r.productoId, n:r.nombre, dosis:r.cantidad, u:r.unidadStock||''}));
+    if(!prods.length) prods=[{n:'', dosis:null, u:''}];
+    prods.forEach(pr=>{
+      const pc=(productosCache||[]).find(x=>x.id===pr.id);
+      filas.push({...base, Producto:pr.n||'', Dosis:pr.dosis!=null?Number(pr.dosis):null, 'Unidad dosis':pr.u,
+        'Cantidad usada':pr.id&&cons[pr.id]!=null?+cons[pr.id].toFixed(3):null, 'Unidad bodega':(pc&&pc.unidad)||''});
+    });
+  });
+  const ws=XLSX.utils.json_to_sheet(filas), wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Aplicaciones');
+  const suf=[aplHist.tipo||'todas', aplHist.predio||'', aplHist.desde||'', aplHist.hasta||''].filter(Boolean).join('_');
+  XLSX.writeFile(wb, `fieldlog_aplicaciones_${suf}.xlsx`);
+}
+
 async function renderAplList(){
   const box=document.getElementById('aplList');
   if(!box) return;
@@ -3583,8 +3702,24 @@ async function renderAplList(){
     }
     acumulado.sort((a,b)=>(Number(b.data().createdAt)||0)-(Number(a.data().createdAt)||0));
     aplDocsCache=acumulado.map(d=>({id:d.id, ...d.data()}));   // v43 · para sumar el ácido del día
-    const snap={docs:acumulado.slice(0,15), empty:!acumulado.length};
-    if(snap.empty){ box.innerHTML='<p style="font-size:12px;color:var(--muted)">Aún no hay aplicaciones registradas.</p>'; return; }
+    aplHistDocs=acumulado;   // v50 · el historial filtra y pinta desde aquí, sin volver a leer
+    aplHistPintar();
+  }catch(e){ box.innerHTML=`<p style="font-size:11px;color:var(--red)">Error: ${escH(e.message)}</p>`; }
+}
+
+// v50 · Pinta la lista de aplicaciones según los filtros del historial.
+function aplHistPintar(){
+  const box=document.getElementById('aplList');
+  if(!box) return;
+  aplHistFiltrosHTML();
+  const masBox=document.getElementById('aplMas');
+  try{
+    if(!aplHistDocs.length){ box.innerHTML='<p style="font-size:12px;color:var(--muted)">Aún no hay aplicaciones registradas.</p>'; if(masBox)masBox.innerHTML=''; return; }
+    const filtradas=aplHistFiltradas();
+    const snap={docs:filtradas.slice(0,aplHist.max), empty:!filtradas.length};
+    if(masBox) masBox.innerHTML = filtradas.length>aplHist.max
+      ? `<div style="text-align:center;margin-top:8px"><button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" onclick="aplHist.max+=30;aplHistPintar()">Ver más (${filtradas.length-aplHist.max} restantes)</button></div>` : '';
+    if(snap.empty){ box.innerHTML='<p style="font-size:12px;color:var(--muted);padding:6px 0">Ninguna aplicación con estos filtros. Prueba ampliando las fechas.</p>'; return; }
     box.innerHTML=snap.docs.map(doc=>{
       const a=doc.data();
       let etiqueta, receta, sub, totalTxt;
@@ -4479,7 +4614,7 @@ function acidosDelForm(){ return aplAci.modo==='mezcla' ? ACIDOS_ORDEN.slice() :
 
 // Litros de ácido (nítrico + fosfórico) ya aplicados ese día en ese sector en
 // OTROS registros (o en otros días del mismo estanque). Sale de lo cargado en
-// "Últimas aplicaciones".
+// "Aplicaciones registradas".
 function acidoPrevioDia(predioId, fecha, sector, excluirDocId, excluirUsoIdx){
   let tot=0;
   (aplDocsCache||[]).forEach(d=>{
@@ -4593,7 +4728,7 @@ function renderAcidoForm(){
     ${secH}
     <div id="aciCalc"></div>
     ${aplBotonGuardar('guardarAcido()', mezcla?'Registrar mezcla de ácidos':'Registrar ácido')}
-    ${aplEdit||!mezcla?'':'<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Si sobra mezcla, el estanque queda abierto y los días siguientes se registran con ➕ Seguir en Últimas aplicaciones.</div>'}`;
+    ${aplEdit||!mezcla?'':'<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Si sobra mezcla, el estanque queda abierto y los días siguientes se registran con ➕ Seguir en Aplicaciones registradas.</div>'}`;
   aciRenderCalc();
 }
 function aciSet(campo,val){
@@ -8491,10 +8626,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v49';
+const MANUAL_VERSION='v50';
 const MANUAL_FECHA='2026-09-25';
 
 const MANUAL_CAMBIOS=[
+  {v:'v50', f:'25-09-2026', txt:'<b>Aplicaciones:</b> la lista ahora se llama <b>📋 Aplicaciones registradas</b> y deja revisar <b>todo lo registrado</b>, no solo las 15 últimas. Se filtra por tipo (foliar, fertilización, ácidos, vía riego), predio, fechas, producto y quién registró; se puede ordenar por fecha de aplicación, cargar más con <b>Ver más</b> y bajar lo filtrado a <b>Excel</b>, una fila por producto.'},
   {v:'v49', f:'25-09-2026', txt:'<b>Bodega:</b> nueva tarjeta <b>📥 Ingresos y movimientos</b>: todos los que entran a Bodega (jefaturas, bodega, responsables de recinto y gerencia) pueden ver qué productos han entrado a cada recinto, con fecha, cantidad, proveedor u origen y quién lo registró, filtrar por fechas, recinto, tipo y producto, y bajarlo a Excel. <b>Aplicaciones:</b> si la bodega no acepta un descuento, ahora aparece un aviso rojo que hay que cerrar (antes decía "stock descontado" aunque no se hubiera movido), y el descuento queda anotado para que gerencia o bodega lo aplique desde la tarjeta <b>⚠️ Descuentos que no llegaron a bodega</b>.'},
   {v:'v48', f:'24-09-2026', txt:'<b>Ácidos:</b> ya no se anota volumen de estanque, porque los ácidos se aplican puros. Si va <b>un solo ácido</b>, sale directo del bidón y se anotan los <b>litros de ácido</b> por sector. Si van <b>nítrico y fosfórico juntos</b>, se anotan los kilos de cada uno cargados al estanque y los <b>litros de mezcla</b> por sector. La alarma de <b>4 L/ha en el día</b> ahora suma los dos ácidos. <b>Bodega:</b> nueva <b>↩️ Devolución al proveedor</b> para el producto con problema o comprado de más: descuenta del recinto y queda registrada con motivo, proveedor y documento. Además, desde las 21:00 la app ya no propone la fecha del día siguiente.'},
   {v:'v47', f:'24-09-2026', txt:'Nueva tarjeta <b>🗺️ Sectores de riego</b> en Config (gerencia): se corrigen el nombre, los metros lineales y la superficie de cada sector sin entrar a la consola de Firebase. También se puede pegar la lista completa.'},
@@ -8625,8 +8761,9 @@ const MANUAL_SECCIONES=[
     'Escribe la <b>receta tal como la anotas en terreno</b>, con dosis por 100 L de agua. Ejemplo: <i>Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + ácido cítrico 30 g</i>.',
     'La app trata de reconocer cada producto en la bodega. El que quede en amarillo con "no reconocí", elígelo a mano de la lista.',
     'Al elegir el predio aparecen <b>todos sus módulos</b> en una lista. Anota el <b>mojamiento gastado en litros</b> solo en los que aplicaste; los que dejes en blanco no se guardan.',
-    'Aprieta <b>Registrar aplicación</b>. Abajo, en "Últimas aplicaciones", queda el respaldo.',
-    '¿Te equivocaste o faltó un producto? En "Últimas aplicaciones" aprieta el <b>✏️</b> del registro, corrige y guarda. El stock se devuelve y se vuelve a descontar solo.'
+    'Aprieta <b>Registrar aplicación</b>. Abajo, en "Aplicaciones registradas", queda el respaldo.',
+    '¿Te equivocaste o faltó un producto? En "Aplicaciones registradas" aprieta el <b>✏️</b> del registro, corrige y guarda. El stock se devuelve y se vuelve a descontar solo.',
+    '<b>Buscar aplicaciones pasadas</b>: en la tarjeta <b>📋 Aplicaciones registradas</b>, arriba de la lista, elige el <b>tipo</b> (🍃 foliar, 🧪 fertilización, ⚗️ ácidos o 💧 vía riego), las fechas <b>Desde/Hasta</b>, el <b>producto</b> o <b>quién registró</b>. Con <b>Orden: Por fecha de aplicación</b> quedan ordenadas por el día en que se aplicaron. Aprieta <b>Ver más</b> para seguir bajando y <b>✕ Limpiar</b> para volver a las últimas registradas. <b>⬇️ Excel</b> baja lo filtrado, una fila por producto (fecha, módulos o sectores, dosis, agua y cantidad usada).'
   ],
   tips:[
     'Una aplicación con fecha anterior al 14 de septiembre de 2026 es un <b>📜 registro histórico</b>: queda registrada y entra al informe de gasto, pero no descuenta de Pesticidas.',
@@ -8642,8 +8779,8 @@ const MANUAL_SECCIONES=[
   pasos:[
     '<b>🧪 Fertilización:</b> arriba van la <b>fecha</b>, el <b>predio</b> y la <b>época</b> (se llena sola con la del ciclo abierto del predio, y es obligatoria). Abajo va un bloque por cada <b>estanque</b> del día, con su propio <b>cultivo</b>, su <b>capacidad en litros</b>, las <b>sales cargadas</b> en kilos y los <b>litros aplicados por sector</b>.',
     'En <b>Paradero 12</b> aparecen tres estanques, que es lo que se prepara cada día (dos de pimentón por grupos de sectores y uno de tomate/lechuga). En los otros predios aparece uno, y con <b>+ Otro estanque</b> se agregan los que falten. El estanque que dejes en blanco no se guarda.',
-    'Cada estanque queda como un <b>registro aparte</b> en "Últimas aplicaciones", numerado (estanque 1 de 3, 2 de 3…).',
-    '<b>Si el estanque dura más de un día:</b> anota los litros que aplicaste hoy y guarda. En "Últimas aplicaciones" ese estanque queda marcado con <b>quedan X L</b> y un botón <b>➕ Seguir</b>. Al día siguiente lo aprietas, pones la fecha y los litros por sector de ese día, y listo: no hay que volver a escribir las sales ni la capacidad.',
+    'Cada estanque queda como un <b>registro aparte</b> en "Aplicaciones registradas", numerado (estanque 1 de 3, 2 de 3…).',
+    '<b>Si el estanque dura más de un día:</b> anota los litros que aplicaste hoy y guarda. En "Aplicaciones registradas" ese estanque queda marcado con <b>quedan X L</b> y un botón <b>➕ Seguir</b>. Al día siguiente lo aprietas, pones la fecha y los litros por sector de ese día, y listo: no hay que volver a escribir las sales ni la capacidad.',
     'Cada día descuenta de bodega <b>solo lo que se aplicó ese día</b>, en proporción a los kilos que lleva el estanque. Si sobró mezcla y se botó, abre <b>➕ Seguir</b> y usa <b>Cerrar estanque</b>: lo que sobró no se descuenta, porque no se aplicó.',
     'Al cargar kilos en una sal aparece abajo <b>"↳ descuenta de"</b> con el producto de bodega elegido. Revísalo: si dice <b>— sin descontar —</b> o el producto no es el correcto, elígelo tú de la lista. Lo que quede sin producto se aplica igual, pero <b>no sale de bodega</b>.',
     '<b>💧 Vía riego:</b> fecha, predio, cultivo y época. Escribe la <b>receta con dosis por hectárea</b> (ejemplo: <i>Ultraferro 2 kg + Zincfull 1 L + Serenade 2 L</i>), marca los <b>sectores aplicados</b> y aprieta "Registrar vía riego".',
@@ -8653,15 +8790,15 @@ const MANUAL_SECCIONES=[
     '<b>⚗️ Ácidos</b> (nítrico y fosfórico). Los ácidos <b>no se disuelven en agua</b>: se aplican puros. Arriba se elige cómo va: <b>🛢️ Un ácido (directo)</b> o <b>⚗️ Nítrico + fosfórico</b>.',
     '<b>Un ácido, directo del bidón:</b> elige el predio y el ácido, y anota los <b>litros de ácido aplicados</b> en cada sector. La app pasa a kilos con la densidad (nítrico 1,40 y fosfórico 1,68 kg/L) para descontar de bodega, y muestra los <b>litros de ácido por hectárea</b> de cada sector.',
     '<b>Nítrico + fosfórico en un estanque:</b> anota los <b>kilos de cada ácido</b> cargados al estanque (sin agua). La app calcula los litros de mezcla y la proporción de cada ácido. Después anota los <b>litros de mezcla aplicados</b> en cada sector, y la app reparte cuánto nítrico y cuánto fosfórico llegó a cada uno. Si sobra mezcla, los días siguientes se registran con <b>➕ Seguir</b>.',
-    'Si un sector pasa de <b>4 L de ácido por hectárea en el día</b>, <b>sumando nítrico y fosfórico</b>, se marca en rojo y la app pide confirmar antes de guardar. Se suma todo lo aplicado ese día en el sector, aunque venga de otro registro o de otro estanque. Si se guarda igual, queda marcado con la alarma en "Últimas aplicaciones".',
-    'Para corregir algo ya registrado, aprieta el <b>✏️</b> en "Últimas aplicaciones": se reabre en su formulario, y al guardar el stock se recalcula solo.'
+    'Si un sector pasa de <b>4 L de ácido por hectárea en el día</b>, <b>sumando nítrico y fosfórico</b>, se marca en rojo y la app pide confirmar antes de guardar. Se suma todo lo aplicado ese día en el sector, aunque venga de otro registro o de otro estanque. Si se guarda igual, queda marcado con la alarma en "Aplicaciones registradas".',
+    'Para corregir algo ya registrado, aprieta el <b>✏️</b> en "Aplicaciones registradas": se reabre en su formulario, y al guardar el stock se recalcula solo.'
   ],
   tips:[
     'Los litros por sector son los que reparten el consumo entre sectores. Si pones el total en un solo sector, el gasto por hectárea queda deformado.',
     'Un estanque con varios días de aplicación <b>no se puede corregir con el ✏️</b>. Si quedó mal, avísale a gerencia.',
     'Los sectores salen de la superficie cargada en el predio. Si falta un sector, avisa a gerencia para que lo agregue.',
     'Si una sal aparece con <b>"revisar: 2 productos"</b>, es que el catálogo tiene ese producto cargado más de una vez. Se elige el que tenga stock en tu predio, pero conviene avisar a gerencia para que junte las entradas repetidas.',
-    'Cuando algo se aplica sin descontar, queda un aviso amarillo en "Últimas aplicaciones". No es un error de la app: es para que bodega lo regularice.'
+    'Cuando algo se aplica sin descontar, queda un aviso amarillo en "Aplicaciones registradas". No es un error de la app: es para que bodega lo regularice.'
   ]
 },
 {
@@ -8698,6 +8835,7 @@ const MANUAL_SECCIONES=[
   intro:'Tu cuenta no registra aplicaciones, pero sí puede revisarlas. Bodega, además, puede corregir un registro mal anotado.',
   pasos:[
     'En <b>Aplicaciones</b> aparece el listado de lo registrado en tus predios: fecha, quién lo registró, receta, módulos o sectores, litros y la marca amarilla de lo que se aplicó <b>sin descontar de bodega</b>.',
+    '<b>Buscar aplicaciones pasadas</b>: en la tarjeta <b>📋 Aplicaciones registradas</b>, arriba de la lista, elige el <b>tipo</b> (🍃 foliar, 🧪 fertilización, ⚗️ ácidos o 💧 vía riego), las fechas <b>Desde/Hasta</b>, el <b>producto</b> o <b>quién registró</b>. Con <b>Orden: Por fecha de aplicación</b> quedan ordenadas por el día en que se aplicaron. Aprieta <b>Ver más</b> para seguir bajando y <b>✕ Limpiar</b> para volver a las últimas registradas. <b>⬇️ Excel</b> baja lo filtrado, una fila por producto (fecha, módulos o sectores, dosis, agua y cantidad usada).',
     '<b>Solo bodega:</b> el <b>✏️</b> de un registro lo reabre en su formulario. Ahí se corrige la dosis, el mojamiento, los litros o el producto con que se descuenta, y se puede agregar un producto que faltaba escribiéndolo en la receta y apretando "Interpretar".',
     'Al guardar, el stock se recalcula solo: se devuelve a la bodega lo que había descontado el registro anterior y se descuenta lo corregido. No hay que ajustar nada a mano en la planilla.',
     'El registro guarda quién lo corrigió y cuándo, y eso queda a la vista en el listado.'
