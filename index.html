@@ -3371,6 +3371,8 @@ function movFila(m){
     f.cantidad=Number(m.cantidad)||0; f.recinto=m.destino||''; f.desde='Desde '+nombreBodega(m.origen||'',true); f.recintos=[m.destino,m.origen];
     f.estado=m.estado?(MOV_ESTADO_TXT[m.estado]||m.estado):'✅ Recibido';   // los anteriores a la v44 no tenían estado
     if(m.estado==='recibido'&&m.fechaRecepcion&&m.fechaRecepcion!==m.fecha) f.nota='Recibido el '+fDMY(m.fechaRecepcion);
+    if(Array.isArray(m.correcciones)&&m.correcciones.length){ const c=m.correcciones[m.correcciones.length-1];   // v51
+      f.nota=[f.nota, `Destino corregido por ${c.porNombre||''} (antes ${nombreBodega(c.de,true)})`].filter(Boolean).join(' · '); }
     if((m.estado==='rechazado'||m.estado==='anulado')&&m.motivoRechazo) f.nota=m.motivoRechazo;
     f.ingreso = m.estado!=='rechazado' && m.estado!=='anulado';
   }else if(m.tipo==='devolucion'){
@@ -5479,6 +5481,9 @@ async function cargarDespachosPendientes(){
 function despPuedoRecibir(m){ return esResponsableRecinto(m.destino); }
 function despPuedoAnular(m){ return isAdmin() || (currentUser && m.registradoPor===currentUser.uid) || userRecintos().includes(m.origen); }
 function despPorRecibir(){ return despPendCache.filter(despPuedoRecibir); }
+// v51 · Corregir el destino de un despacho que todavía no se recibe: quien lo
+// envió, el responsable del origen, bodega o gerencia.
+function despPuedoEditar(m){ return despPuedoAnular(m) || canCatalogo(); }
 
 async function renderDespachosPendientes(){
   const card=document.getElementById('despCard'), box=document.getElementById('despBody');
@@ -5496,10 +5501,55 @@ async function renderDespachosPendientes(){
     </div>${acciones}</div>`;
   box.innerHTML =
     (recibir.length?`<div style="font-size:11px;font-weight:700;color:var(--dark);margin-bottom:2px">Para recibir en tus recintos</div>`+
-      recibir.map(m=>fila(m,`<button class="btn btn-sm" style="background:#2E7D32;color:#fff" onclick="recibirDespacho('${m.id}')">✅ Recibido</button>
+      recibir.map(m=>fila(m,`${despPuedoEditar(m)?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" title="Corregir el recinto de destino" onclick="editarDestinoDespacho('${m.id}')">✏️ Destino</button>`:''}
+        <button class="btn btn-sm" style="background:#2E7D32;color:#fff" onclick="recibirDespacho('${m.id}')">✅ Recibido</button>
         <button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" onclick="rechazarDespacho('${m.id}')">✖ No llegó</button>`)).join(''):'')
     +(enviados.length?`<div style="font-size:11px;font-weight:700;color:var(--dark);margin:10px 0 2px">Enviados, esperando confirmación</div>`+
-      enviados.map(m=>fila(m, despPuedoAnular(m)?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" onclick="rechazarDespacho('${m.id}',true)">Anular</button>`:'')).join(''):'');
+      enviados.map(m=>fila(m, (despPuedoEditar(m)?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" title="Corregir el recinto de destino" onclick="editarDestinoDespacho('${m.id}')">✏️ Destino</button>`:'')
+        +(despPuedoAnular(m)?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark)" onclick="rechazarDespacho('${m.id}',true)">Anular</button>`:''))).join(''):'');
+}
+
+// v51 · Cambia el recinto de destino de un despacho pendiente. No mueve stock:
+// el producto ya salió del origen y todavía no entra a ningún destino. Queda
+// registrada la corrección (de qué recinto a cuál, quién y cuándo).
+function editarDestinoDespacho(id){
+  const m=despPendCache.find(x=>x.id===id);
+  if(!m || !despPuedoEditar(m)){ toast('Sin permiso para corregir este despacho'); return; }
+  const opciones=RECINTO_ORDER.filter(k=>k!==m.origen);
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">✏️ Corregir destino</div>
+    <div class="modal-sub" style="line-height:1.6"><b>${escH(m.nombre||'')}</b> · ${fmtNum(m.cantidad,2)} ${escH(m.unidad||'')}<br>
+      Desde ${escH(nombreBodega(m.origen,true))} · enviado el ${escH(fDMY(m.fecha||''))} por ${escH(m.registradoPorNombre||'')}<br>
+      Destino actual: <b>${escH(nombreBodega(m.destino,true))}</b></div>
+    <div class="form-row"><label>Destino correcto</label><select id="edDestino">${recintoOptsHTML(opciones, m.destino)}</select></div>
+    <div class="form-row"><label>Motivo (opcional)</label><input type="text" id="edMotivo" placeholder="Ej: iba a la Caseta de Riego, no a Bodega Principal"></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">El stock no cambia: el despacho sigue pendiente y lo confirma el responsable del nuevo destino.</div>
+    <button class="btn btn-primary" onclick="guardarDestinoDespacho('${m.id}')">Guardar destino</button>`;
+  document.getElementById('overlay').classList.add('open');
+}
+async function guardarDestinoDespacho(id){
+  const m=despPendCache.find(x=>x.id===id);
+  if(!m || !despPuedoEditar(m)){ toast('Sin permiso'); return; }
+  const nuevo=document.getElementById('edDestino').value;
+  const motivo=(document.getElementById('edMotivo').value||'').trim();
+  if(!esRecinto(nuevo) || nuevo===m.origen){ toast('⚠️ Elige un recinto distinto del origen'); return; }
+  if(nuevo===m.destino){ toast('Es el mismo destino: no hay nada que corregir'); return; }
+  const yo=quienSoy();
+  loading(true,'Guardando…');
+  try{
+    await db.runTransaction(async tx=>{
+      const mref=db.collection('movimientos').doc(id);
+      const mv=(await tx.get(mref)).data();
+      if(!mv || mv.tipo!=='despacho' || mv.estado!=='pendiente') throw new Error('Este despacho ya no está pendiente');
+      const corr=(Array.isArray(mv.correcciones)?mv.correcciones:[]).concat([{campo:'destino', de:mv.destino, a:nuevo, motivo:motivo||null, por:yo.uid, porNombre:yo.nombre, at:Date.now()}]);
+      tx.update(mref, {destino:nuevo, correcciones:corr, editadoPor:yo.uid, editadoPorNombre:yo.nombre, editadoAt:Date.now()});
+    });
+    closeModal();
+    await renderDespachosPendientes();
+    if(typeof movCargar==='function') movCargar();
+    toast(`✅ Destino corregido: ahora va a ${nombreBodega(nuevo,true)}`);
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
 }
 
 async function recibirDespacho(id){
@@ -8626,10 +8676,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v50';
+const MANUAL_VERSION='v51';
 const MANUAL_FECHA='2026-09-25';
 
 const MANUAL_CAMBIOS=[
+  {v:'v51', f:'25-09-2026', txt:'<b>Bodega:</b> un despacho que todavía no se recibe se puede corregir de destino con <b>✏️ Destino</b> en la tarjeta 📥 Despachos por confirmar (quien lo envió, el responsable del origen, bodega o gerencia). No mueve stock y queda anotado quién lo cambió; en <b>Ingresos y movimientos</b> aparece como "Destino corregido".'},
   {v:'v50', f:'25-09-2026', txt:'<b>Aplicaciones:</b> la lista ahora se llama <b>📋 Aplicaciones registradas</b> y deja revisar <b>todo lo registrado</b>, no solo las 15 últimas. Se filtra por tipo (foliar, fertilización, ácidos, vía riego), predio, fechas, producto y quién registró; se puede ordenar por fecha de aplicación, cargar más con <b>Ver más</b> y bajar lo filtrado a <b>Excel</b>, una fila por producto.'},
   {v:'v49', f:'25-09-2026', txt:'<b>Bodega:</b> nueva tarjeta <b>📥 Ingresos y movimientos</b>: todos los que entran a Bodega (jefaturas, bodega, responsables de recinto y gerencia) pueden ver qué productos han entrado a cada recinto, con fecha, cantidad, proveedor u origen y quién lo registró, filtrar por fechas, recinto, tipo y producto, y bajarlo a Excel. <b>Aplicaciones:</b> si la bodega no acepta un descuento, ahora aparece un aviso rojo que hay que cerrar (antes decía "stock descontado" aunque no se hubiera movido), y el descuento queda anotado para que gerencia o bodega lo aplique desde la tarjeta <b>⚠️ Descuentos que no llegaron a bodega</b>.'},
   {v:'v48', f:'24-09-2026', txt:'<b>Ácidos:</b> ya no se anota volumen de estanque, porque los ácidos se aplican puros. Si va <b>un solo ácido</b>, sale directo del bidón y se anotan los <b>litros de ácido</b> por sector. Si van <b>nítrico y fosfórico juntos</b>, se anotan los kilos de cada uno cargados al estanque y los <b>litros de mezcla</b> por sector. La alarma de <b>4 L/ha en el día</b> ahora suma los dos ácidos. <b>Bodega:</b> nueva <b>↩️ Devolución al proveedor</b> para el producto con problema o comprado de más: descuenta del recinto y queda registrada con motivo, proveedor y documento. Además, desde las 21:00 la app ya no propone la fecha del día siguiente.'},
@@ -8854,6 +8905,7 @@ const MANUAL_SECCIONES=[
     '<b>Comprar</b> (quien tenga 🛒, hoy Luciano): 📦 del producto → Registrar compra → elige el <b>recinto que recibe</b>. Lo que se compra por volumen y queda guardado en el proveedor va a <b>Bodega de Proveedores</b>.',
     '<b>Despachar</b>: 📦 del producto → Despacho → desde uno de tus recintos hacia otro. Sale al tiro del origen y queda <b>pendiente</b> hasta que el responsable del recinto que recibe lo confirma.',
     '<b>Confirmar lo que te llega</b>: al entrar, la app avisa si tienes despachos por confirmar, y el botón Bodega muestra cuántos son. En la tarjeta <b>📥 Despachos por confirmar</b> aprieta <b>✅ Recibido</b>, y recién ahí entra a tu recinto. Si no llegó, aprieta <b>✖ No llegó</b>: el producto vuelve al origen y queda anotado el motivo.',
+    '<b>Corregir el destino de un despacho</b> (quien lo envió, el responsable del recinto de origen, bodega o gerencia): mientras esté <b>pendiente</b>, en <b>📥 Despachos por confirmar</b> aprieta <b>✏️ Destino</b>, elige el recinto correcto y, si quieres, el motivo. El stock no cambia; el despacho pasa a esperar la confirmación del nuevo destino y la corrección queda anotada. Si ya se recibió, hay que hacerlo con un despacho de vuelta.',
     '<b>Devolver al proveedor</b> (quien tenga 🛒, hoy Luciano, y gerencia): 📦 del producto → <b>↩️ Devolución al proveedor</b> → recinto desde donde sale, cantidad, motivo (producto con problema, se compró de más u otro), proveedor y, si hay, el N° de guía o nota de crédito. Sale al tiro del stock del recinto y queda registrada con el valor al último precio de compra.',
     '<b>Ajustar por conteo</b>: 📦 del producto → Ajuste → recinto, lo que contaste y el motivo. Queda registrado como movimiento con la diferencia.',
     '<b>Ver lo que ha entrado</b>: tarjeta <b>📥 Ingresos y movimientos</b>, debajo de la planilla. Parte mostrando los ingresos (compras y despachos) de los últimos 30 días. Cambia las fechas, elige un recinto o un campo completo, el tipo de movimiento o escribe el producto. Los despachos muestran si están ✅ recibidos o ⏳ por confirmar. El botón <b>⬇️ Excel</b> baja lo que estás viendo. Es solo consulta: no cambia el stock.',
