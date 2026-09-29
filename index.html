@@ -395,6 +395,52 @@ select:focus,input:focus{border-color:var(--green)}
 .modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}
 .modal-content{background:var(--cream);border-radius:16px;padding:24px;width:100%;max-width:600px;box-shadow:0 10px 40px rgba(0,0,0,.2)}
 body.vista-escritorio .modal-content{max-width:700px}
+/* v52 · Control del proceso productivo */
+.ctl-tabs{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.ctl-tab{flex:1;min-width:110px;border:1px solid var(--sand);background:var(--cream);border-radius:10px;padding:7px 8px;font-size:12px;font-weight:600;cursor:pointer;color:var(--dark)}
+.ctl-tab.on{background:var(--green);color:#fff;border-color:var(--green)}
+.ctl-chips{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
+.ctl-chip{border:1px solid var(--sand);background:#fff;border-radius:20px;padding:4px 10px;font-size:11px;cursor:pointer;color:var(--text)}
+.ctl-chip.on{background:var(--dark);color:#fff;border-color:var(--dark)}
+.ctl-fechas{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);font-weight:400;margin-left:6px;text-transform:none;letter-spacing:0}
+.ctl-card-hoy{border:2px solid var(--green-xl)}
+.ctl-card-atr{border:2px solid #FCA5A5;background:#FFFBFB}
+.ctl-nota{font-size:11px;color:var(--muted);line-height:1.5;margin:4px 0 8px}
+.ctl-prog{border-top:1px solid var(--sand);padding-top:8px;margin-top:8px}
+.ctl-prog:first-of-type{border-top:none;margin-top:0}
+.ctl-prog-h{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;font-size:12px;margin-bottom:6px}
+.ctl-sub{font-size:11px;color:var(--muted);margin-top:3px}
+.ctl-ref{color:#B45309}
+.ctl-it{display:flex;gap:8px;align-items:flex-start;padding:7px 8px;border-radius:10px;background:var(--cream);margin-bottom:5px}
+.ctl-ico{font-size:15px;line-height:1.2;min-width:18px;text-align:center}
+.ctl-body{flex:1;min-width:0}
+.ctl-nom{font-size:12.5px;font-weight:600;line-height:1.35}
+.ctl-meta{font-size:10.5px;color:var(--muted);margin:2px 0}
+.ctl-resp{display:inline-block;font-size:10px;background:#fff;border:1px solid var(--sand);border-radius:6px;padding:1px 6px;margin:2px 3px 0 0}
+.ctl-hecho{font-size:11px;color:var(--green);margin-top:3px}
+.ctl-det{font-size:11px;color:var(--text);margin-top:4px;line-height:1.45}
+.ctl-det summary{cursor:pointer;color:var(--muted)}
+.ctl-btn{flex-shrink:0}
+.ctl-ok{background:#ECFDF3}.ctl-na{background:#F3F4F6;opacity:.8}.ctl-atrasada{background:#FEF2F2;border:1px solid #FCA5A5}
+.ctl-futura{background:#fff;border:1px dashed var(--sand)}.ctl-previa{opacity:.6}.ctl-cond{background:#FFFBEB}
+.ctl-oc{font-size:11.5px;margin-top:4px;padding:3px 6px;border-radius:6px}
+.ctl-gwrap{overflow:auto;max-height:70vh;border:1px solid var(--sand);border-radius:8px}
+.ctl-gantt{border-collapse:separate;border-spacing:0;font-size:10px}
+.ctl-gantt th,.ctl-gantt td{border-right:1px solid #eee;border-bottom:1px solid #eee;padding:0;height:22px}
+.ctl-gantt thead th{position:sticky;top:0;background:var(--cream);z-index:2;font-family:'DM Mono',monospace;font-weight:500}
+.ctl-gantt thead tr:nth-child(2) th{top:22px}
+.ctl-gfix{position:sticky;left:0;background:#fff;z-index:1;min-width:190px;max-width:190px;padding:2px 6px!important;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctl-gantt thead .ctl-gfix{z-index:3;background:var(--cream)}
+.ctl-gw{min-width:26px;text-align:center}.ctl-gd{font-size:8px;color:var(--muted)}
+.ctl-gc{text-align:center;min-width:26px;font-weight:700}
+.ctl-get{background:var(--dark)!important;color:#fff;font-weight:700;font-size:10px;padding:3px 6px!important}
+.ctl-gresp{float:right;margin-left:4px}
+.ctl-ghoy{box-shadow:inset 2px 0 0 #D62828,inset -2px 0 0 #D62828}
+.ctl-gbarra{background:#E8F5EC}
+.ctl-g-ok{background:#40916C;color:#fff}.ctl-g-na{background:#D1D5DB;color:#374151}.ctl-g-atrasada{background:#F87171;color:#fff}
+.ctl-g-pendiente{background:#FDE68A}.ctl-g-futura{background:#B7E4C7}.ctl-g-previa{background:#E5E7EB}
+.ctl-leyenda{font-size:10.5px;color:var(--muted);line-height:2;margin-bottom:6px}
+.ctl-leyenda span{display:inline-block;min-width:16px;text-align:center;border-radius:3px;margin:0 2px 0 6px;font-weight:700}
 </style>
 </head>
 <body>
@@ -453,6 +499,7 @@ body.vista-escritorio .modal-content{max-width:700px}
       <button class="nb" id="btnProg"   onclick="showScr('prog',this)">Prog.</button>
       <button class="nb" id="btnAvance" onclick="showScr('avance',this)">Avance</button>
       <button class="nb" id="btnCiclos" onclick="showScr('ciclos',this)">Ciclos</button>
+      <button class="nb" id="btnControl" style="display:none" onclick="showScr('control',this)">Control</button>
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
       <button class="nb" id="btnAplic" style="display:none" onclick="showScr('aplic',this)">Aplicaciones</button>
       <button class="nb" id="btnGastos" style="display:none" onclick="showScr('gastos',this)">Gastos</button>
@@ -543,6 +590,12 @@ body.vista-escritorio .modal-content{max-width:700px}
       <p style="font-size:12px;color:var(--muted);line-height:1.5">Abre un ciclo al comenzar una temporada, ciérralo cuando termina. Entre ciclos puede haber días sin cultivo.</p>
     </div>
     <div id="ciclosContent"></div>
+  </div>
+
+  <!-- CONTROL (v52) -->
+  <div id="screen-control" class="screen">
+    <div class="sp" style="height:10px"></div>
+    <div id="ctrlContent"></div>
   </div>
 
   <!-- INFORMES -->
@@ -1306,6 +1359,7 @@ function canViewInformes(){
 function canVerPantalla(name){
   if(['registro','prog','avance','ciclos'].includes(name))return isCampo();
   if(name==='informes')return canViewInformes();
+  if(name==='control')return canVerControl();   // v52
   if(name==='aplic')return canVerAplic();
   if(name==='gastos')return canVerGastos();
   if(name==='planilla'||name==='bodega')return canBodega();
@@ -5789,6 +5843,7 @@ function applyRoleUI(){
   show('btnProg',     isCampo());
   show('btnAvance',   isCampo());
   show('btnCiclos',   isCampo());
+  show('btnControl',  canVerControl());   // v52
   show('btnInformes', canViewInformes());
   show('btnAplic',    canVerAplic());
   show('btnGastos',   canVerGastos());
@@ -6729,6 +6784,7 @@ function renderCiclos(){
               ${c.modulos&&c.modulos.length?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-bottom:3px">📦 ${modulosLabel(c.modulos)}</div>`:''}
               <div class="ci-dates">Inicio: ${fDMY(c.inicio)} · ${isOpen?'<strong style="color:var(--c-primor)">En curso</strong>':`Cierre: ${fDMY(c.fin)}`}</div>
               ${c.superficieM2?`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px">📐 ${c.superficieM2.toLocaleString()} m²</div>`:''}
+              ${isOpen&&ctrlPlantacionTxt(c)?`<div style="font-size:11px;color:var(--c-primor);margin-top:2px">${ctrlPlantacionTxt(c)}</div>`:''}
               ${isFuture?`<span class="ci-status-future">Futuro</span>`:isOpen?`<span class="ci-status-open">● Abierto</span>`:`<span class="ci-status-closed">Cerrado</span>`}
             </div>
             <div class="ci-actions">
@@ -6744,16 +6800,18 @@ function renderCiclos(){
         body.innerHTML=`<p style="font-size:12px;color:var(--muted);padding:4px 0 8px">Sin ciclos registrados.</p>`;
       }
       // Botón "Abrir nuevo ciclo": disponible mientras quede al menos un cultivo sin abrir
+      // v52 · Las épocas se superponen (primor con trastomate, verano con
+      // primor, trastomate e invierno…): un mismo cultivo por época puede tener
+      // varios ciclos abiertos, uno por época. Pimentón sigue con uno.
       const cultivosTodos = cultivosCache.length ? cultivosCache : [{id:'tomate'},{id:'especialidades'},{id:'pimenton'}];
-      const ocupados = new Set(abiertos.map(c=>c.cultivo).filter(Boolean));
-      const hayCultivoLibre = cultivosTodos.some(c=>!ocupados.has(c.id));
+      const hayCultivoLibre = cultivosTodos.some(c=>cicloEpocasLibres(abiertos,c).length>0);
       if(hayCultivoLibre){
         const ar=document.createElement('div');ar.className='add-cycle-row';
         ar.innerHTML=`<button class="open-cycle-btn" onclick="modalAbrirCiclo('${pid}','${sub}')">🌱 Abrir nuevo ciclo</button>`;
         body.appendChild(ar);
       } else {
         const ar=document.createElement('div');ar.style.cssText='font-size:11px;color:var(--muted);padding:6px 0';
-        ar.textContent='Hay un ciclo abierto por cada cultivo. Cierra alguno para abrir uno nuevo.';
+        ar.textContent='Hay un ciclo abierto por cada cultivo y época. Cierra alguno para abrir uno nuevo.';
         body.appendChild(ar);
       }
       gb.appendChild(body);div.appendChild(gb);
@@ -6768,15 +6826,14 @@ async function modalAbrirCiclo(predioId,subjefe){
     : [{id:'tomate',nombre:'Tomate',usaMesPlantacion:false},
        {id:'especialidades',nombre:'Especialidades',usaMesPlantacion:false},
        {id:'pimenton',nombre:'Pimentón',usaMesPlantacion:true}];
-  // Cultivos que ya tiene abiertos este subjefe (para no duplicar)
+  // v52 · Cultivos con alguna época libre (las épocas se superponen)
   const abiertos = getCiclosAbiertos(predioId,subjefe);
-  const cultivosOcupados = new Set(abiertos.map(c=>c.cultivo).filter(Boolean));
-  // Cultivos disponibles para abrir
-  const cultivosLibres = cultivos.filter(c=>!cultivosOcupados.has(c.id));
+  const cultivosLibres = cultivos.filter(c=>cicloEpocasLibres(abiertos,c).length>0);
   if(cultivosLibres.length===0){
-    toast('⚠️ Ya tienes un ciclo abierto por cada cultivo. Cierra alguno antes de abrir uno nuevo.');
+    toast('⚠️ Ya hay un ciclo abierto por cada cultivo y época. Cierra alguno antes de abrir uno nuevo.');
     return;
   }
+  mAbrirCtx={predioId,subjefe,cultivos,abiertos,plantTocada:false};
   const mods = modulosFinca(predioId);
   const añoActual = new Date().getFullYear();
   const añoOpts = [añoActual-1, añoActual, añoActual+1].map(a=>`<option value="${a}"${a===añoActual?' selected':''}>${a}</option>`).join('');
@@ -6789,7 +6846,7 @@ async function modalAbrirCiclo(predioId,subjefe){
       </select>
     </div>
     <div class="form-row" id="rowTemp"><label>Época</label>
-      <select id="mTemp">${TORDER.map(k=>`<option value="${k}">${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select>
+      <select id="mTemp" onchange="mAbrirSugerirPlant()">${TORDER.map(k=>`<option value="${k}">${TICONS[k]} ${TNAMES[k]}</option>`).join('')}</select>
     </div>
     <div class="form-row" id="rowMes" style="display:none"><label>Mes de plantación</label>
       <div style="display:flex;gap:8px">
@@ -6798,6 +6855,7 @@ async function modalAbrirCiclo(predioId,subjefe){
       </div>
     </div>
     <div class="form-row"><label>Fecha de inicio</label><input type="date" id="mIni" value="${todayIso}"></div>
+    ${htmlFilaPlantacion('', false)}
     <div class="form-row"><label>Módulos</label>
       ${mods.length
         ? `<div id="mMods" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;border:1px solid var(--sand);border-radius:8px;background:var(--cream)">
@@ -6819,6 +6877,47 @@ function mAbrirToggleCampos(){
   const usaMes = (c && c.usaMesPlantacion) || cul.value==='pimenton';
   document.getElementById('rowTemp').style.display = usaMes ? 'none' : '';
   document.getElementById('rowMes').style.display  = usaMes ? '' : 'none';
+  // v52 · Solo las épocas que este subjefe no tiene abiertas para ese cultivo
+  if(!usaMes && mAbrirCtx){
+    const libres = cicloEpocasLibres(mAbrirCtx.abiertos, c||{id:cul.value});
+    const sel = document.getElementById('mTemp');
+    const prev = sel.value;
+    sel.innerHTML = libres.map(k=>`<option value="${k}">${TICONS[k]} ${TNAMES[k]}</option>`).join('');
+    sel.value = libres.includes(prev) && mAbrirCtx.plantTocada ? prev : ctrlEpocaSugerida(libres);
+  }
+  const fp = document.getElementById('rowPlant');
+  if(fp) fp.style.display = cul.value==='tomate' ? '' : 'none';
+  mAbrirSugerirPlant();
+}
+// v52 · Contexto del modal de apertura y helpers de épocas / plantación
+let mAbrirCtx=null;
+function cicloEpocasLibres(abiertos, cult){
+  const usaMes = (cult && cult.usaMesPlantacion) || (cult && cult.id==='pimenton');
+  const mismos = (abiertos||[]).filter(c=>c.cultivo===cult.id);
+  if(usaMes) return mismos.length ? [] : ['_mes'];
+  const ocupadas = new Set(mismos.map(c=>c.temporada||'_sin'));
+  if(ocupadas.has('_sin')) return [];   // ciclo antiguo sin época: bloquea como antes
+  return TORDER.filter(k=>!ocupadas.has(k));
+}
+function htmlFilaPlantacion(fecha, conf){
+  return `<div class="form-row" id="rowPlant"><label>Fecha de plantación <span style="font-weight:400;text-transform:none;color:var(--muted)">(tomate · para el Control)</span></label>
+      <input type="date" id="mPlant" value="${fecha||''}" oninput="if(mAbrirCtx)mAbrirCtx.plantTocada=true">
+      <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-top:6px;text-transform:none;font-weight:400"><input type="checkbox" id="mPlantConf"${conf?' checked':''} style="width:auto;margin:0"> Fecha definitiva (si no, queda como estimada y se confirma después)</label>
+      <div id="mPlantRef" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
+    </div>`;
+}
+function mAbrirSugerirPlant(){
+  const inp=document.getElementById('mPlant'), t=document.getElementById('mTemp'), ref=document.getElementById('mPlantRef');
+  if(!inp||!t||!t.value||!CTRL_EPOCAS[t.value]) return;
+  const f=ctrlRefProxima(t.value);
+  if(ref) ref.textContent=`Referencia ${TNAMES[t.value]}: ${cFechaLarga(f)} (± 1 semana según el año).`;
+  if(mAbrirCtx && !mAbrirCtx.plantTocada) inp.value=f;
+}
+// Lee los campos de plantación del modal (solo tomate con época).
+function leerPlantacionModal(cultivo){
+  const inp=document.getElementById('mPlant');
+  if(cultivo!=='tomate'||!inp) return null;
+  return {plantacion:inp.value||null, plantacionConf:!!(inp.value&&document.getElementById('mPlantConf').checked)};
 }
 async function guardarApertura(predioId,subjefe){
   const cultivo = document.getElementById('mCul').value;
@@ -6833,7 +6932,7 @@ async function guardarApertura(predioId,subjefe){
   if(!cultivo){toast('⚠️ Elige cultivo');return}
   if(!ini){toast('⚠️ Ingresa fecha de inicio');return}
   if(!modulos.length){toast('⚠️ Selecciona al menos un módulo');return}
-  // Determinar campos según cultivo
+  const plant = leerPlantacionModal(cultivo);   // v52
   const cultMeta = cultivosCache.find(c=>c.id===cultivo);
   const usaMes = (cultMeta && cultMeta.usaMesPlantacion) || cultivo==='pimenton';
   const data = { cultivo, inicio:ini, fin:null, notas, superficieM2:m2,
@@ -6844,6 +6943,8 @@ async function guardarApertura(predioId,subjefe){
     data.mesPlantacion = { mes, año };
   } else {
     data.temporada = document.getElementById('mTemp').value;
+    if(!data.temporada){toast('⚠️ Elige la época');return}
+    if(plant && plant.plantacion){ data.plantacion=plant.plantacion; data.plantacionConf=plant.plantacionConf; }
   }
   // Verificar duplicados (mismo cultivo+temporada o cultivo+mes-año abierto)
   const abiertos = getCiclosAbiertos(predioId,subjefe);
@@ -6923,6 +7024,7 @@ async function modalEditarCiclo(predioId,subjefe,cicloId){
     </div>
     <div class="form-row"><label>Fecha inicio</label><input type="date" id="mIni" value="${c.inicio}"></div>
     <div class="form-row"><label>Fecha cierre <span style="font-weight:400;text-transform:none">(vacío = en curso)</span></label><input type="date" id="mFin" value="${c.fin||''}"></div>
+    ${htmlFilaPlantacion(c.plantacion||'', !!c.plantacionConf)}
     <div class="form-row"><label>Módulos</label>
       ${mods.length
         ? `<div id="mMods" style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;border:1px solid var(--sand);border-radius:8px;background:var(--cream)">
@@ -6946,6 +7048,8 @@ function mEditarToggleCampos(){
   const usaMes = (c && c.usaMesPlantacion) || cul.value==='pimenton';
   document.getElementById('rowTemp').style.display = usaMes ? 'none' : '';
   document.getElementById('rowMes').style.display  = usaMes ? '' : 'none';
+  const fp = document.getElementById('rowPlant');   // v52
+  if(fp) fp.style.display = cul.value==='tomate' ? '' : 'none';
 }
 async function guardarEdicionCiclo(predioId,subjefe,cicloId){
   const cultivo = document.getElementById('mCul').value;
@@ -6971,6 +7075,13 @@ async function guardarEdicionCiclo(predioId,subjefe,cicloId){
   } else {
     upd.temporada = document.getElementById('mTemp').value;
     upd.mesPlantacion = firebase.firestore.FieldValue.delete();
+    // v52 · Fecha de plantación (Control del proceso)
+    const plant = leerPlantacionModal(cultivo);
+    if(plant && plant.plantacion){ upd.plantacion=plant.plantacion; upd.plantacionConf=plant.plantacionConf; }
+    else { upd.plantacion=firebase.firestore.FieldValue.delete(); upd.plantacionConf=firebase.firestore.FieldValue.delete(); }
+    // Otra época abierta igual para este subjefe y cultivo: se evita el duplicado
+    const dupE = getCiclosAbiertos(predioId,subjefe).find(x=>x.id!==cicloId && x.cultivo===cultivo && x.temporada===upd.temporada);
+    if(dupE && !fin){toast('⚠️ Ya hay un ciclo abierto de esa época para este subjefe');return}
   }
   loading(true,'Actualizando…');
   try{
@@ -8662,6 +8773,633 @@ aplicarVista();
 // SCREEN SWITCHER
 // ══════════════════════════════════════════════
 
+const CTRL_ACTS=[{"id":1,"et":"A","nom":"Muestreo de suelo para análisis de fertilidad","det":"2 sectores por época. Elegir 10 techos; muestras a 5, 15 y 25 m de una mesa, entre 3 y 20 cm. Pedir pH, CE, MO, N-P-K disponibles, bases de cambio, CIC, N total, C/N, saturación de pasta (Agrolab cód. 4038).","mom":"8 semanas antes de preparar el suelo","fr":"1 vez por ciclo","resp":["J"],"rt":"Jefatura predial","reg":"Laboquim Terra / Agrolab","si":-8,"sf":-8,"tipo":"hito"},{"id":2,"et":"A","nom":"Compra y aplicación de enmiendas según análisis","det":"Yeso agrícola + compost + guano estabilizado o guanito + chip de quillay; cantidades según el análisis de fertilidad.","mom":"Preparación anual del suelo","fr":"1 vez al año","resp":["J"],"rt":"Jefatura predial","reg":"Registro de aplicaciones","si":-6,"sf":-5,"tipo":"hito"},{"id":3,"et":"A","nom":"Preparación de suelo","det":"Una vez al año.","mom":"Antes del ciclo que corresponda","fr":"1 vez al año","resp":["J"],"rt":"Jefatura predial","reg":"Registro de labores","si":-6,"sf":-4,"tipo":"hito"},{"id":4,"et":"A","nom":"Análisis fitopatológico de suelo","det":"Hongos, bacterias y nemátodos, en mesas con antecedentes de infecciones. Antes de aplicar nematicidas y antes de fumigación (Agrocelhone/Triform).","mom":"Antes de cada establecimiento","fr":"1 vez por ciclo","resp":["R"],"rt":"Encargado de riego","reg":"Diagnofruit","si":-4,"sf":-3,"tipo":"hito"},{"id":5,"et":"A","nom":"Encargo de plantas al vivero con estándar de despunte","det":"Bandeja 104, injertadas, 2-3 ejes (preferir 3). Encargar con 100 DÍAS de anticipación a la plantación del ciclo. Despunte: may-jul 3-4 sem antes (brotes 3-4 cm); ago 2-3 sem (2-3 cm); oct-feb 1-2 sem (0,5-1 cm).","mom":"100 días antes de la plantación","fr":"1 vez por ciclo","resp":["J"],"rt":"Jefatura predial","reg":"Contrato / ficha de vivero","si":-15,"sf":-14,"tipo":"hito"},{"id":6,"et":"A","nom":"Riego de pre-plantación con cintas juntas al centro","det":"Humedad uniforme en la línea de plantación, ≤25% volumétrica el día del establecimiento. CE directa a 5 cm <1,2-1,5 mS (dic-feb <1,0; suelos livianos <0,8).","mom":"Días previos al trasplante","fr":"1 vez por ciclo","resp":["R"],"rt":"Encargado de riego","reg":"Registro de riego","si":-1,"sf":0,"tipo":"hito"},{"id":7,"et":"B","nom":"Recepción de plantas: ficha de vivero","det":"Completar ficha con fechas de siembra, injertación, despunte y entrega según contrato. Verificar uniformidad, sanidad y raíces activas.","mom":"Llegada de cada partida","fr":"Cada partida","resp":["J"],"rt":"Jefatura predial","reg":"Ficha de recepción","si":0,"sf":0,"tipo":"hito"},{"id":8,"et":"B","nom":"Muestras de plantín a análisis fitopatológico","det":"Virus (PepMV, TSWV, PNSV), bacterias (Clavibacter, Pseudomonas, Ralstonia) y hongos.","mom":"Llegada de cada partida","fr":"Cada partida","resp":["J"],"rt":"Jefatura predial","reg":"Diagnofruit (H. García)","si":0,"sf":0,"tipo":"hito"},{"id":9,"et":"B","nom":"Aplicación de Nimitz con cintas juntas","det":"SOLO si NO se aplicó fumigante de suelo antes de la plantación (Agrocelhone/Triform): si la mesa está fumigada, marcar «No aplica (fumigado)». Fluensulfone 48%. 3 L/ha a 300 ppm en 10.000 L (11 min a 55 m³/ha/h). Protección ~45 días. Considerar estabilización de presión y volumen para sacar el producto de las cintas.","mom":"A la plantación (solo suelo no fumigado)","fr":"1 vez por ciclo","resp":["R"],"rt":"Encargado de riego","reg":"Registro de aplicaciones","si":0,"sf":0,"tipo":"hito","naTxt":"No aplica (fumigado)"},{"id":10,"et":"B","nom":"Trasplante y apertura de cintas a 10 cm","det":"El día del establecimiento las cintas se abren a 10 cm entre ellas; permanecen así hasta lograr ≥20 cm de crecimiento lateral de raíces.","mom":"Día del trasplante","fr":"1 vez por ciclo","resp":["S"],"rt":"Subjefe de sector","reg":"Registro de labores","si":0,"sf":0,"tipo":"hito"},{"id":11,"et":"C","nom":"Aporte de carbono y biología del cultivo","det":"20 kg/ha de C de ácidos húmicos + 1 kg/ha de C de algas + microorganismos hasta 10⁶ UFC/g (cepa identificada; PSB sí, micorrizas no con P alto). Aplicar cada 14 días DURANTE TODO EL CICLO, hasta cumplir las metas propuestas.","mom":"Durante todo el ciclo","fr":"Cada 14 días (verificar cumplimiento del plan cada 30 días)","resp":["R"],"rt":"Encargado de riego","reg":"Registro de aplicaciones / plan de C","si":0,"sf":"F","tipo":"sem","per":2},{"id":12,"et":"C","nom":"Registro de antesis de cada racimo","det":"Fecha de antesis de las 2 primeras flores de cada racimo. Permite estimar cosecha y calcular la mitad del período de crecimiento.","mom":"En cada antesis","fr":"Por racimo","resp":["R"],"rt":"Encargado de riego","reg":"Registro de campo","si":4,"sf":"C","tipo":"sem"},{"id":13,"et":"C","nom":"Medición de diámetro de tallo y largo de hoja","det":"Tallo: 1 cm bajo la inserción del racimo, 5 tallos seguidos (R1 mín 12, ideal 14-16 mm; R2+ 15-19, ideal 17-18). Hoja bajo el racimo, en cm.","mom":"En antesis de cada racimo (máx. 2 días antes de visita del asesor)","fr":"Por racimo","resp":["R"],"rt":"Encargado de riego","reg":"Registro de campo","si":4,"sf":"C","tipo":"sem"},{"id":14,"et":"C","nom":"Primera apertura de cintas a 30-40 cm","det":"Riego previo de 3 L/m; separación según suelo y época. En suelos de textura pesada abrir de inmediato a 40 cm entre ellas, sino dejar a 30 cm. Luego riego largo para llegar a 30 cm de profundidad.","mom":"Antesis del racimo 1","fr":"1 vez por ciclo","resp":["R"],"rt":"Encargado de riego","reg":"Registro de riego","si":4,"sf":4,"tipo":"hito"},{"id":15,"et":"C","nom":"Aplicación del plan de control de nemátodos durante el cultivo","det":"Rugby (cadusafos 20%): 15 L/ha (20 min de inyección), con cintas abiertas, residual ~60 días. Salibro (fluazaindolizina): 2 L/ha (inyección en 20 min de riego) a los 60 días post trasplante. Rotar modo de acción (alternativas: Verango Prime 1 L/ha; Nemablinder 1 L/ha por 2-3 veces). El jefe de campo verifica CADA 30 DÍAS que el plan se esté cumpliendo.","mom":"Desde cintas abiertas (post antesis R1) y durante el cultivo","fr":"Según plan (verificación cada 30 días)","resp":["R","J"],"rt":"Encargado de riego (aplica) / Jefatura predial (verifica)","reg":"Registro de aplicaciones / plan de nemátodos","si":4,"sf":"F","tipo":"sem","per":4},{"id":16,"et":"C","nom":"Segunda apertura de cintas a 40-50 cm","det":"Última apertura del ciclo.","mom":"Antesis del racimo 4","fr":"1 vez por ciclo","resp":["R"],"rt":"Encargado de riego","reg":"Registro de riego","si":8,"sf":8,"tipo":"hito"},{"id":17,"et":"C","nom":"Muestreo de nemátodos en puntos fijos","det":"1 muestra por 0,5 ha, suelo y raíces a 15-20 cm, ~400 g, mismos puntos (campo-módulo-nave-mesa-poste). Umbral <100 juveniles/250 g; vida libre objetivo >4.000.","mom":"Durante todo el ciclo","fr":"Cada 28-30 días","resp":["R"],"rt":"Encargado de riego","reg":"INIA / UCh (prot. Magunacelaya)","si":0,"sf":"F","tipo":"sem","per":4},{"id":18,"et":"C","nom":"Medición semanal de diámetro ecuatorial de frutos","det":"Cada fruto del racimo (desde 1 cm), un tallo por sector de riego. Control: 6,5-7,0 cm a mitad del período (80-85% del tamaño final); tasa ~3,0 mm/d en semanas 2-3.","mom":"Desde cuaja hasta cosecha","fr":"Cada 7 días","resp":["R"],"rt":"Encargado de riego","reg":"Registro de campo / gráficos","si":5,"sf":"F","tipo":"sem"},{"id":19,"et":"C","nom":"Medición de largo de planta","det":"Regla del alto de la parrilla; registrar altura de un tallo. Sirve para planificar labores semanales.","mom":"Durante todo el ciclo","fr":"Cada 7 días","resp":["R"],"rt":"Encargado de riego","reg":"Registro de campo","si":1,"sf":"F","tipo":"sem"},{"id":20,"et":"C","nom":"Análisis MAFF / pasta saturada de seguimiento","det":"Tres tomas de seguimiento: floración del racimo 2, antesis del racimo 6 y cosecha del racimo 2. Pedir al laboratorio: pH, CE, macro y microelementos, bicarbonatos, materia orgánica. Comentar valores con el asesor.","mom":"Floración R2 · antesis R6 · cosecha R2","fr":"3 veces por ciclo","resp":["J"],"rt":"Jefatura predial","reg":"PUCV La Palma / Laboquim Terra","si":5,"sf":"C","tipo":"hito","veces":3},{"id":21,"et":"D","nom":"Decisión de riego conjunta","det":"Largo, frecuencia, pulsos y horario, considerando humedad de mesa, ancho de bulbo, desarrollo de la planta y clima del día + 3 días siguientes. ⅔ del agua antes del mediodía solar; con <800 J/cm²/día no regar después de las 15 h.","mom":"Todo el ciclo","fr":"Diaria","resp":["R","J"],"rt":"Encargado de riego + jefatura directa","reg":"Registro de riego","si":0,"sf":"F","tipo":"sem"},{"id":22,"et":"D","nom":"Instalación de tensiómetros y lisímetro de succión","det":"Instalar a los 7 DÍAS POST TRASPLANTE, al CENTRO de la mesa. Cambiarlos de posición al momento de abrir las cintas de riego (1ª y 2ª apertura).","mom":"7 días post trasplante (reubicar en cada apertura de cintas)","fr":"1 vez por ciclo + reubicaciones","resp":["R"],"rt":"Encargado de riego","reg":"Registro de labores","si":1,"sf":1,"tipo":"hito"},{"id":23,"et":"D","nom":"Registro de tensiones de suelo","det":"A 15-20 y 30-35 cm. Rangos: franco/arcilloso 15-20 cb; arenoso 12-18 cb.","mom":"Todo el ciclo (desde instalación)","fr":"Diaria (8-9 AM) o continua","resp":["R"],"rt":"Encargado de riego","reg":"Tensiómetros / sistema en línea","si":1,"sf":"F","tipo":"sem"},{"id":24,"et":"D","nom":"Revisión de humedad y CE de mesa con pala (calicata)","det":"Hoyo/calicata de 40 cm al costado de la mesa: evaluar humedad 0-20 y 20-40 cm, estado y concentración de raíces y presencia de nemátodos, y medir CE directa a 10, 20 y 30 cm. Objetivo CE: suelos livianos 0,4-0,6; otras 0,5-0,8 (verano) / 0,6-0,9 (otoño-inv); vigorosas 0,8-1,1 mS. Si excede: suspender fertilizante o bajar CE de riego.","mom":"Todo el ciclo","fr":"2 veces por semana (CE al menos cada 7 días)","resp":["R"],"rt":"Encargado de riego","reg":"Registro de campo","si":0,"sf":"F","tipo":"sem"},{"id":25,"et":"D","nom":"Medición de humedad volumétrica","det":"A 15 y 30 cm (medidor portátil o sensores fijos). Rango 16-25% según textura; bajar 3-5% entre eventos de riego. Registrar si se regó en las últimas 6 h.","mom":"Todo el ciclo","fr":"2 veces por semana (o continua)","resp":["R"],"rt":"Encargado de riego","reg":"Sensores / registro","si":0,"sf":"F","tipo":"sem"},{"id":26,"et":"D","nom":"Análisis de humedad por sensores en línea","det":"Revisión de las curvas de los sensores de humedad en línea: tendencia entre riegos, profundidad de mojamiento y respuesta a cada pulso; acordar ajustes de riego.","mom":"Todo el ciclo","fr":"Cada 7 días","resp":["R","J"],"rt":"Encargado de riego + Jefatura predial","reg":"Plataforma de sensores en línea","si":1,"sf":"F","tipo":"sem"},{"id":27,"et":"D","nom":"Extractómetro (lisímetro de succión) a 30 cm","det":"Succión 2 h después de terminado el riego; muestra al día siguiente. Medir CE, pH, NO₃, K, Ca. Uno por sector de riego o módulo.","mom":"Todo el ciclo (desde instalación)","fr":"1-2 veces por semana","resp":["R"],"rt":"Encargado de riego","reg":"En predio (día de visita del asesor)","si":1,"sf":"F","tipo":"sem"},{"id":28,"et":"D","nom":"Análisis de savia con ionómetros Horiba","det":"Hojas nuevas y viejas: CE, pH, NO₃, K, Ca, °Brix. CE de savia >15 mS → revisar vigor; si está alto, solo agua 1-2 días.","mom":"Todo el ciclo","fr":"Cada 7 días","resp":["R"],"rt":"Encargado de riego","reg":"Ionómetros Laquatwin / registro","si":2,"sf":"F","tipo":"sem"},{"id":29,"et":"D","nom":"Savia a laboratorio","det":"Macro y micronutrientes + °Brix, metodología Novacropcontrol.","mom":"Antesis del racimo 3 y 2 semanas antes de cosecha","fr":"2 veces por ciclo","resp":["R"],"rt":"Encargado de riego","reg":"Novacropcontrol","si":6,"sf":"C","tipo":"hito","veces":2},{"id":30,"et":"D","nom":"CE y pH del agua de riego en riegómetro","det":"Muestra al finalizar el riego, en al menos 3 riegómetros por sector.","mom":"Todo el ciclo","fr":"2 veces por semana","resp":["S"],"rt":"Subjefe de sector","reg":"Registro de sector","si":0,"sf":"F","tipo":"sem"},{"id":31,"et":"D","nom":"Ajuste del programa de fertilización","det":"N:K por etapa (1:1→1:3,5), N nítrico 50-140 ppm, K 100-400 ppm, Ca/Mg según agua. Tope 2,2-2,4 g por planta al día. CE de riego según CE de suelo (cuadro 16).","mom":"Todo el ciclo","fr":"Semanal (con asesor)","resp":["J","A"],"rt":"Jefatura predial + asesor","reg":"Programa de fertirriego","si":0,"sf":"F","tipo":"sem"},{"id":32,"et":"E","nom":"Registro de radiación solar diaria","det":"Piranómetro dentro del invernadero (20 cm sobre alambre de conducción), integrando J/cm² o MJ/día. Define la reposición de agua (cuadro 18).","mom":"Todo el año","fr":"Diaria","resp":["S"],"rt":"Subjefe de sector","reg":"Estación en línea","si":0,"sf":"F","tipo":"sem"},{"id":33,"et":"E","nom":"Registro de temperatura y humedad (DPV)","det":"Termohigrómetro a 1,5 m en el centro de un módulo, cada 15-30 min. Calcular DPV y horas por rango (0-0,2 / 0,2-0,5 / 0,5-1,5 / 1,5-2 / 2-3 / >3 kPa) y por rango de T° (<10, 10-20, 20-30, >30 °C).","mom":"Todo el año","fr":"Continua; análisis semanal","resp":["S"],"rt":"Subjefe de sector","reg":"Estación en línea / planilla semanal","si":0,"sf":"F","tipo":"sem"},{"id":34,"et":"E","nom":"Registro de temperatura de suelo","det":"A 10 y 20 cm en la mesa, cada 30 min. Apoya ventilación, riegos de enfriamiento y oportunidad de riego.","mom":"Todo el año","fr":"Diaria","resp":["S"],"rt":"Subjefe de sector","reg":"Termómetro de suelo","si":0,"sf":"F","tipo":"sem"},{"id":35,"et":"E","nom":"Operación diaria de ventilación","det":"Base: T° 15-28 °C diurno (no superar 32 °C prolongado); segundo criterio DPV 0,5-1,5 kPa. Lucarna primero; frontales solo alcanzan 15 m. Optimizar tiempos de apertura de los Encargados de planta.","mom":"Todo el año","fr":"Diaria","resp":["S"],"rt":"Subjefe de sector / Encargados de planta","reg":"App de labores (Fieldlog u otra)","si":0,"sf":"F","tipo":"sem"},{"id":36,"et":"E","nom":"Recomendación semanal de ventilación","det":"A partir del análisis de horas por rango de DPV y T° + pronóstico (heladas, lluvias, calor, nublados). Tras lluvia: privilegiar ventilar por humedad.","mom":"Todo el año","fr":"Semanal","resp":["S","A"],"rt":"Subjefe de sector + asesor","reg":"Planilla semanal","si":0,"sf":"F","tipo":"sem"},{"id":37,"et":"E","nom":"Instalación del doble techo","det":"Función principal: evitar goteo sobre plantas. Si radiación >750 W/m² al mediodía, complementar con pintura.","mom":"15 de abril (instalar) — 30 de octubre (retirar)","fr":"Anual","resp":["S"],"rt":"Subjefe de sector","reg":"Registro de labores","tipo":"anual","oc":[{"k":"inst","t":"Instalar (15 de abril)","m":[4]},{"k":"ret","t":"Retirar (30 de octubre)","m":[10]}]},{"id":38,"et":"E","nom":"Doble techo en plantaciones de dic-feb","det":"Solo las primeras semanas del cultivo (reducir radiación sobre plantas nuevas); luego retirar para no etiolar.","mom":"Primeras semanas post trasplante (dic-feb)","fr":"Por ciclo (dic-feb)","resp":["S"],"rt":"Subjefe de sector","reg":"Registro de labores","si":0,"sf":2,"tipo":"hito","soloMeses":[12,1,2]},{"id":39,"et":"E","nom":"Apertura de ventanas extra / mallas frontales","det":"Con >2 h diarias sobre 32 °C: subir área de ventilación de 15-23% a 35-40%. Sobre 35 °C: abrir mallas de frentes, vigilando abejorros, polilla y mosca blanca.","mom":"Meses de calor","fr":"Según condición","resp":["S"],"rt":"Subjefe de sector","reg":"Registro de labores","tipo":"cond","meses":null},{"id":40,"et":"E","nom":"Riego de pasillos por tendido (humedad de emergencia)","det":"Si el DPV supera 2,0 kPa por más de 4 h diarias entre el 15-sep y el 15-feb (la cinta no logra subir la HR).","mom":"15 de septiembre a 15 de febrero","fr":"Cuando ocurra la condición","resp":["R"],"rt":"Encargado de riego","reg":"Registro de riego","tipo":"cond","meses":[9,10,11,12,1,2]},{"id":41,"et":"F","nom":"Registro diario de labores del personal","det":"Labores realizadas por el personal bajo control de cada Subjefe de sector, en la app.","mom":"Todo el año","fr":"Diaria","resp":["S"],"rt":"Subjefe de sector","reg":"App de labores (Fieldlog u otra)","si":0,"sf":"F","tipo":"sem"},{"id":42,"et":"F","nom":"Programación semanal de actividades","det":"Programa de la semana + análisis crítico del avance y mejoras sugeridas por el equipo.","mom":"Todo el año","fr":"Semanal","resp":["S"],"rt":"Subjefe de sector","reg":"App de labores (Fieldlog u otra)","si":0,"sf":"F","tipo":"sem"},{"id":43,"et":"F","nom":"Control de calibre a cosecha","det":"Meta 85 mm de diámetro. Verificar contra la curva esperada del racimo (registrada desde antesis).","mom":"Durante la cosecha de cada racimo","fr":"Por racimo","resp":["S"],"rt":"Subjefe de sector","reg":"Registro de cosecha","si":"C","sf":"F","tipo":"sem"},{"id":44,"et":"G","nom":"Análisis químico de las fuentes de agua","det":"Todas las fuentes (no tranques recolectores). 2 L en botella limpia, llena sin aire. pH, CE, bicarbonatos, dureza, N-NO₃, N-NH₄, fosfatos, sulfatos, K, Ca, Mg, Cl, Na, Fe, Mn, Zn, B.","mom":"Marzo y septiembre","fr":"2 veces al año","resp":["J"],"rt":"Jefatura predial","reg":"Laboquim Terra / PUCV La Palma","tipo":"anual","oc":[{"k":"mar","t":"Marzo","m":[3]},{"k":"sep","t":"Septiembre","m":[9]}]},{"id":45,"et":"G","nom":"Diagnóstico microbiológico de suelo","det":"Metabarcoding 16S (bacterias) e ITS (hongos) + parámetros con rangos objetivo (UFC totales, ratio Penicillium/Fusarium >1, propágulos micorrícicos, carga de patógenos <10³ UFC/g, bioensayos de supresividad).","mom":"Una vez al año","fr":"Anual","resp":["J"],"rt":"Jefatura predial","reg":"Diagnofruit","tipo":"anual","oc":[{"k":"1","t":"Una vez en el año","m":null}]},{"id":46,"et":"G","nom":"Antibiograma de fungicidas para botrytis","det":"Muestra de botrytis del campo + al menos 6 productos comerciales a evaluar.","mom":"Cada 12 meses","fr":"Anual","resp":["A"],"rt":"Asesor técnico","reg":"Laboratorio UC","tipo":"anual","oc":[{"k":"1","t":"Una vez en el año","m":null}]},{"id":47,"et":"G","nom":"Ensayos de eficacia en campo","det":"Fungicidas para oidio; insecticidas para polilla del tomate y mosca blanca.","mom":"Según programa","fr":"Anual","resp":["A"],"rt":"Asesor técnico","reg":"Informe del asesor","tipo":"anual","oc":[{"k":"1","t":"Según programa del año","m":null}]},{"id":48,"et":"G","nom":"Medición de dimensiones de invernaderos","det":"Ancho de nave, altura a canaleta y cenital, ancho de lucarna, largo, cortinas, ventanas, mallas: parámetros para calcular el área de ventilación.","mom":"Una vez (y al modificar estructuras)","fr":"Única / al modificar","resp":["S"],"rt":"Subjefe de sector","reg":"Ficha por invernadero","tipo":"anual","oc":[{"k":"1","t":"Registro vigente (una vez o al modificar)","m":null}]},{"id":49,"et":"G","nom":"Limpieza de cubierta plástica","det":"Abril a septiembre la oferta de radiación es menor al óptimo (>30 mol/m²/d): mantener la cubierta limpia para captar el máximo.","mom":"Abril a septiembre","fr":"Según estado","resp":["S"],"rt":"Subjefe de sector","reg":"Registro de labores","tipo":"cond","meses":[4,5,6,7,8,9]}];
+
+// ══════════════════════════════════════════════
+// v52 · CONTROL DEL PROCESO PRODUCTIVO (tomate)
+// ══════════════════════════════════════════════
+// Lista de chequeo / carta Gantt de Rafael (49 actividades, 7 etapas), derivada
+// del manual «Ruta a seguir para el logro de los objetivos productivos en un
+// cultivo de tomate en suelo» (R. Elizondo, ago 2026). La app no agrega
+// criterios técnicos propios: solo los ordena por semana y por responsable.
+//
+// Cada actividad se ubica en SEMANAS DESDE LA PLANTACIÓN (semana 0 = la semana
+// que parte el día de plantación; negativas = antes de plantar). La fecha de
+// plantación vive en el ciclo de tomate (campos plantacion / plantacionConf).
+// Si el ciclo todavía no la tiene, se usa la fecha de referencia de la época.
+//
+// Tipos:  hito  → se marca una vez (o `veces` veces) dentro de su ventana
+//         sem   → rutina: se marca cada semana (o cada `per` semanas)
+//         anual → sigue el calendario del año, por campo (no por ciclo)
+//         cond  → según condición: recordatorio sin atraso
+// Semanas «F» = fin del ciclo de la época, «C» = inicio de cosecha.
+//
+// Responsables: J Jefatura predial · R Encargado de riego · S Subjefe de sector
+// (antes «Jefe de sector» y «Sub jefes de sector», fundidos a pedido de Rafael)
+// · A Asesor técnico.
+//
+// Marcas en Firestore:
+//   /control/{predioId}/ciclos/{cicloId}   → {subjefe, epoca, marcas:{clave:{e,f,o,u,n,t}}}
+//   /control/{predioId}/ciclos/ref_{epoca}_{año} → marcas hechas antes de abrir el ciclo
+//   /control/{predioId}/anual/{año}        → marcas del calendario anual del campo
+// Claves: a{id} (hito) · a{id}_v{k} (hito con varias veces) · a{id}_s{n} (semana n)
+//         a{id}_{ocurrencia} (anual) · a{id}_c{ts} (según condición)
+
+const CTRL_EPOCAS={
+  primor:    {m:6,  d:5,  dur:25, cos:16},
+  trastomate:{m:8,  d:15, dur:22, cos:13},
+  verano:    {m:10, d:5,  dur:27, cos:18},
+  otono:     {m:12, d:20, dur:21, cos:12},
+  invierno:  {m:2,  d:5,  dur:25, cos:16}
+};
+const CTRL_PRE=15;               // semanas antes de la plantación (encargo al vivero)
+const CTRL_HORIZ=5;              // semana actual + las 4 siguientes
+const CTRL_DESDE='2026-09-28';   // lo que venció antes de esta fecha no cuenta como atraso
+const CTRL_RESP={
+  J:{t:'Jefatura predial',  i:'🧭'},
+  R:{t:'Encargado de riego',i:'💧'},
+  S:{t:'Subjefe de sector', i:'👷'},
+  A:{t:'Asesor técnico',    i:'🎓'}
+};
+const CTRL_ETAPAS={
+  A:'A. Pre-plantación',
+  B:'B. Plantación y establecimiento',
+  C:'C. Desarrollo del cultivo — hitos por racimo',
+  D:'D. Riego y nutrición — rutina permanente',
+  E:'E. Clima y ventilación — rutina permanente',
+  F:'F. Control del trabajo y cosecha',
+  G:'G. Actividades anuales del campo'
+};
+
+let ctrlPid=null;
+let ctrlTab='semana';
+let ctrlResp=null;
+let ctrlProgSel='';
+let ctrlAnio=null;
+let ctrlCiclos={};      // {pid:[ciclos de tomate abiertos, con subjefe]}
+let ctrlMarcas={};      // {docId: marcas}
+let ctrlAnual={};       // {año: marcas}
+let ctrlUnsub=[];
+
+// ── Permisos ──
+function canVerControl(){return isAdmin()||isJefe()||isSubjefe()||isRiego()}
+function ctrlRespUsuario(){
+  if(isRiego()) return 'R';
+  if(isSubjefe()) return 'S';
+  if(isJefe()) return 'J';
+  return 'T';
+}
+function canMarcarCtrl(a,prog){
+  if(isAdmin()||isJefe()) return true;
+  if(isSubjefe()) return a.resp.includes('S') && (!prog || prog.tipo==='ref' || prog.subjefe===userSubjefe());
+  if(isRiego()) return a.resp.includes('R');
+  return false;
+}
+function canPlantacionCtrl(){return isAdmin()||isJefe()||isSubjefe()}
+
+// ── Fechas ──
+function cAdd(iso,d){const x=new Date(iso+'T12:00:00');x.setDate(x.getDate()+d);return x.toISOString().slice(0,10)}
+function cDiff(a,b){return Math.round((new Date(a+'T12:00:00')-new Date(b+'T12:00:00'))/864e5)}
+function cLunes(iso){const x=new Date(iso+'T12:00:00');const w=x.getDay();return cAdd(iso,-(w===0?6:w-1))}
+function cMes(iso){return parseInt(iso.slice(5,7),10)}
+function cDM(iso){const[y,m,d]=iso.split('-');return `${d}/${m}`}
+function cFechaLarga(iso){const[y,m,d]=iso.split('-');return `${parseInt(d,10)} ${MESES_NOM[parseInt(m,10)-1].slice(0,3)} ${y}`}
+function ctrlRefFecha(ep,anio){const e=CTRL_EPOCAS[ep];return `${anio}-${String(e.m).padStart(2,'0')}-${String(e.d).padStart(2,'0')}`}
+// Fecha de referencia de la época más cercana a una fecha dada.
+function ctrlRefCercana(ep,iso){
+  const y=parseInt(iso.slice(0,4),10);
+  return [y-1,y,y+1].map(a=>ctrlRefFecha(ep,a)).sort((p,q)=>Math.abs(cDiff(p,iso))-Math.abs(cDiff(q,iso)))[0];
+}
+// Próxima fecha de referencia de la época (hasta 60 días atrás cuenta como «esta»).
+function ctrlRefProxima(ep,desde,tol){
+  desde=desde||todayIso; tol=(tol==null?60:tol);
+  const y=parseInt(desde.slice(0,4),10);
+  return [y-1,y,y+1].map(a=>ctrlRefFecha(ep,a)).find(f=>cDiff(f,desde)>=-tol);
+}
+function ctrlSem(v,ep){const e=CTRL_EPOCAS[ep]||CTRL_EPOCAS.primor;return v==='F'?e.dur:v==='C'?e.cos:v}
+// Semana relativa (desde la plantación) de la semana calendario que parte el lunes dado.
+function ctrlSemRel(prog,lunes){return Math.floor(cDiff(cAdd(lunes,3),prog.P)/7)}
+function ctrlFinSem(prog,n){return cAdd(prog.P,7*(n+1)-1)}
+function ctrlIniSem(prog,n){return cAdd(prog.P,7*n)}
+
+// ── Programas: ciclos de tomate abiertos + épocas que ya empiezan sin ciclo ──
+function ctrlProgramas(pid){
+  const res=[];
+  (ctrlCiclos[pid]||[]).forEach(c=>{
+    if(!c.temporada || !CTRL_EPOCAS[c.temporada]) return;
+    const ref=ctrlRefCercana(c.temporada, c.plantacion||c.inicio||todayIso);
+    res.push({
+      tipo:'ciclo', id:c.id, docId:c.id, refDocId:`ref_${c.temporada}_${ref.slice(0,4)}`,
+      epoca:c.temporada, P:c.plantacion||ref, tieneFecha:!!c.plantacion, conf:!!(c.plantacion&&c.plantacionConf),
+      subjefe:c.subjefe, modulos:c.modulos||[], ciclo:c
+    });
+  });
+  // Épocas referenciales: su ventana previa a la plantación ya entró al horizonte
+  // y todavía no hay ningún ciclo abierto de esa época en el campo.
+  const y=parseInt(todayIso.slice(0,4),10);
+  const finHoriz=cAdd(cLunes(todayIso),7*CTRL_HORIZ-1);
+  TORDER.forEach(ep=>{
+    [y-1,y,y+1].forEach(a=>{
+      const P=ctrlRefFecha(ep,a);
+      if(cAdd(P,-7*CTRL_PRE)>finHoriz) return;
+      if(cDiff(todayIso,P)>14) return;
+      if(res.some(r=>r.tipo==='ciclo'&&r.epoca===ep&&Math.abs(cDiff(r.P,P))<=75)) return;
+      res.push({tipo:'ref', id:`ref_${ep}_${a}`, docId:`ref_${ep}_${a}`, refDocId:null,
+        epoca:ep, P, tieneFecha:false, conf:false, subjefe:null, modulos:[]});
+    });
+  });
+  return res.sort((p,q)=>p.P.localeCompare(q.P));
+}
+function ctrlProgVisible(prog){
+  if(isSubjefe() && prog.tipo==='ciclo') return prog.subjefe===userSubjefe();
+  return true;
+}
+function ctrlMarcasProg(prog){
+  return Object.assign({}, prog.refDocId?(ctrlMarcas[prog.refDocId]||{}):{}, ctrlMarcas[prog.docId]||{});
+}
+function ctrlRespOk(a){return !ctrlResp||ctrlResp==='T'||a.resp.includes(ctrlResp)}
+function ctrlAplicaMes(a,prog){return !a.soloMeses || a.soloMeses.includes(cMes(prog.P))}
+
+// Estado de una actividad de ciclo. n = semana relativa (para las rutinas).
+function ctrlEstado(prog,a,marcas,n){
+  let m=null,hechas=0;
+  if(a.tipo==='hito'){
+    if(a.veces){for(let k=1;k<=a.veces;k++) if(marcas[`a${a.id}_v${k}`]) hechas++;
+      if(hechas>=a.veces) m=marcas[`a${a.id}_v${a.veces}`];}
+    else m=marcas['a'+a.id];
+  } else m=marcas[`a${a.id}_s${n}`];
+  if(!ctrlAplicaMes(a,prog)) return {st:'na',m:{e:'na',o:'Solo plantaciones de diciembre a febrero'},auto:true};
+  if(m) return {st:m.e==='na'?'na':'ok',m,hechas};
+  const sf=a.tipo==='hito'?ctrlSem(a.sf,prog.epoca):n;
+  const fin=ctrlFinSem(prog,sf);
+  if(fin<todayIso) return {st:fin<CTRL_DESDE?'previa':'atrasada',hechas};
+  const ini=ctrlIniSem(prog,a.tipo==='hito'?ctrlSem(a.si,prog.epoca):n);
+  return {st:ini>todayIso?'futura':'pendiente',hechas};
+}
+function ctrlClaveHito(a,marcas){
+  if(!a.veces) return 'a'+a.id;
+  for(let k=1;k<=a.veces;k++) if(!marcas[`a${a.id}_v${k}`]) return `a${a.id}_v${k}`;
+  return `a${a.id}_v${a.veces}`;
+}
+
+// Actividades de un programa en una semana calendario (lunes).
+function ctrlItemsSemana(prog,lunes,primera){
+  const n=ctrlSemRel(prog,lunes);
+  const marcas=ctrlMarcasProg(prog);
+  const items=[];let siguen=0;
+  CTRL_ACTS.forEach(a=>{
+    if(a.tipo!=='hito'&&a.tipo!=='sem') return;
+    if(!ctrlRespOk(a)) return;
+    const si=ctrlSem(a.si,prog.epoca), sf=ctrlSem(a.sf,prog.epoca);
+    if(prog.tipo==='ref' && si>=0) return;           // sin ciclo: solo lo previo a plantar
+    if(n<si||n>sf) return;
+    if(a.tipo==='sem' && a.per && (n-si)%a.per!==0) return;
+    if(a.tipo==='hito' && !primera && n!==si) return; // en semanas futuras, el hito aparece donde parte
+    if(a.tipo==='sem' && !primera && n!==si){ siguen++; return; } // rutinas que continúan: solo se cuentan
+    if(!ctrlAplicaMes(a,prog)) return;
+    const es=ctrlEstado(prog,a,marcas,n);
+    items.push({a,n,es,key:a.tipo==='hito'?ctrlClaveHito(a,marcas):`a${a.id}_s${n}`});
+  });
+  return {n,items,siguen};
+}
+
+// Atrasadas: hitos vencidos sin marcar y rutinas de la semana pasada sin marcar.
+function ctrlAtrasadas(prog){
+  const marcas=ctrlMarcasProg(prog);
+  const out=[];
+  const lunesAnt=cAdd(cLunes(todayIso),-7);
+  const nAnt=ctrlSemRel(prog,lunesAnt);
+  CTRL_ACTS.forEach(a=>{
+    if(!ctrlRespOk(a)) return;
+    if(a.tipo==='hito'){
+      if(prog.tipo==='ref' && ctrlSem(a.si,prog.epoca)>=0) return;
+      const es=ctrlEstado(prog,a,marcas);
+      if(es.st==='atrasada') out.push({a,n:ctrlSem(a.sf,prog.epoca),es,key:ctrlClaveHito(a,marcas)});
+    } else if(a.tipo==='sem' && prog.tipo==='ciclo'){
+      const si=ctrlSem(a.si,prog.epoca), sf=ctrlSem(a.sf,prog.epoca);
+      if(nAnt<si||nAnt>sf) return;
+      if(a.per && (nAnt-si)%a.per!==0) return;
+      const es=ctrlEstado(prog,a,marcas,nAnt);
+      if(es.st==='atrasada') out.push({a,n:nAnt,es,key:`a${a.id}_s${nAnt}`});
+    }
+  });
+  return out;
+}
+
+// Calendario anual del campo
+function ctrlAnualEstado(a,oc,anio){
+  const marcas=ctrlAnual[anio]||{};
+  const m=marcas[`a${a.id}_${oc.k}`];
+  if(m) return {st:m.e==='na'?'na':'ok',m};
+  const hoyAnio=parseInt(todayIso.slice(0,4),10);
+  let fin;
+  if(oc.m){const mm=Math.max(...oc.m);fin=`${anio}-${String(mm).padStart(2,'0')}-${String(new Date(anio,mm,0).getDate()).padStart(2,'0')}`;}
+  else fin=`${anio}-12-31`;
+  if(fin<todayIso) return {st:fin<CTRL_DESDE?'previa':'atrasada'};
+  if(oc.m && anio===hoyAnio && !oc.m.includes(cMes(todayIso)) && `${anio}-${String(Math.min(...oc.m)).padStart(2,'0')}-01`>todayIso) return {st:'futura'};
+  return {st:'pendiente'};
+}
+
+// ── Carga de datos ──
+async function initControl(){
+  const preds=prediosPermitidos();
+  if(!preds.length){document.getElementById('ctrlContent').innerHTML='<div class="card"><p style="font-size:12px;color:var(--muted)">Tu usuario no tiene campos asignados.</p></div>';return}
+  if(!ctrlPid||!preds.includes(ctrlPid)) ctrlPid=preds.includes(activePred)?activePred:preds[0];
+  if(ctrlResp===null) ctrlResp=ctrlRespUsuario();
+  if(ctrlAnio===null) ctrlAnio=parseInt(todayIso.slice(0,4),10);
+  await ctrlCargar(ctrlPid);
+}
+async function ctrlCargar(pid){
+  ctrlUnsub.forEach(u=>{try{u()}catch(e){}});ctrlUnsub=[];
+  ctrlMarcas={};ctrlAnual={};
+  const cont=document.getElementById('ctrlContent');
+  if(cont) cont.innerHTML='<div class="card"><p style="font-size:12px;color:var(--muted)">Cargando…</p></div>';
+  const lista=[];
+  for(const sub of PREDIOS[pid].subjefes){
+    try{
+      const snap=await colCiclos(pid,sub).get();
+      snap.docs.forEach(d=>{
+        const c={id:d.id,subjefe:sub,...d.data()};
+        if((c.fin===null||c.fin===undefined) && c.cultivo==='tomate') lista.push(c);
+      });
+    }catch(e){ /* sin permiso para ese subjefe: seguimos */ }
+  }
+  ctrlCiclos[pid]=lista;
+  try{
+    ctrlUnsub.push(db.collection('control').doc(pid).collection('ciclos').onSnapshot(snap=>{
+      ctrlMarcas={};
+      snap.docs.forEach(d=>{ctrlMarcas[d.id]=(d.data()||{}).marcas||{}});
+      renderControl();
+    },err=>{console.warn('control/ciclos',err);renderControl();}));
+    ctrlUnsub.push(db.collection('control').doc(pid).collection('anual').onSnapshot(snap=>{
+      ctrlAnual={};
+      snap.docs.forEach(d=>{ctrlAnual[parseInt(d.id,10)]=(d.data()||{}).marcas||{}});
+      renderControl();
+    },err=>{console.warn('control/anual',err);}));
+  }catch(e){console.warn(e)}
+  renderControl();
+}
+function ctrlSetPredio(pid){ctrlPid=pid;ctrlProgSel='';ctrlCargar(pid)}
+function ctrlSetTab(t){ctrlTab=t;renderControl()}
+function ctrlSetResp(r){ctrlResp=r;renderControl()}
+function ctrlSetProg(id){ctrlProgSel=id;renderControl()}
+function ctrlSetAnio(a){ctrlAnio=parseInt(a,10);renderControl()}
+
+// ── Render ──
+function ctrlBadgeEpoca(ep){return `<span class="tbadge tb-${ep}" style="font-size:10px;padding:2px 8px">${TICONS[ep]||''} ${TNAMES[ep]||ep}</span>`}
+function ctrlRespChips(a){return a.resp.map(r=>`<span class="ctl-resp" title="${CTRL_RESP[r].t}">${CTRL_RESP[r].i} ${CTRL_RESP[r].t}</span>`).join('')}
+function ctrlProgTitulo(prog){
+  const sub=prog.tipo==='ciclo'?`👤 ${escH(prog.subjefe)}`:'Todo el campo';
+  const mods=prog.modulos&&prog.modulos.length?` · ${escH(modulosLabel(prog.modulos))}`:'';
+  const fecha=prog.tipo==='ref'
+    ? `<span class="ctl-ref">Plantación de referencia: ${cFechaLarga(prog.P)} · sin ciclo abierto</span>`
+    : prog.conf ? `🌱 Plantación: ${cFechaLarga(prog.P)}`
+    : `<span class="ctl-ref">🌱 Plantación ${prog.tieneFecha?'estimada':'de referencia'}: ${cFechaLarga(prog.P)}</span>`;
+  return `${ctrlBadgeEpoca(prog.epoca)} <b>${sub}</b>${mods}<div class="ctl-sub">${fecha}</div>`;
+}
+function ctrlProgAcciones(prog){
+  if(prog.tipo==='ref'){
+    return isCampo()&&userPredios().includes(ctrlPid)
+      ? `<button class="btn btn-secondary btn-sm" onclick="ctrlIrACiclos()">🌱 Abrir ciclo</button>` : '';
+  }
+  return canPlantacionCtrl()&&!prog.conf
+    ? `<button class="btn btn-secondary btn-sm" onclick="ctrlModalPlantacion('${prog.id}')">📅 ${prog.tieneFecha?'Confirmar':'Fecha'} plantación</button>`
+    : (canPlantacionCtrl()?`<button class="btn btn-secondary btn-sm" onclick="ctrlModalPlantacion('${prog.id}')">📅</button>`:'');
+}
+function ctrlItemHTML(prog,it,pasada){
+  const a=it.a,es=it.es;
+  const ico={ok:'✅',na:'➖',atrasada:'⏰',pendiente:'⬜',futura:'🔜',previa:'·'}[es.st]||'⬜';
+  const cls='ctl-it ctl-'+es.st;
+  const semTxt=a.tipo==='hito'
+    ? `Sem ${ctrlSem(a.si,prog.epoca)}${ctrlSem(a.sf,prog.epoca)!==ctrlSem(a.si,prog.epoca)?' a '+ctrlSem(a.sf,prog.epoca):''}${a.veces?` · ${es.hechas||0}/${a.veces}`:''}`
+    : `Sem ${it.n}${a.per?` · cada ${a.per} sem`:''}`;
+  const marcable=canMarcarCtrl(a,prog) && !es.auto && (a.tipo==='hito' || ctrlIniSem(prog,it.n)<=todayIso);
+  const quien=es.m&&es.m.n?` · ${escH(es.m.n)}`:'';
+  const hecho=es.m&&!es.auto?`<div class="ctl-hecho">${es.m.e==='na'?(a.naTxt||'No aplica'):'Realizado'} ${es.m.f?fDMY(es.m.f):''}${quien}${es.m.o?' — '+escH(es.m.o):''}</div>`:(es.auto?`<div class="ctl-hecho">${escH(es.m.o)}</div>`:'');
+  return `<div class="${cls}">
+    <div class="ctl-ico">${ico}</div>
+    <div class="ctl-body">
+      <div class="ctl-nom">${a.id}. ${escH(a.nom)}</div>
+      <div class="ctl-meta">${semTxt} · ${escH(a.fr)}</div>
+      <div>${ctrlRespChips(a)}</div>
+      ${hecho}
+      <details class="ctl-det"><summary>Estándar y registro</summary>
+        <div>${escH(a.det)}</div>
+        <div style="margin-top:4px"><b>Momento:</b> ${escH(a.mom)}${a.id===5?` (≈ ${cFechaLarga(cAdd(prog.P,-100))})`:''}</div>
+        <div><b>Registro / laboratorio:</b> ${escH(a.reg)}</div>
+        <div><b>Responsable:</b> ${escH(a.rt)}</div>
+      </details>
+    </div>
+    ${marcable?`<button class="btn btn-sm ${es.m?'btn-secondary':'btn-primary'} ctl-btn" onclick="ctrlModalMarcar('${prog.id}','${it.key}',${a.id},${it.n})">${es.m?'✏️':'Marcar'}</button>`:''}
+  </div>`;
+}
+
+function renderControl(){
+  const div=document.getElementById('ctrlContent');
+  if(!div||!document.getElementById('screen-control').classList.contains('active')) return;
+  const preds=prediosPermitidos();
+  const selPred=preds.length>1
+    ? `<select onchange="ctrlSetPredio(this.value)" style="max-width:180px">${preds.map(p=>`<option value="${p}"${p===ctrlPid?' selected':''}>${PREDIOS[p].nombre}</option>`).join('')}</select>`
+    : `<b>${PREDIOS[ctrlPid].nombre}</b>`;
+  const chips=['T','J','R','S','A'].map(r=>`<button class="ctl-chip${ctrlResp===r?' on':''}" onclick="ctrlSetResp('${r}')">${r==='T'?'Todos':CTRL_RESP[r].i+' '+CTRL_RESP[r].t}</button>`).join('');
+  const tabs=[['semana','📋 Esta semana'],['gantt','📊 Cronograma'],['anual','📅 Anuales del campo']]
+    .map(([k,t])=>`<button class="ctl-tab${ctrlTab===k?' on':''}" onclick="ctrlSetTab('${k}')">${t}</button>`).join('');
+  let html=`<div class="card" style="padding:12px 14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <div class="card-title" style="margin:0">✅ Control del proceso · Tomate</div>
+      <div style="display:flex;gap:6px;align-items:center">${selPred}<button class="btn btn-secondary btn-sm" onclick="ctrlCargar(ctrlPid)" title="Actualizar">🔄</button></div>
+    </div>
+    <div class="ctl-tabs">${tabs}</div>
+    <div class="ctl-chips">${chips}</div>
+  </div>`;
+  const progs=ctrlProgramas(ctrlPid).filter(ctrlProgVisible);
+  if(ctrlTab==='semana') html+=ctrlHTMLSemana(progs);
+  else if(ctrlTab==='gantt') html+=ctrlHTMLGantt(progs);
+  else html+=ctrlHTMLAnual();
+  div.innerHTML=html;
+  // Cronograma: dejar a la vista la semana actual
+  const gw=document.getElementById('ctlGwrap'), th=gw&&gw.querySelector('thead .ctl-ghoy');
+  if(gw&&th) gw.scrollLeft=Math.max(0,th.offsetLeft-190-26*2);
+}
+
+function ctrlHTMLSemana(progs){
+  let html='';
+  const lunes0=cLunes(todayIso);
+  // Atrasadas
+  let atr='',nAtr=0;
+  progs.forEach(p=>{
+    const its=ctrlAtrasadas(p);
+    if(!its.length) return;
+    nAtr+=its.length;
+    atr+=`<div class="ctl-prog"><div class="ctl-prog-h"><div>${ctrlProgTitulo(p)}</div></div>${its.map(it=>ctrlItemHTML(p,it,true)).join('')}</div>`;
+  });
+  if(nAtr) html+=`<div class="card ctl-card-atr"><div class="card-title">⏰ Atrasadas (${nAtr})</div>
+    <p class="ctl-nota">Hitos cuya ventana ya pasó sin registro, y rutinas de la semana pasada sin marcar.</p>${atr}</div>`;
+  if(!progs.length){
+    html+=`<div class="card"><p style="font-size:12px;color:var(--muted);line-height:1.5">No hay ciclos de tomate abiertos en ${PREDIOS[ctrlPid].nombre} ni épocas por comenzar dentro de las próximas ${CTRL_HORIZ} semanas.</p></div>`;
+  }
+  for(let w=0;w<CTRL_HORIZ;w++){
+    const lunes=cAdd(lunes0,7*w), dom=cAdd(lunes,6);
+    let cuerpo='',cuenta=0,pend=0;
+    progs.forEach(p=>{
+      const {n,items,siguen}=ctrlItemsSemana(p,lunes,w===0);
+      if(!items.length&&!siguen) return;
+      cuenta+=items.length;
+      pend+=items.filter(i=>i.es.st==='pendiente'||i.es.st==='atrasada'||i.es.st==='futura').length;
+      const falta=k=>k===1?'Falta 1 semana':`Faltan ${k} semanas`;
+      const semLbl=p.tipo==='ref'?`${falta(-n)} para plantar`:(n<0?`Semana ${n} · ${falta(-n).toLowerCase()} para plantar`:`Semana ${n} desde la plantación`);
+      cuerpo+=`<div class="ctl-prog">
+        <div class="ctl-prog-h"><div>${ctrlProgTitulo(p)}<div class="ctl-sub"><b>${semLbl}</b></div></div><div>${w===0?ctrlProgAcciones(p):''}</div></div>
+        ${items.map(it=>ctrlItemHTML(p,it,false)).join('')}
+        ${siguen?`<div class="ctl-sub" style="padding:2px 4px">${items.length?'+ ':''}${siguen} rutina${siguen>1?'s':''} que siguen igual que esta semana${items.length?'':' (nada nuevo)'}</div>`:''}
+      </div>`;
+    });
+    // Calendario anual del campo: lo que cae en el mes de esta semana
+    const mesW=cMes(cAdd(lunes,3)), anioW=parseInt(cAdd(lunes,3).slice(0,4),10);
+    const anuales=[];
+    CTRL_ACTS.forEach(a=>{
+      if(!ctrlRespOk(a)) return;
+      if(a.tipo==='anual') a.oc.forEach(oc=>{
+        if(!oc.m||!oc.m.includes(mesW)) return;
+        const es=ctrlAnualEstado(a,oc,anioW);
+        if(w>0 && es.st!=='pendiente'&&es.st!=='futura') return;
+        anuales.push(`<div class="ctl-it ctl-${es.st}"><div class="ctl-ico">${es.st==='ok'?'✅':es.st==='na'?'➖':'📅'}</div><div class="ctl-body"><div class="ctl-nom">${a.id}. ${escH(a.nom)} — ${escH(oc.t)}</div><div>${ctrlRespChips(a)}</div></div>${w===0&&canMarcarCtrl(a)?`<button class="btn btn-sm ${es.m?'btn-secondary':'btn-primary'} ctl-btn" onclick="ctrlModalAnual(${a.id},'${oc.k}',${anioW})">${es.m?'✏️':'Marcar'}</button>`:''}</div>`);
+      });
+      if(a.tipo==='cond' && a.meses && a.meses.includes(mesW) && w===0)
+        anuales.push(`<div class="ctl-it ctl-cond"><div class="ctl-ico">👁️</div><div class="ctl-body"><div class="ctl-nom">${a.id}. ${escH(a.nom)}</div><div class="ctl-meta">${escH(a.mom)} · ${escH(a.fr)}</div><div>${ctrlRespChips(a)}</div></div>${canMarcarCtrl(a)?`<button class="btn btn-sm btn-secondary ctl-btn" onclick="ctrlModalAnual(${a.id},'c',${anioW})">Anotar</button>`:''}</div>`);
+    });
+    if(anuales.length){
+      cuenta+=anuales.length;
+      cuerpo+=`<div class="ctl-prog"><div class="ctl-prog-h"><div><span class="tbadge tb-none" style="font-size:10px;padding:2px 8px">📅 Calendario del campo</span><div class="ctl-sub">No dependen de la plantación</div></div></div>${anuales.join('')}</div>`;
+    }
+    html+=`<div class="card ${w===0?'ctl-card-hoy':''}">
+      <div class="card-title">${w===0?'📌 Esta semana':w===1?'➡️ Próxima semana':`🗓️ En ${w} semanas`} <span class="ctl-fechas">${cDM(lunes)} – ${cDM(dom)}</span></div>
+      ${cuerpo||'<p style="font-size:12px;color:var(--muted)">Nada programado para este responsable.</p>'}
+    </div>`;
+  }
+  return html;
+}
+
+function ctrlHTMLGantt(progs){
+  if(!progs.length) return `<div class="card"><p style="font-size:12px;color:var(--muted)">No hay ciclos de tomate abiertos ni épocas por comenzar.</p></div>`;
+  if(!progs.some(p=>p.id===ctrlProgSel)){
+    const hoy=progs.filter(p=>p.tipo==='ciclo');
+    ctrlProgSel=(hoy[0]||progs[0]).id;
+  }
+  const prog=progs.find(p=>p.id===ctrlProgSel);
+  const opts=progs.map(p=>`<option value="${p.id}"${p.id===ctrlProgSel?' selected':''}>${TNAMES[p.epoca]} · ${p.tipo==='ciclo'?p.subjefe+(p.modulos.length?' ('+modulosLabel(p.modulos)+')':''):'referencial, sin ciclo'} · ${cDM(p.P)}</option>`).join('');
+  const e=CTRL_EPOCAS[prog.epoca];
+  const nHoy=ctrlSemRel(prog,cLunes(todayIso));
+  const marcas=ctrlMarcasProg(prog);
+  const semanas=[];for(let n=-CTRL_PRE;n<=e.dur;n++) semanas.push(n);
+  let head1='<th class="ctl-gfix">Actividad</th>', head2='<th class="ctl-gfix"></th>';
+  semanas.forEach(n=>{
+    const cls=n===nHoy?' ctl-ghoy':'';
+    head1+=`<th class="ctl-gw${cls}">${n}</th>`;
+    head2+=`<th class="ctl-gw ctl-gd${cls}">${cDM(ctrlIniSem(prog,n))}</th>`;
+  });
+  let body='',etAnt='';
+  CTRL_ACTS.forEach(a=>{
+    if(a.tipo!=='hito'&&a.tipo!=='sem') return;
+    if(!ctrlRespOk(a)) return;
+    if(!ctrlAplicaMes(a,prog)) return;   // p. ej. doble techo solo en plantaciones dic-feb
+    if(a.et!==etAnt){etAnt=a.et;body+=`<tr><td class="ctl-gfix ctl-get" colspan="1">${CTRL_ETAPAS[a.et]}</td><td class="ctl-get" colspan="${semanas.length}"></td></tr>`}
+    const si=ctrlSem(a.si,prog.epoca), sf=ctrlSem(a.sf,prog.epoca);
+    const esH=a.tipo==='hito'?ctrlEstado(prog,a,marcas):null;
+    let tds='';
+    semanas.forEach(n=>{
+      const hoy=n===nHoy?' ctl-ghoy':'';
+      if(n<si||n>sf||!ctrlAplicaMes(a,prog)){tds+=`<td class="ctl-gc${hoy}"></td>`;return}
+      let st,key,txt='';
+      if(a.tipo==='hito'){st=esH.st;key=ctrlClaveHito(a,marcas);if(n===si&&a.veces)txt=`${esH.hechas||0}/${a.veces}`;}
+      else{
+        if(a.per && (n-si)%a.per!==0){tds+=`<td class="ctl-gc ctl-gbarra${hoy}"></td>`;return}
+        st=ctrlEstado(prog,a,marcas,n).st;key=`a${a.id}_s${n}`;
+      }
+      const ok=canMarcarCtrl(a,prog)&&(a.tipo==='hito'||ctrlIniSem(prog,n)<=todayIso);
+      const mark={ok:'✓',na:'–',atrasada:'!'}[st]||txt;
+      tds+=`<td class="ctl-gc ctl-g-${st}${hoy}"${ok?` onclick="ctrlModalMarcar('${prog.id}','${key}',${a.id},${n})" style="cursor:pointer"`:''}>${mark}</td>`;
+    });
+    body+=`<tr><td class="ctl-gfix" title="${escH(a.rt)}"><b>${a.id}.</b> ${escH(a.nom)} <span class="ctl-gresp">${a.resp.map(r=>CTRL_RESP[r].i).join('')}</span></td>${tds}</tr>`;
+  });
+  return `<div class="card">
+    <div class="form-row"><label>Ciclo / época</label><select onchange="ctrlSetProg(this.value)">${opts}</select></div>
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;margin-bottom:8px"><div>${ctrlProgTitulo(prog)}</div><div>${ctrlProgAcciones(prog)}</div></div>
+    <div class="ctl-leyenda"><span class="ctl-g-ok">✓</span> Realizado <span class="ctl-g-na">–</span> No aplica <span class="ctl-g-atrasada">!</span> Atrasado <span class="ctl-g-pendiente">&nbsp;</span> Pendiente <span class="ctl-g-futura">&nbsp;</span> Programado <span class="ctl-g-previa">&nbsp;</span> Antes de la app · Semana 0 = plantación · Duración ${e.dur} semanas, cosecha desde la semana ${e.cos}</div>
+    <div class="ctl-gwrap" id="ctlGwrap"><table class="ctl-gantt"><thead><tr>${head1}</tr><tr>${head2}</tr></thead><tbody>${body}</tbody></table></div>
+    <p class="ctl-nota">Toca una celda para marcar. Las semanas de inicio y fin son referenciales: se ajustan con la antesis real y el asesor.</p>
+  </div>`;
+}
+
+function ctrlHTMLAnual(){
+  const hoyA=parseInt(todayIso.slice(0,4),10);
+  const selA=`<select onchange="ctrlSetAnio(this.value)" style="max-width:110px">${[hoyA-1,hoyA,hoyA+1].map(a=>`<option value="${a}"${a===ctrlAnio?' selected':''}>${a}</option>`).join('')}</select>`;
+  const marcas=ctrlAnual[ctrlAnio]||{};
+  let filas='';
+  CTRL_ACTS.forEach(a=>{
+    if(a.tipo!=='anual'&&a.tipo!=='cond') return;
+    if(!ctrlRespOk(a)) return;
+    let ocs='';
+    if(a.tipo==='anual'){
+      ocs=a.oc.map(oc=>{
+        const es=ctrlAnualEstado(a,oc,ctrlAnio);
+        const ico={ok:'✅',na:'➖',atrasada:'⏰',pendiente:'⬜',futura:'🔜',previa:'·'}[es.st];
+        const det=es.m?` ${fDMY(es.m.f)}${es.m.n?' · '+escH(es.m.n):''}${es.m.o?' — '+escH(es.m.o):''}`:'';
+        return `<div class="ctl-oc ctl-${es.st}">${ico} ${escH(oc.t)}${det} ${canMarcarCtrl(a)?`<button class="btn btn-sm ${es.m?'btn-secondary':'btn-primary'}" style="padding:2px 8px;font-size:11px" onclick="ctrlModalAnual(${a.id},'${oc.k}',${ctrlAnio})">${es.m?'✏️':'Marcar'}</button>`:''}</div>`;
+      }).join('');
+    } else {
+      const regs=Object.keys(marcas).filter(k=>k.startsWith(`a${a.id}_c`)).map(k=>marcas[k]).sort((p,q)=>(q.f||'').localeCompare(p.f||'')).slice(0,6);
+      ocs=`<div class="ctl-oc ctl-cond">👁️ Según condición${a.meses?` (${a.meses.map(m=>MESES[m-1].slice(0,3)).join(', ')})`:''} ${canMarcarCtrl(a)?`<button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:11px" onclick="ctrlModalAnual(${a.id},'c',${ctrlAnio})">Anotar</button>`:''}</div>`
+        + regs.map(m=>`<div class="ctl-oc" style="padding-left:18px">• ${fDMY(m.f)}${m.n?' · '+escH(m.n):''}${m.o?' — '+escH(m.o):''}</div>`).join('');
+    }
+    filas+=`<div class="ctl-it"><div class="ctl-body"><div class="ctl-nom">${a.id}. ${escH(a.nom)}</div><div class="ctl-meta">${escH(a.mom)} · ${escH(a.fr)}</div><div>${ctrlRespChips(a)}</div>${ocs}
+      <details class="ctl-det"><summary>Estándar y registro</summary><div>${escH(a.det)}</div><div><b>Registro / laboratorio:</b> ${escH(a.reg)}</div></details></div></div>`;
+  });
+  return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div class="card-title" style="margin:0">📅 Calendario anual · ${PREDIOS[ctrlPid].nombre}</div>${selA}</div>
+    <p class="ctl-nota">Siguen el calendario del año, no la fecha de plantación: se controlan una vez por campo.</p>
+    ${filas||'<p style="font-size:12px;color:var(--muted)">Nada para este responsable.</p>'}</div>`;
+}
+
+// ── Marcar ──
+function ctrlBuscarProg(id){return ctrlProgramas(ctrlPid).find(p=>p.id===id)}
+function ctrlModalMarcar(progId,key,actId,n){
+  const prog=ctrlBuscarProg(progId), a=CTRL_ACTS.find(x=>x.id===actId);
+  if(!prog||!a) return;
+  if(!canMarcarCtrl(a,prog)){toast('Esta actividad la marca '+a.rt);return}
+  const marcas=ctrlMarcasProg(prog);
+  const m=marcas[key];
+  const finSem=a.tipo==='sem'?ctrlFinSem(prog,n):null;
+  const fDef=m&&m.f?m.f:(finSem&&finSem<todayIso?finSem:todayIso);
+  const semTxt=a.tipo==='sem'?` · semana ${n} (${cDM(ctrlIniSem(prog,n))} – ${cDM(finSem)})`:(a.veces?` · registro ${key.split('_v')[1]} de ${a.veces}`:'');
+  const puedeBorrar=m&&(isAdmin()||isJefe()||(currentUser&&m.u===currentUser.uid));
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">✅ ${a.id}. ${escH(a.nom)}</div>
+    <div class="modal-sub">${TNAMES[prog.epoca]} · ${prog.tipo==='ciclo'?escH(prog.subjefe):'referencial'}${semTxt}</div>
+    <div class="form-row"><label>Estado</label>
+      <select id="ctlEst"><option value="ok"${!m||m.e==='ok'?' selected':''}>Realizado</option><option value="na"${m&&m.e==='na'?' selected':''}>${escH(a.naTxt||'No aplica')}</option></select></div>
+    <div class="form-row"><label>Fecha</label><input type="date" id="ctlFec" value="${fDef}" max="${todayIso}"></div>
+    <div class="form-row"><label>Observación <span style="font-weight:400;text-transform:none;color:var(--muted)">(opcional)</span></label><input type="text" id="ctlObs" maxlength="300" value="${escH(m&&m.o||'')}" placeholder="Ej: resultado, laboratorio, n° de racimo"></div>
+    <button class="btn btn-primary" onclick="ctrlGuardarMarca('${progId}','${key}')">Guardar</button>
+    ${puedeBorrar?`<button class="btn btn-secondary" style="margin-top:8px" onclick="ctrlBorrarMarca('${progId}','${key}')">Deshacer marca</button>`:''}`;
+  document.getElementById('overlay').classList.add('open');
+}
+function ctrlMarcaNueva(){
+  return {e:document.getElementById('ctlEst').value,
+    f:document.getElementById('ctlFec').value||todayIso,
+    o:document.getElementById('ctlObs').value.trim(),
+    u:currentUser?currentUser.uid:'', n:(currentProfile&&(currentProfile.nombre||currentProfile.email))||'', t:Date.now()};
+}
+async function ctrlGuardarMarca(progId,key){
+  const prog=ctrlBuscarProg(progId);if(!prog)return;
+  const m=ctrlMarcaNueva();
+  if(m.f>todayIso){toast('⚠️ La fecha no puede ser futura');return}
+  const ref=db.collection('control').doc(ctrlPid).collection('ciclos').doc(prog.docId);
+  const data={epoca:prog.epoca, subjefe:prog.subjefe||'', updatedAt:Date.now(), marcas:{[key]:m}};
+  closeModal();
+  try{
+    const p=ref.set(data,{merge:true});
+    // Sin señal la promesa queda en cola: se refleja altiro en pantalla y se envía al volver.
+    ctrlMarcas[prog.docId]=Object.assign({},ctrlMarcas[prog.docId]||{},{[key]:m});
+    renderControl();
+    await p;toast('✅ Registrado');
+  }catch(e){toast('Error: '+e.message)}
+}
+async function ctrlBorrarMarca(progId,key){
+  const prog=ctrlBuscarProg(progId);if(!prog)return;
+  closeModal();
+  // La marca puede estar en el documento del ciclo o en el referencial previo.
+  const docs=[prog.docId];if(prog.refDocId&&(ctrlMarcas[prog.refDocId]||{})[key]) docs.push(prog.refDocId);
+  try{
+    for(const d of docs){
+      await db.collection('control').doc(ctrlPid).collection('ciclos').doc(d)
+        .set({updatedAt:Date.now(),marcas:{[key]:firebase.firestore.FieldValue.delete()}},{merge:true});
+    }
+    toast('Marca eliminada');
+  }catch(e){toast('Error: '+e.message)}
+}
+function ctrlModalAnual(actId,oc,anio){
+  const a=CTRL_ACTS.find(x=>x.id===actId);if(!a)return;
+  if(!canMarcarCtrl(a)){toast('Esta actividad la marca '+a.rt);return}
+  const key=oc==='c'?`a${a.id}_c${Date.now()}`:`a${a.id}_${oc}`;
+  const m=oc==='c'?null:(ctrlAnual[anio]||{})[key];
+  const ocTxt=a.tipo==='anual'?(a.oc.find(x=>x.k===oc)||{}).t:'Registro según condición';
+  const puedeBorrar=m&&(isAdmin()||isJefe()||(currentUser&&m.u===currentUser.uid));
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">📅 ${a.id}. ${escH(a.nom)}</div>
+    <div class="modal-sub">${PREDIOS[ctrlPid].nombre} · ${anio} · ${escH(ocTxt||'')}</div>
+    <div class="form-row"><label>Estado</label><select id="ctlEst"><option value="ok"${!m||m.e==='ok'?' selected':''}>Realizado</option><option value="na"${m&&m.e==='na'?' selected':''}>No aplica</option></select></div>
+    <div class="form-row"><label>Fecha</label><input type="date" id="ctlFec" value="${m&&m.f||todayIso}" max="${todayIso}"></div>
+    <div class="form-row"><label>Observación <span style="font-weight:400;text-transform:none;color:var(--muted)">(opcional)</span></label><input type="text" id="ctlObs" maxlength="300" value="${escH(m&&m.o||'')}"></div>
+    <button class="btn btn-primary" onclick="ctrlGuardarAnual('${key}',${anio})">Guardar</button>
+    ${puedeBorrar?`<button class="btn btn-secondary" style="margin-top:8px" onclick="ctrlBorrarAnual('${key}',${anio})">Deshacer marca</button>`:''}`;
+  document.getElementById('overlay').classList.add('open');
+}
+async function ctrlGuardarAnual(key,anio){
+  const m=ctrlMarcaNueva();
+  if(m.f>todayIso){toast('⚠️ La fecha no puede ser futura');return}
+  closeModal();
+  try{
+    const p=db.collection('control').doc(ctrlPid).collection('anual').doc(String(anio)).set({updatedAt:Date.now(),marcas:{[key]:m}},{merge:true});
+    ctrlAnual[anio]=Object.assign({},ctrlAnual[anio]||{},{[key]:m});
+    renderControl();
+    await p;toast('✅ Registrado');
+  }catch(e){toast('Error: '+e.message)}
+}
+async function ctrlBorrarAnual(key,anio){
+  closeModal();
+  try{
+    await db.collection('control').doc(ctrlPid).collection('anual').doc(String(anio)).set({updatedAt:Date.now(),marcas:{[key]:firebase.firestore.FieldValue.delete()}},{merge:true});
+    toast('Marca eliminada');
+  }catch(e){toast('Error: '+e.message)}
+}
+
+// ── Fecha de plantación desde Control ──
+function ctrlModalPlantacion(progId){
+  const prog=ctrlBuscarProg(progId);if(!prog||prog.tipo!=='ciclo')return;
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">📅 Fecha de plantación</div>
+    <div class="modal-sub">${TNAMES[prog.epoca]} · ${escH(prog.subjefe)}${prog.modulos.length?' · '+escH(modulosLabel(prog.modulos)):''}</div>
+    <div class="form-row"><label>Fecha</label><input type="date" id="ctlPlant" value="${prog.P}"></div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:4px 0 12px"><input type="checkbox" id="ctlPlantConf"${prog.conf?' checked':''} style="width:auto;margin:0"> Fecha definitiva (ya se plantó o está confirmada)</label>
+    <p class="ctl-nota">Referencia de la época: ${cFechaLarga(ctrlRefCercana(prog.epoca,prog.P))}. Todas las semanas del control se recalculan desde esta fecha.</p>
+    <button class="btn btn-primary" onclick="ctrlGuardarPlantacion('${progId}')">Guardar</button>`;
+  document.getElementById('overlay').classList.add('open');
+}
+async function ctrlGuardarPlantacion(progId){
+  const prog=ctrlBuscarProg(progId);if(!prog)return;
+  const f=document.getElementById('ctlPlant').value;
+  const conf=document.getElementById('ctlPlantConf').checked;
+  if(!f){toast('⚠️ Ingresa la fecha');return}
+  if(conf&&f>cAdd(todayIso,60)){toast('⚠️ Una fecha definitiva no puede estar a más de 60 días');return}
+  closeModal();
+  try{
+    const p=colCiclos(ctrlPid,prog.subjefe).doc(prog.id).update({plantacion:f,plantacionConf:conf});
+    const c=(ctrlCiclos[ctrlPid]||[]).find(x=>x.id===prog.id);
+    if(c){c.plantacion=f;c.plantacionConf=conf}
+    renderControl();
+    await p;toast('✅ Fecha de plantación guardada');
+  }catch(e){toast('Error: '+e.message)}
+}
+function ctrlIrACiclos(){
+  if(activePred!==ctrlPid && userPredios().includes(ctrlPid)) selPredio(ctrlPid);
+  showScr('ciclos',document.getElementById('btnCiclos'));
+}
+
+// ── Para el modal de ciclos ──
+// Época por defecto al abrir un ciclo: la próxima según la fecha de referencia.
+function ctrlEpocaSugerida(libres){
+  const cands=(libres||TORDER).map(ep=>({ep,f:ctrlRefProxima(ep,todayIso,14)})).filter(x=>x.f).sort((p,q)=>p.f.localeCompare(q.f));
+  return cands.length?cands[0].ep:(libres||TORDER)[0];
+}
+function ctrlPlantacionTxt(c){
+  if(!c||c.cultivo!=='tomate'||!c.temporada||!CTRL_EPOCAS[c.temporada]) return '';
+  const P=c.plantacion||ctrlRefCercana(c.temporada,c.inicio||todayIso);
+  const n=Math.floor(cDiff(todayIso,P)/7);
+  const est=c.plantacion?(c.plantacionConf?'':' (estimada)'):' (referencia de la época)';
+  return `🌱 Plantación: ${fDMY(P)}${est} · ${n<0?(n===-1?'falta 1 semana':`faltan ${-n} semanas`):`semana ${n}`}`;
+}
+
+
 // ══════════════════════════════════════════════
 // MANUAL DE USO (v33)
 // ══════════════════════════════════════════════
@@ -8676,10 +9414,11 @@ aplicarVista();
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v51';
-const MANUAL_FECHA='2026-09-25';
+const MANUAL_VERSION='v52';
+const MANUAL_FECHA='2026-09-28';
 
 const MANUAL_CAMBIOS=[
+  {v:'v52', f:'28-09-2026', txt:'Nuevo botón <b>Control</b>: la lista de chequeo del tomate (49 actividades) ordenada por semana desde la plantación. Cada responsable (jefatura predial, encargado de riego, subjefe de sector, asesor) ve qué le toca <b>esta semana y las 4 siguientes</b> en todos los ciclos abiertos, las marca como realizadas o no aplica, y ve lo atrasado. Incluye el <b>cronograma</b> (carta Gantt) de cada ciclo y las <b>actividades anuales del campo</b>. En <b>Ciclos</b> ahora se puede tener abierto más de un ciclo de tomate a la vez, uno por época, porque las épocas se superponen, y cada ciclo guarda su <b>fecha de plantación</b>. Mientras no se abre el ciclo, la época aparece con su fecha de referencia para no olvidar lo que se hace antes de plantar (encargo de plantas, análisis de suelo, preparación).'},
   {v:'v51', f:'25-09-2026', txt:'<b>Bodega:</b> un despacho que todavía no se recibe se puede corregir de destino con <b>✏️ Destino</b> en la tarjeta 📥 Despachos por confirmar (quien lo envió, el responsable del origen, bodega o gerencia). No mueve stock y queda anotado quién lo cambió; en <b>Ingresos y movimientos</b> aparece como "Destino corregido".'},
   {v:'v50', f:'25-09-2026', txt:'<b>Aplicaciones:</b> la lista ahora se llama <b>📋 Aplicaciones registradas</b> y deja revisar <b>todo lo registrado</b>, no solo las 15 últimas. Se filtra por tipo (foliar, fertilización, ácidos, vía riego), predio, fechas, producto y quién registró; se puede ordenar por fecha de aplicación, cargar más con <b>Ver más</b> y bajar lo filtrado a <b>Excel</b>, una fila por producto.'},
   {v:'v49', f:'25-09-2026', txt:'<b>Bodega:</b> nueva tarjeta <b>📥 Ingresos y movimientos</b>: todos los que entran a Bodega (jefaturas, bodega, responsables de recinto y gerencia) pueden ver qué productos han entrado a cada recinto, con fecha, cantidad, proveedor u origen y quién lo registró, filtrar por fechas, recinto, tipo y producto, y bajarlo a Excel. <b>Aplicaciones:</b> si la bodega no acepta un descuento, ahora aparece un aviso rojo que hay que cerrar (antes decía "stock descontado" aunque no se hubiera movido), y el descuento queda anotado para que gerencia o bodega lo aplique desde la tarjeta <b>⚠️ Descuentos que no llegaron a bodega</b>.'},
@@ -8779,11 +9518,34 @@ const MANUAL_SECCIONES=[
   pasos:[
     'Aprieta abrir ciclo al empezar la temporada.',
     'Indica el <b>cultivo</b>, los <b>módulos</b> y el <b>mes de plantación</b> cuando el cultivo lo pida.',
+    'En tomate, anota la <b>fecha de plantación</b>. La app propone la de referencia de la época; si todavía no está segura, deja la casilla «definitiva» sin marcar y confírmala después (también se puede desde Control).',
+    'Un subjefe puede tener <b>varios ciclos de tomate abiertos a la vez</b>, uno por época (por ejemplo primor y trastomate), porque las épocas se superponen. Lo que no se puede es abrir dos veces la misma época.',
     'Cuando la temporada termina, <b>cierra</b> el ciclo. Entre un ciclo y otro puede haber días sin cultivo, y está bien.'
   ],
   tips:[
     'El error más común del registro diario ("no aparece el ciclo") se arregla acá.',
-    'No abras dos ciclos para los mismos módulos al mismo tiempo: los informes por ciclo quedan repartidos y no cuadran.'
+    'No abras dos ciclos para los mismos módulos al mismo tiempo: los informes por ciclo quedan repartidos y no cuadran. Épocas superpuestas sí, pero en módulos distintos.',
+    'Con dos ciclos de tomate abiertos, el registro diario pide elegir a cuál va cada entrada.'
+  ]
+},
+{
+  id:'control', ico:'✅', tit:'Control del proceso (tomate)', ver:()=>canVerControl(),
+  intro:'La lista de chequeo del cultivo de tomate, semana a semana desde la plantación, para que cada responsable sepa qué hacer ahora y en las 4 semanas siguientes.',
+  pasos:[
+    'Entra a <b>Control</b>. Arriba eliges el campo (si tienes más de uno) y el <b>responsable</b>: la app parte mostrando el tuyo (jefatura predial, encargado de riego, subjefe de sector o asesor), pero puedes ver los demás o <b>Todos</b>.',
+    '<b>📋 Esta semana</b> muestra, semana por semana, lo que toca en <b>cada ciclo de tomate abierto</b>. Como las épocas se superponen, en una misma semana puede aparecer primor, trastomate y verano, cada uno con su número de semana.',
+    'Aprieta <b>Marcar</b> para dejar la actividad como <b>Realizada</b> o <b>No aplica</b>, con la fecha y una observación (resultado, laboratorio, n° de racimo…). Con <b>✏️</b> se corrige.',
+    'Las rutinas (riego, savia, clima…) se marcan <b>una vez por semana</b>; los hitos (encargo de plantas, aperturas de cinta, análisis) <b>una sola vez</b>. El MAFF va 3 veces por ciclo y la savia a laboratorio 2.',
+    'Arriba aparecen en rojo las <b>⏰ Atrasadas</b>: hitos cuya ventana ya pasó sin registro y rutinas de la semana pasada sin marcar.',
+    '<b>📊 Cronograma</b> es la carta Gantt del ciclo: una columna por semana (semana 0 = plantación), la semana actual marcada en rojo. Toca una celda para marcar.',
+    '<b>📅 Anuales del campo</b> son las que siguen el calendario y no la plantación: análisis de agua (marzo y septiembre), microbiología de suelo, antibiograma, doble techo, limpieza de cubierta, etc.'
+  ],
+  tips:[
+    '<b>Fecha de plantación.</b> Las fechas de referencia son: Primor 5 de junio, Trastomate 15 de agosto, Verano 5 de octubre, Otoño 20 de diciembre e Invierno 5 de febrero. Varían hasta una semana según el año. Cuando se conoce el día real, se anota con <b>📅 Fecha plantación</b> y todo se recalcula.',
+    'Antes de abrir el ciclo, la época aparece como <b>referencial</b> (en naranjo) desde 15 semanas antes de plantar, para no olvidar el encargo de plantas al vivero (100 días antes), el análisis de suelo y la preparación. Lo que marques ahí queda también en el ciclo cuando se abra.',
+    'Nimitz tiene su propia opción <b>No aplica (fumigado)</b>. El doble techo de plantación se pide solo en plantaciones de diciembre a febrero.',
+    'Lo que venció antes de que existiera esta pantalla (28-09-2026) no aparece como atrasado.',
+    'Las semanas de inicio y fin de cada actividad son referenciales: se ajustan con la antesis real y el asesor.'
   ]
 },
 {
@@ -9071,6 +9833,7 @@ function showScr(name,btn){
   if(name==='aplic')   initAplic();
   if(name==='gastos')  initGastos();
   if(name==='manual')  initManual();
+  if(name==='control') initControl();   // v52
 }
 
 // ══════════════════════════════════════════════
