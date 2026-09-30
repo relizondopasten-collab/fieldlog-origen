@@ -387,6 +387,21 @@ select:focus,input:focus{border-color:var(--green)}
 .inf-table .pct-fill{height:100%;background:var(--green)}
 .inf-table tr.inc-row td{background:#FEF3C7}
 .inf-chartwrap{position:relative;height:240px;margin-top:10px}
+/* v54 · Dashboard de informes */
+.dash-sel{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.dash-sel label{font-size:10px}
+.dash-sel select{width:100%}
+.dash-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:6px;margin-bottom:10px}
+.dash-kpi{border:1.5px solid var(--sand);border-radius:10px;padding:8px 10px;background:#fff;cursor:pointer}
+.dash-kpi.on{border-color:var(--green);background:#F0FDF4}
+.dash-kpi .k-l{font-family:'DM Mono',monospace;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+.dash-kpi .k-v{font-family:'Syne',sans-serif;font-weight:700;font-size:17px;color:var(--dark);margin-top:2px}
+.dash-kpi .k-s{font-size:9px;color:var(--muted);margin-top:1px}
+.dash-grid{display:grid;grid-template-columns:1fr;gap:10px}
+.dash-box{border:1px solid var(--sand);border-radius:10px;padding:10px;background:#fff;min-width:0}
+.dash-box-t{font-family:'Syne',sans-serif;font-weight:700;font-size:12px;margin-bottom:4px}
+.dash-note{font-size:10px;color:#B45309;margin:-4px 0 8px}
+@media (min-width:760px){.dash-sel{grid-template-columns:repeat(4,1fr)}.dash-grid{grid-template-columns:1fr 1fr}.dash-grid .dash-wide{grid-column:1/-1}}
 .inf-empty{text-align:center;padding:30px 10px;color:var(--muted);font-size:12px}
 .inf-hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:8px;flex-wrap:wrap}
 .inf-dl{padding:5px 9px;border:1.5px solid var(--sand);background:var(--cream);border-radius:7px;font-size:10px;cursor:pointer;font-family:'Syne',sans-serif;font-weight:600;color:var(--dark);white-space:nowrap}
@@ -619,7 +634,8 @@ body.vista-escritorio .modal-content{max-width:700px}
     <!-- Tabs de informes (visible solo después de cargar) -->
     <div id="infTabsWrap" style="display:none">
       <div style="display:flex;gap:4px;margin-bottom:10px;overflow-x:auto;padding-bottom:4px">
-        <button class="inftab active" data-tab="progreal" onclick="switchInfTab('progreal')">📊 Prog vs Real</button>
+        <button class="inftab active" data-tab="dashboard" onclick="switchInfTab('dashboard')">🧭 Dashboard</button>
+        <button class="inftab" data-tab="progreal" onclick="switchInfTab('progreal')">📊 Prog vs Real</button>
         <button class="inftab" data-tab="ciclos" onclick="switchInfTab('ciclos')">🌱 Por ciclo</button>
         <button class="inftab" data-tab="trabajadores" onclick="switchInfTab('trabajadores')">👤 Trabajadores</button>
         <button class="inftab" data-tab="labores" onclick="switchInfTab('labores')">🔧 Labores</button>
@@ -627,7 +643,7 @@ body.vista-escritorio .modal-content{max-width:700px}
         <button class="inftab" data-tab="inconsist" onclick="switchInfTab('inconsist')">⚠️ Inconsistencias</button>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (6 hojas)</button>
+        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (7 hojas)</button>
         <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportAnexoFotos()">📷 Anexo de observaciones (PDF)</button>
       </div>
       <div id="infContent"></div>
@@ -7707,7 +7723,7 @@ function closeModal(){document.getElementById('overlay').classList.remove('open'
 // INFORMES (Fase 2 + Fase 3: Excel y PDF)
 // ══════════════════════════════════════════════
 // Estado del módulo de informes (cache de la última consulta + tab activo + charts vivos)
-let infState = { data: null, tab: 'progreal', charts: {} };
+let infState = { data: null, tab: 'dashboard', charts: {} };
 
 function initInformes(){
   // Default: últimos 30 días
@@ -7725,7 +7741,7 @@ function initInformes(){
   if(preds.length>1) selP.innerHTML = `<option value="">Todos</option>` + selP.innerHTML;
   onInfPredioChange();
   // Reset estado
-  infState = { data: null, tab: 'progreal', charts: {} };
+  infState = { data: null, tab: 'dashboard', charts: {} };
   document.getElementById('infTabsWrap').style.display = 'none';
 }
 
@@ -7825,6 +7841,7 @@ async function cargarYRenderInformes(){
   }
 
   infState.data = { registros, programaciones, workers, preds, desde, hasta, predioSel, subjefeSel, ciclos: ciclosInf };
+  infState.dashCache = null;
   document.getElementById('infTabsWrap').style.display = 'block';
   switchInfTab(infState.tab);
 }
@@ -7838,7 +7855,8 @@ function switchInfTab(tab){
   Object.values(infState.charts).forEach(ch=>{ try{ ch.destroy(); }catch(e){} });
   infState.charts = {};
   if(!infState.data){ return; }
-  if(tab==='progreal')      renderInfProgVsReal();
+  if(tab==='dashboard')     renderInfDashboard();
+  else if(tab==='progreal')      renderInfProgVsReal();
   else if(tab==='ciclos')       renderInfCiclos();
   else if(tab==='trabajadores') renderInfTrabajadores();
   else if(tab==='labores')      renderInfLabores();
@@ -8091,6 +8109,148 @@ function calcEficiencia(){
   const totalCosto = rows.reduce((s,r)=>s+r.costoTotal, 0);
   const totalDP    = rows.reduce((s,r)=>s+r.diasPersona, 0);
   return { rows, encargados, promLabor, totalMesas, totalHoras, totalCosto, totalDP, excluidas, cph };
+}
+
+// ─────────────────────────────────────────────
+// v54 · DASHBOARD de informes
+// ─────────────────────────────────────────────
+// Un solo tablero con selectores (encargado, labor, métrica, agrupación) sobre
+// los mismos datos ya cargados. Se arma una tabla plana de "hechos" (una fila
+// por labor registrada y una por tarea programada) y todo sale de ahí.
+const DASH_METRICAS = {
+  mesas:  { t:'Mesas',              fmt:n=>Math.round(n).toLocaleString('es-CL') },
+  horas:  { t:'Horas',              fmt:n=>(Math.round(n*10)/10).toLocaleString('es-CL') },
+  costo:  { t:'Costo',              fmt:n=>fmtCLP(n) },
+  cmesa:  { t:'$/mesa',             fmt:n=>n===null?'—':fmtCLP(n) },
+  mdp:    { t:'Mesas/día persona',  fmt:n=>n===null?'—':(Math.round(n*10)/10).toLocaleString('es-CL') },
+  cumpl:  { t:'Cumplimiento prog.', fmt:n=>n===null?'—':Math.round(n)+'%' }
+};
+
+function dashLunes(iso){
+  const d = new Date(iso+'T12:00:00');
+  const dow = (d.getDay()+6)%7;
+  d.setDate(d.getDate()-dow);
+  return d.toISOString().slice(0,10);
+}
+function dashPeriodo(iso, agr){
+  if(agr==='mes') return iso.slice(0,7);
+  if(agr==='semana') return dashLunes(iso);
+  return iso;
+}
+function dashPeriodoTxt(k, agr){
+  if(agr==='mes'){ const [y,m]=k.split('-'); return `${(MESES[parseInt(m)-1]||m).slice(0,3)} ${y.slice(2)}`; }
+  if(agr==='semana') return 'Sem ' + fDMY(k).slice(0,5);
+  return fDMY(k).slice(0,5);
+}
+
+function dashHechos(){
+  if(infState.dashCache) return infState.dashCache;
+  const { registros, programaciones, desde, hasta, ciclos } = infState.data;
+  const reales = [], prog = [];
+  const realPorClave = {};
+  registros.forEach(r=>{
+    if(r.ausente || r.licencia || r.vacaciones) return;
+    const w = r._worker || {};
+    const sub = w.subjefe || 'Sin encargado';
+    const c = cicloDeRegistro(r);
+    const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
+    labs.forEach(l=>{
+      if(!l.laborId) return;
+      const m = Number(l.mesas)||0, h = Number(l.horas)||0;
+      if(m<=0 && h<=0) return;
+      reales.push({ fecha:r.fecha, predio:r._predio, sub, laborId:l.laborId, mesas:m, horas:h,
+        wk: r._predio+'|'+r.workerId, wNombre: w.nombre || r.workerNombre || r.workerId,
+        ciclo: c ? cicloLabel(c) : 'Sin ciclo', ef: m>0 && h>0 });
+      const k = r.fecha+'|'+r._predio+'|'+sub+'|'+l.laborId;
+      realPorClave[k] = (realPorClave[k]||0) + m;
+    });
+  });
+  programaciones.forEach(p=>{
+    const listaC = ((ciclos[p.predio]||{})[p.subjefe]) || [];
+    Object.entries(p.dias).forEach(([dia, dato])=>{
+      if(dia < desde || dia > hasta) return;
+      normalizarTareasDia(dato).forEach(t=>{
+        if(!t.laborId || !(t.metaMesas>0)) return;
+        const cObj = t.cicloId ? (listaC.find(c=>c.id===t.cicloId)||null) : null;
+        prog.push({ fecha:dia, predio:p.predio, sub:p.subjefe, laborId:t.laborId, meta:t.metaMesas,
+          ciclo: cObj ? cicloLabel(cObj) : 'Sin ciclo', clave: dia+'|'+p.predio+'|'+p.subjefe+'|'+t.laborId });
+      });
+    });
+  });
+  // El real que se compara con lo programado es el de ese día, encargado y labor
+  // (una sola vez por clave aunque la tarea aparezca repetida en la programación).
+  const vistas = new Set();
+  prog.forEach(t=>{ t.real = vistas.has(t.clave) ? 0 : (realPorClave[t.clave]||0); vistas.add(t.clave); });
+  infState.dashCache = { reales, prog };
+  return infState.dashCache;
+}
+
+// Agrega un conjunto de hechos en todas las métricas
+function dashAgregar(reales, prog, cph){
+  let mesas=0, horas=0, mEf=0, hEf=0; const dp = new Set();
+  reales.forEach(f=>{
+    mesas += f.mesas; horas += f.horas;
+    if(f.ef){ mEf += f.mesas; hEf += f.horas; dp.add(f.wk+'|'+f.fecha); }
+  });
+  let meta=0, real=0;
+  prog.forEach(t=>{ meta += t.meta; real += t.real; });
+  return {
+    mesas, horas, costo: horas*cph,
+    cmesa: mEf>0 ? hEf*cph/mEf : null,
+    mdp: dp.size>0 ? mEf/dp.size : null,
+    cumpl: meta>0 ? real/meta*100 : null,
+    dp: dp.size, meta, real
+  };
+}
+
+function dashEstado(){
+  if(!infState.dash) infState.dash = { enc:'', lab:'', met:'mesas', agr:'semana' };
+  return infState.dash;
+}
+function dashSet(campo, valor){
+  dashEstado()[campo] = valor;
+  switchInfTab('dashboard');
+}
+
+function calcDashboard(){
+  const cph = costoPorHora();
+  const st = dashEstado();
+  const H = dashHechos();
+  const encs = [...new Set([...H.reales.map(f=>f.sub), ...H.prog.map(t=>t.sub)])].sort((a,b)=>a.localeCompare(b,'es'));
+  const labIds = [...new Set(H.reales.map(f=>f.laborId))];
+  const labs = labIds.map(id=>{ const l=LABORES.find(x=>x.id===id); return { id, nom: l?l.d:'—',
+    mesas: H.reales.filter(f=>f.laborId===id).reduce((s,f)=>s+f.mesas,0) }; }).sort((a,b)=>b.mesas-a.mesas);
+  if(st.enc && !encs.includes(st.enc)) st.enc = '';
+  if(st.lab && !labIds.includes(Number(st.lab))) st.lab = '';
+  const fLab = f=> !st.lab || f.laborId===Number(st.lab);
+  const fEnc = f=> !st.enc || f.sub===st.enc;
+  const R = H.reales.filter(f=>fLab(f)&&fEnc(f));
+  const P = H.prog.filter(f=>fLab(f)&&fEnc(f));
+  const tot = dashAgregar(R, P, cph);
+
+  // Evolución en el tiempo
+  const perKeys = [...new Set([...R.map(f=>dashPeriodo(f.fecha,st.agr)), ...P.map(t=>dashPeriodo(t.fecha,st.agr))])].sort();
+  const evol = perKeys.map(k=>({ k, txt: dashPeriodoTxt(k, st.agr),
+    ...dashAgregar(R.filter(f=>dashPeriodo(f.fecha,st.agr)===k), P.filter(t=>dashPeriodo(t.fecha,st.agr)===k), cph) }));
+
+  // Por encargado (sin el filtro de encargado, para comparar)
+  const RL = H.reales.filter(fLab), PL = H.prog.filter(fLab);
+  const porEnc = encs.map(e=>({ k:e, ...dashAgregar(RL.filter(f=>f.sub===e), PL.filter(t=>t.sub===e), cph) }))
+    .filter(x=>x.mesas>0 || x.horas>0 || x.meta>0);
+
+  // Por ciclo
+  const ciclosK = [...new Set([...R.map(f=>f.sub+'¦'+f.ciclo), ...P.map(t=>t.sub+'¦'+t.ciclo)])];
+  const porCiclo = ciclosK.map(k=>{ const [sub,cic]=k.split('¦');
+    return { sub, ciclo:cic, ...dashAgregar(R.filter(f=>f.sub===sub&&f.ciclo===cic), P.filter(t=>t.sub===sub&&t.ciclo===cic), cph) }; })
+    .sort((a,b)=> b.costo - a.costo);
+
+  // Trabajadores
+  const wks = [...new Set(R.map(f=>f.wk))];
+  const porTrab = wks.map(wk=>{ const fs = R.filter(f=>f.wk===wk);
+    return { nombre: fs[0].wNombre, sub: fs[0].sub, ...dashAgregar(fs, [], cph) }; })
+    .sort((a,b)=> st.lab ? ((b.mdp||0)-(a.mdp||0)) : (b.mesas-a.mesas));
+
+  return { st, cph, encs, labs, tot, evol, porEnc, porCiclo, porTrab };
 }
 
 function calcInconsistencias(){
@@ -8609,6 +8769,91 @@ function renderInfEficiencia(){
 }
 
 // ─────────────────────────────────────────────
+// INFORME v54: Dashboard
+// ─────────────────────────────────────────────
+function renderInfDashboard(){
+  const d = calcDashboard();
+  const st = d.st, M = DASH_METRICAS, met = M[st.met];
+  const opt = (v,t,sel)=>`<option value="${v}" ${String(v)===String(sel)?'selected':''}>${t}</option>`;
+  let html = `<div class="inf-card">
+    <div class="inf-hdr"><div class="inf-card-title">🧭 Dashboard</div>${infDlBtnsHTML('dashboard')}</div>
+    <div class="dash-sel">
+      <div><label>Encargado</label><select onchange="dashSet('enc',this.value)">${opt('','Todos',st.enc)}${d.encs.map(e=>opt(e,e,st.enc)).join('')}</select></div>
+      <div><label>Labor</label><select onchange="dashSet('lab',this.value)">${opt('','Todas',st.lab)}${d.labs.map(l=>opt(l.id,`${l.id}. ${l.nom}`,st.lab)).join('')}</select></div>
+      <div><label>Métrica</label><select onchange="dashSet('met',this.value)">${Object.entries(M).map(([k,v])=>opt(k,v.t,st.met)).join('')}</select></div>
+      <div><label>Agrupar por</label><select onchange="dashSet('agr',this.value)">${opt('dia','Día',st.agr)}${opt('semana','Semana',st.agr)}${opt('mes','Mes',st.agr)}</select></div>
+    </div>`;
+  const t = d.tot;
+  const kpi = (k, sub)=>`<div class="dash-kpi ${st.met===k?'on':''}" onclick="dashSet('met','${k}')"><div class="k-l">${M[k].t}</div><div class="k-v">${M[k].fmt(t[k])}</div>${sub?`<div class="k-s">${sub}</div>`:''}</div>`;
+  html += `<div class="dash-kpis">
+    ${kpi('mesas')}
+    ${kpi('horas')}
+    ${kpi('costo', `${fmtCLP(d.cph)}/h`)}
+    ${kpi('cmesa')}
+    ${kpi('mdp', `${t.dp.toLocaleString('es-CL')} días-persona`)}
+    ${kpi('cumpl', t.meta>0?`${t.real.toLocaleString('es-CL')} de ${t.meta.toLocaleString('es-CL')} prog.`:'sin programación')}
+  </div>`;
+  if(!st.lab && (st.met==='mdp' || st.met==='cmesa')){
+    html += `<div class="dash-note">⚠️ Con "Todas" las labores, ${met.t.toLowerCase()} mezcla labores de ritmos distintos. Elige una labor para comparar encargados.</div>`;
+  }
+  if(!d.evol.length){
+    html += `<div class="inf-empty">No hay datos con estos filtros.</div></div>`;
+    document.getElementById('infContent').innerHTML = html;
+    return;
+  }
+
+  html += `<div class="dash-grid">
+    <div class="dash-box dash-wide"><div class="dash-box-t">${met.t} por ${st.agr==='dia'?'día':st.agr}</div><div class="inf-chartwrap"><canvas id="chartDashEvol"></canvas></div></div>
+    <div class="dash-box"><div class="dash-box-t">${met.t} por encargado</div><div class="inf-chartwrap"><canvas id="chartDashEnc"></canvas></div></div>
+    <div class="dash-box"><div class="dash-box-t">Por ciclo</div><div style="overflow-x:auto;max-height:260px;overflow-y:auto"><table class="inf-table">
+      <thead><tr><th>Ciclo</th><th class="num">Mesas</th><th class="num">% prog.</th><th class="num">Costo</th><th class="num">$/mesa</th></tr></thead>
+      <tbody>${d.porCiclo.map(c=>`<tr><td>${c.ciclo}<div style="font-size:9px;color:var(--muted)">${c.sub}</div></td>
+        <td class="num">${M.mesas.fmt(c.mesas)}</td><td class="num">${M.cumpl.fmt(c.cumpl)}</td>
+        <td class="num">${fmtCLP(c.costo)}</td><td class="num">${M.cmesa.fmt(c.cmesa)}</td></tr>`).join('')}</tbody>
+    </table></div></div>
+    <div class="dash-box dash-wide"><div class="dash-box-t">Trabajadores ${st.lab?'(ordenados por mesas/día persona)':'(ordenados por mesas)'}</div>
+      <div style="overflow-x:auto;max-height:280px;overflow-y:auto"><table class="inf-table">
+      <thead><tr><th>Trabajador</th><th class="num">Días pers.</th><th class="num">Mesas</th><th class="num">Horas</th><th class="num">Mesas/día</th><th class="num">$/mesa</th></tr></thead>
+      <tbody>${d.porTrab.map(w=>`<tr${w.dp<EFIC_MIN_DIAS?' style="opacity:.6"':''}><td>${w.nombre}<div style="font-size:9px;color:var(--muted)">${w.sub}</div></td>
+        <td class="num">${w.dp}</td><td class="num">${M.mesas.fmt(w.mesas)}</td><td class="num">${M.horas.fmt(w.horas)}</td>
+        <td class="num"><b>${M.mdp.fmt(w.mdp)}</b></td><td class="num">${M.cmesa.fmt(w.cmesa)}</td></tr>`).join('')}</tbody>
+      </table></div></div>
+  </div>
+  <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-top:8px">Toca una tarjeta para cambiar la métrica de los gráficos. <b>$/mesa</b> y <b>mesas/día persona</b> usan solo labores con mesas y horas. <b>Cumplimiento</b>: mesas reales del día, encargado y labor programados ÷ meta. El gráfico por encargado no se filtra por encargado, para que puedas comparar (el elegido va destacado).</div>
+  </div>`;
+  document.getElementById('infContent').innerHTML = html;
+
+  const val = x=> { const v = x[st.met]; return v===null||v===undefined ? null : Math.round(v*10)/10; };
+  const ticks = { font:{size:10} };
+  // Evolución
+  const ctxE = document.getElementById('chartDashEvol').getContext('2d');
+  const dsE = st.met==='cumpl'
+    ? [ { label:'Programado', data:d.evol.map(x=>x.meta), backgroundColor:'#94a3b8' },
+        { label:'Real', data:d.evol.map(x=>x.real), backgroundColor:'#4ade80' } ]
+    : [ { label:met.t, data:d.evol.map(val), backgroundColor:'#4ade80', borderColor:'#16a34a',
+          type: d.evol.length>20 ? 'line' : 'bar', tension:.25, pointRadius:2, spanGaps:true } ];
+  infState.charts.dashEvol = new Chart(ctxE, {
+    type:'bar', data:{ labels:d.evol.map(x=>x.txt), datasets:dsE },
+    options:{ responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{ display: st.met==='cumpl', position:'bottom', labels:{font:{size:10}} },
+        tooltip:{ callbacks:{ label:(c)=> st.met==='cumpl' ? `${c.dataset.label}: ${c.parsed.y}` : `${met.t}: ${met.fmt(d.evol[c.dataIndex][st.met])}`,
+          afterLabel:(c)=> st.met==='cumpl' && c.datasetIndex===1 ? `Cumplimiento: ${M.cumpl.fmt(d.evol[c.dataIndex].cumpl)}` : '' } } },
+      scales:{ y:{ beginAtZero:true, ticks }, x:{ ticks:{ font:{size:9}, maxRotation:45 } } } }
+  });
+  // Por encargado
+  const enc = d.porEnc.slice().sort((a,b)=>(val(b)||0)-(val(a)||0));
+  const ctxN = document.getElementById('chartDashEnc').getContext('2d');
+  infState.charts.dashEnc = new Chart(ctxN, {
+    type:'bar',
+    data:{ labels: enc.map(x=>x.k), datasets:[{ label:met.t, data: enc.map(val),
+      backgroundColor: enc.map(x=> !st.enc || x.k===st.enc ? '#4ade80' : '#cbd5e1') }] },
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=>`${met.t}: ${met.fmt(enc[c.dataIndex][st.met])}` } } },
+      scales:{ x:{ beginAtZero:true, ticks }, y:{ ticks } } }
+  });
+}
+
+// ─────────────────────────────────────────────
 // INFORME 4: Inconsistencias detectadas
 // ─────────────────────────────────────────────
 function renderInfInconsistencias(){
@@ -8702,6 +8947,26 @@ function infTablaExport(tab){
       chartId: 'chartLab'
     };
   }
+  if(tab==='dashboard'){
+    const d = calcDashboard();
+    const st = d.st;
+    const encTxt = st.enc || 'Todos los encargados';
+    const labObj = d.labs.find(l=>String(l.id)===String(st.lab));
+    const labTxt = labObj ? `${labObj.id}. ${labObj.nom}` : 'Todas las labores';
+    const r1 = n => n===null||n===undefined ? '' : Math.round(n*10)/10;
+    const perTxt = { dia:'Día', semana:'Semana (lunes)', mes:'Mes' }[st.agr];
+    return {
+      titulo: 'Dashboard',
+      nota: `${encTxt} · ${labTxt} · por ${perTxt.toLowerCase()} · costo por hora ${fmtCLP(d.cph)}`,
+      headers: [perTxt,'Mesas','Horas','Costo CLP','Costo por mesa CLP','Días-persona','Mesas/día persona','Mesas programadas','Mesas reales en lo programado','% cumplimiento'],
+      body: d.evol.map(x=>[ st.agr==='mes' ? x.k : fDMY(x.k), x.mesas, r1(x.horas), Math.round(x.costo),
+        x.cmesa===null?'':Math.round(x.cmesa), x.dp, r1(x.mdp), x.meta, x.real, x.cumpl===null?'':Math.round(x.cumpl) ]),
+      totales: ['TOTAL', d.tot.mesas, r1(d.tot.horas), Math.round(d.tot.costo), d.tot.cmesa===null?'':Math.round(d.tot.cmesa),
+        d.tot.dp, r1(d.tot.mdp), d.tot.meta, d.tot.real, d.tot.cumpl===null?'':Math.round(d.tot.cumpl)],
+      chartId: 'chartDashEvol',
+      landscape: true
+    };
+  }
   if(tab==='eficiencia'){
     const d = calcEficiencia();
     const r1 = n => Math.round(n*10)/10;
@@ -8767,7 +9032,7 @@ function exportInfExcel(tab){
     const wb = XLSX.utils.book_new();
     const ws = infHojaExcel(tab);
     // Nombre de hoja: máx 31 caracteres permitidos por Excel
-    const sheetNames = { progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', eficiencia:'Eficiencia', inconsist:'Inconsistencias' };
+    const sheetNames = { dashboard:'Dashboard', progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', eficiencia:'Eficiencia', inconsist:'Inconsistencias' };
     XLSX.utils.book_append_sheet(wb, ws, sheetNames[tab] || 'Informe');
     XLSX.writeFile(wb, `fieldlog_${tab}_${m.suf}.xlsx`);
     toast('✅ Excel descargado');
@@ -8776,7 +9041,7 @@ function exportInfExcel(tab){
   }
 }
 
-// Exportar TODOS los informes a un Excel de 6 hojas
+// Exportar TODOS los informes a un Excel de 7 hojas
 function exportInfExcelTodo(){
   if(!infState.data){ toast('⚠️ Primero genera los informes'); return; }
   if(typeof XLSX === 'undefined'){ toast('⚠️ Librería Excel no cargada. Revisa tu conexión y recarga.'); return; }
@@ -8784,6 +9049,7 @@ function exportInfExcelTodo(){
     const m = infExportMeta();
     const wb = XLSX.utils.book_new();
     const tabs = [
+      ['dashboard','Dashboard'],
       ['progreal','Prog vs Real'],
       ['ciclos','Por ciclo'],
       ['trabajadores','Trabajadores'],
@@ -8796,7 +9062,7 @@ function exportInfExcelTodo(){
       if(ws) XLSX.utils.book_append_sheet(wb, ws, nombre);
     });
     XLSX.writeFile(wb, `fieldlog_informes_${m.suf}.xlsx`);
-    toast('✅ Excel completo descargado (6 hojas)');
+    toast('✅ Excel completo descargado (7 hojas)');
   }catch(e){
     toast('Error al generar Excel: '+e.message);
   }
@@ -9654,10 +9920,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v53';
+const MANUAL_VERSION='v54';
 const MANUAL_FECHA='2026-09-30';
 
 const MANUAL_CAMBIOS=[
+  {v:'v54', f:'30-09-2026', txt:'<b>Informes:</b> nueva pestaña <b>🧭 Dashboard</b>, que queda como la primera. Un solo tablero con selectores de <b>encargado</b>, <b>labor</b>, <b>métrica</b> (mesas, horas, costo, $/mesa, mesas/día persona, cumplimiento de lo programado) y <b>agrupación por día, semana o mes</b>. Muestra las tarjetas de resumen, la evolución en el tiempo, la comparación entre encargados, el resumen por ciclo y la lista de trabajadores. También se baja a Excel y PDF, y entra en el Excel completo (ahora 7 hojas).'},
   {v:'v53', f:'30-09-2026', txt:'<b>Informes:</b> nueva pestaña <b>⚡ Eficiencia</b>. Por cada encargado (subjefe) y labor muestra cuántas <b>mesas hace un trabajador en un día</b> (con las horas reales registradas), lo que avanza la <b>cuadrilla por día</b>, la comparación con el promedio de la labor, el trabajador más lento y el más rápido, y el <b>costo por mesa</b>. Arriba trae el resumen de mesas, horas y costo de cada encargado. Se filtra por labor, tiene gráfico y entra en el Excel completo (ahora 6 hojas).'},
   {v:'v52', f:'28-09-2026', txt:'Nuevo botón <b>Control</b>: la lista de chequeo del tomate (49 actividades) ordenada por semana desde la plantación. Cada responsable (jefatura predial, encargado de riego, subjefe de sector, asesor) ve qué le toca <b>esta semana y las 4 siguientes</b> en todos los ciclos abiertos, las marca como realizadas o no aplica, y ve lo atrasado. Incluye el <b>cronograma</b> (carta Gantt) de cada ciclo y las <b>actividades anuales del campo</b>. En <b>Ciclos</b> ahora se puede tener abierto más de un ciclo de tomate a la vez, uno por época, porque las épocas se superponen, y cada ciclo guarda su <b>fecha de plantación</b>. Mientras no se abre el ciclo, la época aparece con su fecha de referencia para no olvidar lo que se hace antes de plantar (encargo de plantas, análisis de suelo, preparación).'},
   {v:'v51', f:'25-09-2026', txt:'<b>Bodega:</b> un despacho que todavía no se recibe se puede corregir de destino con <b>✏️ Destino</b> en la tarjeta 📥 Despachos por confirmar (quien lo envió, el responsable del origen, bodega o gerencia). No mueve stock y queda anotado quién lo cambió; en <b>Ingresos y movimientos</b> aparece como "Destino corregido".'},
@@ -9791,13 +10058,14 @@ const MANUAL_SECCIONES=[
 },
 {
   id:'informes', ico:'📈', tit:'Informes', ver:()=>canViewInformes(),
-  intro:'Los seis informes de trabajo, con gráficos y descarga a Excel.',
+  intro:'El dashboard y los seis informes de trabajo, con gráficos y descarga a Excel.',
   pasos:[
     'Elige <b>Desde</b> y <b>Hasta</b>, el <b>Predio</b> y el <b>Subjefe</b> (o "Todos").',
     'Aprieta <b>🔄 Generar informes</b>.',
+    'Parte en <b>🧭 Dashboard</b>: con los selectores eliges encargado, labor, métrica y si agrupar por día, semana o mes. Tocar una tarjeta de arriba también cambia la métrica de los gráficos. El gráfico por encargado siempre muestra a todos, con el elegido destacado, para comparar.',
     'Cambia entre las pestañas: <b>Prog vs Real</b>, <b>Por ciclo</b>, <b>Trabajadores</b>, <b>Labores</b>, <b>Eficiencia</b> e <b>Inconsistencias</b>.',
     'En <b>⚡ Eficiencia</b> ves, por encargado y labor, las <b>mesas por día de un trabajador</b>, lo que avanza la cuadrilla por día y el <b>costo por mesa</b>. Elige una labor en el selector para comparar a los encargados entre sí.',
-    'Con <b>📥 Excel completo</b> bajas las 6 hojas en un solo archivo.',
+    'Con <b>📥 Excel completo</b> bajas las 7 hojas en un solo archivo.',
     'Con <b>📷 Anexo de observaciones (PDF)</b> bajas todas las observaciones escritas en el período, con la foto de respaldo de cada una. Sirve para respaldar una conversación sobre trabajo mal hecho, o para dejarlo por escrito.'
   ],
   tips:[
