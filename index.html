@@ -623,10 +623,11 @@ body.vista-escritorio .modal-content{max-width:700px}
         <button class="inftab" data-tab="ciclos" onclick="switchInfTab('ciclos')">🌱 Por ciclo</button>
         <button class="inftab" data-tab="trabajadores" onclick="switchInfTab('trabajadores')">👤 Trabajadores</button>
         <button class="inftab" data-tab="labores" onclick="switchInfTab('labores')">🔧 Labores</button>
+        <button class="inftab" data-tab="eficiencia" onclick="switchInfTab('eficiencia')">⚡ Eficiencia</button>
         <button class="inftab" data-tab="inconsist" onclick="switchInfTab('inconsist')">⚠️ Inconsistencias</button>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (5 hojas)</button>
+        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (6 hojas)</button>
         <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportAnexoFotos()">📷 Anexo de observaciones (PDF)</button>
       </div>
       <div id="infContent"></div>
@@ -7841,6 +7842,7 @@ function switchInfTab(tab){
   else if(tab==='ciclos')       renderInfCiclos();
   else if(tab==='trabajadores') renderInfTrabajadores();
   else if(tab==='labores')      renderInfLabores();
+  else if(tab==='eficiencia')   renderInfEficiencia();
   else if(tab==='inconsist')    renderInfInconsistencias();
 }
 
@@ -7986,6 +7988,109 @@ function calcLabores(){
   const totalCosto = rows.reduce((s,r)=>s+r.costoTotal, 0);
   const totalMesas = rows.reduce((s,r)=>s+r.mesas, 0);
   return { rows, totalHoras, totalCosto, totalMesas, cph };
+}
+
+// ─────────────────────────────────────────────
+// v53 · EFICIENCIA por encargado (subjefe) y labor
+// ─────────────────────────────────────────────
+// Unidad de medida: el día-persona = un trabajador que hizo esa labor ese día.
+// Mesas/día-persona = mesas ÷ días-persona, con las horas reales que se
+// registraron (no se normaliza a una jornada estándar: decisión de Rafael).
+// Si un trabajador hizo dos labores el mismo día, ese día cuenta en ambas,
+// así que en esas labores la cifra queda por debajo de lo que haría con el día
+// completo. Solo entran labores con mesas Y horas; las que tienen solo una de
+// las dos se cuentan aparte (ya salen en Inconsistencias).
+const EFIC_MIN_DIAS = 3;   // bajo esto, la cifra se marca como "poca muestra"
+
+function calcEficiencia(){
+  const { registros } = infState.data;
+  const cph = costoPorHora();
+  const map = {};
+  let excluidas = 0;
+  registros.forEach(r=>{
+    if(r.ausente || r.licencia || r.vacaciones) return;
+    const w = r._worker || {};
+    const sub = w.subjefe || 'Sin encargado';
+    const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
+    labs.forEach(l=>{
+      if(!l.laborId) return;
+      const m = Number(l.mesas) || 0, h = Number(l.horas) || 0;
+      if(m<=0 || h<=0){ if(m>0 || h>0) excluidas++; return; }
+      const k = r._predio + '|' + sub + '|' + l.laborId;
+      if(!map[k]) map[k] = { predioId:r._predio, subjefe:sub, laborId:l.laborId,
+        mesas:0, horas:0, fechas:new Set(), diasPersona:new Set(), porTrab:{} };
+      const b = map[k];
+      const wk = r._predio + '|' + r.workerId;
+      b.mesas += m; b.horas += h;
+      b.fechas.add(r.fecha);
+      b.diasPersona.add(wk + '|' + r.fecha);
+      if(!b.porTrab[wk]) b.porTrab[wk] = { mesas:0, dias:new Set() };
+      b.porTrab[wk].mesas += m;
+      b.porTrab[wk].dias.add(r.fecha);
+    });
+  });
+
+  let rows = Object.values(map).map(b=>{
+    const l = LABORES.find(x=>x.id===b.laborId);
+    const dp = b.diasPersona.size;
+    const tasas = Object.values(b.porTrab).map(t=> t.mesas / t.dias.size);
+    const costoTotal = b.horas * cph;
+    return {
+      predioId: b.predioId,
+      predio: PREDIOS[b.predioId] ? PREDIOS[b.predioId].nombre : b.predioId,
+      subjefe: b.subjefe,
+      laborId: b.laborId,
+      labor: l ? l.d : '—',
+      trabajadores: tasas.length,
+      diasLabor: b.fechas.size,
+      diasPersona: dp,
+      mesas: b.mesas,
+      horas: b.horas,
+      mesasDiaPersona: dp ? b.mesas / dp : 0,
+      mesasDiaCuadrilla: b.fechas.size ? b.mesas / b.fechas.size : 0,
+      mesasHora: b.horas ? b.mesas / b.horas : 0,
+      minTrab: tasas.length ? Math.min(...tasas) : 0,
+      maxTrab: tasas.length ? Math.max(...tasas) : 0,
+      costoTotal,
+      costoPorMesa: b.mesas ? costoTotal / b.mesas : null,
+      pocaMuestra: dp < EFIC_MIN_DIAS
+    };
+  });
+
+  // Promedio de cada labor entre todos los encargados del filtro (ponderado por días-persona)
+  const promLabor = {};
+  rows.forEach(r=>{
+    if(!promLabor[r.laborId]) promLabor[r.laborId] = { mesas:0, dp:0, horas:0, costo:0 };
+    const p = promLabor[r.laborId];
+    p.mesas += r.mesas; p.dp += r.diasPersona; p.horas += r.horas; p.costo += r.costoTotal;
+  });
+  Object.values(promLabor).forEach(p=>{
+    p.mesasDiaPersona = p.dp ? p.mesas / p.dp : 0;
+    p.costoPorMesa = p.mesas ? p.costo / p.mesas : null;
+  });
+  rows.forEach(r=>{
+    const p = promLabor[r.laborId];
+    r.pctVsProm = p.mesasDiaPersona > 0 ? Math.round(r.mesasDiaPersona / p.mesasDiaPersona * 100) : null;
+  });
+
+  rows.sort((a,b)=> a.subjefe.localeCompare(b.subjefe,'es') || b.mesas - a.mesas);
+
+  // Resumen por encargado
+  const porEnc = {};
+  rows.forEach(r=>{
+    const k = r.predioId + '|' + r.subjefe;
+    if(!porEnc[k]) porEnc[k] = { subjefe:r.subjefe, predio:r.predio, mesas:0, horas:0, costo:0, labores:0 };
+    const e = porEnc[k];
+    e.mesas += r.mesas; e.horas += r.horas; e.costo += r.costoTotal; e.labores++;
+  });
+  const encargados = Object.values(porEnc).map(e=>({ ...e, costoPorMesa: e.mesas ? e.costo / e.mesas : null }))
+    .sort((a,b)=> a.subjefe.localeCompare(b.subjefe,'es'));
+
+  const totalMesas = rows.reduce((s,r)=>s+r.mesas, 0);
+  const totalHoras = rows.reduce((s,r)=>s+r.horas, 0);
+  const totalCosto = rows.reduce((s,r)=>s+r.costoTotal, 0);
+  const totalDP    = rows.reduce((s,r)=>s+r.diasPersona, 0);
+  return { rows, encargados, promLabor, totalMesas, totalHoras, totalCosto, totalDP, excluidas, cph };
 }
 
 function calcInconsistencias(){
@@ -8389,6 +8494,121 @@ function renderInfLabores(){
 }
 
 // ─────────────────────────────────────────────
+// INFORME v53: Eficiencia por encargado y labor
+// ─────────────────────────────────────────────
+function onEficLaborChange(v){
+  infState.effLabor = v;
+  switchInfTab('eficiencia');
+}
+
+function renderInfEficiencia(){
+  const d = calcEficiencia();
+  const fmt1 = n => (Math.round(n*10)/10).toLocaleString('es-CL');
+  const laboresPresentes = [...new Map(d.rows.map(r=>[r.laborId, r.labor])).entries()]
+    .map(([id, nom])=>({ id, nom, mesas: d.rows.filter(r=>r.laborId===id).reduce((s,r)=>s+r.mesas,0) }))
+    .sort((a,b)=> b.mesas - a.mesas);
+  let sel = infState.effLabor || '';
+  if(sel && !laboresPresentes.some(l=>String(l.id)===String(sel))) sel = '';
+  const filas = sel ? d.rows.filter(r=>String(r.laborId)===String(sel)) : d.rows;
+
+  let html = `<div class="inf-card">
+    <div class="inf-hdr"><div class="inf-card-title">⚡ Eficiencia por encargado</div>${infDlBtnsHTML('eficiencia')}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Mesas que hace <b>un trabajador en un día</b> en cada labor, según las horas reales registradas, y lo que cuesta cada mesa. Costo por hora vigente: <b>${fmtCLP(d.cph)}</b>.</div>
+    <div class="inf-summary">
+      <div class="inf-pill"><div class="inf-pill-label">Encargados</div><div class="inf-pill-value">${d.encargados.length}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Días-persona</div><div class="inf-pill-value">${d.totalDP.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Mesas</div><div class="inf-pill-value">${d.totalMesas.toLocaleString('es-CL')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">$/mesa prom.</div><div class="inf-pill-value">${d.totalMesas?fmtCLP(d.totalCosto/d.totalMesas):'—'}</div></div>
+    </div>`;
+  if(!d.rows.length){
+    html += `<div class="inf-empty">No hay labores con mesas y horas en el período.</div></div>`;
+    document.getElementById('infContent').innerHTML = html;
+    return;
+  }
+
+  // Resumen por encargado
+  html += `<table class="inf-table">
+    <thead><tr><th>Encargado</th><th class="num">Labores</th><th class="num">Mesas</th><th class="num">Horas</th><th class="num">Costo</th><th class="num">$/mesa</th></tr></thead>
+    <tbody>${d.encargados.map(e=>`<tr>
+      <td>${e.subjefe}<div style="font-size:9px;color:var(--muted)">${e.predio}</div></td>
+      <td class="num">${e.labores}</td>
+      <td class="num">${e.mesas.toLocaleString('es-CL')}</td>
+      <td class="num">${fmt1(e.horas)}</td>
+      <td class="num">${fmtCLP(e.costo)}</td>
+      <td class="num">${e.costoPorMesa===null?'—':fmtCLP(e.costoPorMesa)}</td>
+    </tr>`).join('')}</tbody>
+  </table>
+  <div style="font-size:10px;color:var(--muted);margin:-4px 0 12px">El $/mesa del resumen mezcla labores distintas: sirve para ver el gasto, no para comparar encargados. Para comparar, mira el detalle por labor.</div>`;
+
+  // Detalle encargado × labor
+  html += `<div class="form-row" style="margin-bottom:8px"><label>Labor</label>
+    <select id="effLabor" onchange="onEficLaborChange(this.value)">
+      <option value="">Todas las labores</option>
+      ${laboresPresentes.map(l=>`<option value="${l.id}" ${String(l.id)===String(sel)?'selected':''}>${l.id}. ${l.nom}</option>`).join('')}
+    </select></div>`;
+  let encPrev = null;
+  html += `<div style="overflow-x:auto"><table class="inf-table">
+    <thead><tr><th>${sel?'Encargado':'Labor'}</th><th class="num">Días<br>pers.</th><th class="num">Mesas/día<br>persona</th><th class="num">Cuadr.<br>/día</th><th class="num">vs<br>prom.</th><th class="num">$/mesa</th></tr></thead>
+    <tbody>${filas.map(r=>{
+      let cab = '';
+      if(!sel && r.subjefe !== encPrev){
+        encPrev = r.subjefe;
+        cab = `<tr><td colspan="6" style="background:var(--cream);font-weight:700;font-size:11px">${r.subjefe} <span style="font-weight:400;color:var(--muted)">· ${r.predio}</span></td></tr>`;
+      }
+      const pct = r.pctVsProm===null ? '—'
+        : `<span style="color:${r.pctVsProm>=100?'var(--green)':(r.pctVsProm<85?'#B45309':'inherit')}">${r.pctVsProm}%</span>`;
+      const titulo = sel ? `${r.subjefe}<div style="font-size:9px;color:var(--muted)">${r.predio}</div>` : `${r.laborId}. ${r.labor}`;
+      const det = `${r.trabajadores} trab. · ${fmt1(r.mesasHora)} mesas/h · rango ${fmt1(r.minTrab)}–${fmt1(r.maxTrab)}${r.pocaMuestra?' · <b style="color:#B45309">poca muestra</b>':''}`;
+      return cab + `<tr${r.pocaMuestra?' style="opacity:.65"':''}>
+        <td>${titulo}<div style="font-size:9px;color:var(--muted)">${det}</div></td>
+        <td class="num">${r.diasPersona}</td>
+        <td class="num"><b>${fmt1(r.mesasDiaPersona)}</b></td>
+        <td class="num">${fmt1(r.mesasDiaCuadrilla)}</td>
+        <td class="num">${pct}</td>
+        <td class="num">${r.costoPorMesa===null?'—':fmtCLP(r.costoPorMesa)}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>
+  <div style="font-size:10px;color:var(--muted);line-height:1.5">
+    <b>Mesas/día persona</b>: mesas ÷ días-persona (un trabajador que hizo esa labor ese día). <b>Cuadrilla/día</b>: mesas ÷ días en que el encargado tuvo gente en esa labor. <b>vs prom.</b>: comparado con el promedio de esa labor entre los encargados del filtro. <b>Rango</b>: el trabajador más lento y el más rápido. Con menos de ${EFIC_MIN_DIAS} días-persona la cifra es poco confiable.
+    ${d.excluidas?`<br>Quedaron fuera ${d.excluidas} labores registradas con horas sin mesas o mesas sin horas (ver Inconsistencias).`:''}
+  </div>`;
+
+  // Gráfico: mesas/día-persona por encargado para la labor elegida (o la de más mesas)
+  const labGraf = sel || (laboresPresentes[0] && laboresPresentes[0].id);
+  const graf = d.rows.filter(r=>String(r.laborId)===String(labGraf)).sort((a,b)=> b.mesasDiaPersona - a.mesasDiaPersona);
+  const labGrafNom = (laboresPresentes.find(l=>String(l.id)===String(labGraf))||{}).nom || '';
+  html += `<div style="font-size:11px;font-weight:600;margin-top:12px">Mesas/día persona · ${labGraf}. ${labGrafNom}</div>
+  <div class="inf-chartwrap"><canvas id="chartEfic"></canvas></div>
+  </div>`;
+  document.getElementById('infContent').innerHTML = html;
+
+  const prom = d.promLabor[labGraf] ? d.promLabor[labGraf].mesasDiaPersona : 0;
+  const ctx = document.getElementById('chartEfic').getContext('2d');
+  infState.charts.eficiencia = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: graf.map(r=>r.subjefe),
+      datasets: [
+        { label:'Mesas/día persona', data: graf.map(r=>Math.round(r.mesasDiaPersona*10)/10),
+          backgroundColor: graf.map(r=> r.pocaMuestra ? '#cbd5e1' : '#4ade80') },
+        { label:'Promedio labor', type:'line', data: graf.map(()=>Math.round(prom*10)/10),
+          borderColor:'#94a3b8', borderDash:[5,4], pointRadius:0, borderWidth:1.5 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: {
+        legend: { position:'bottom', labels:{ font:{ size:10 } } },
+        tooltip: { callbacks:{ afterLabel:(c)=>{ if(c.datasetIndex!==0) return ''; const r=graf[c.dataIndex];
+          return `${r.diasPersona} días-persona · ${r.costoPorMesa===null?'—':fmtCLP(r.costoPorMesa)}/mesa`; } } }
+      },
+      scales: { y:{ beginAtZero:true, ticks:{ font:{size:10} } }, x:{ ticks:{ font:{size:10} } } }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
 // INFORME 4: Inconsistencias detectadas
 // ─────────────────────────────────────────────
 function renderInfInconsistencias(){
@@ -8482,6 +8702,23 @@ function infTablaExport(tab){
       chartId: 'chartLab'
     };
   }
+  if(tab==='eficiencia'){
+    const d = calcEficiencia();
+    const r1 = n => Math.round(n*10)/10;
+    return {
+      titulo: 'Eficiencia por encargado y labor',
+      nota: `Mesas/día persona con horas reales registradas. Costo por hora usado: ${fmtCLP(d.cph)}.${d.excluidas?` Excluidas ${d.excluidas} labores con horas sin mesas o mesas sin horas.`:''}`,
+      headers: ['Encargado','Predio','Labor','Trabajadores','Días con labor','Días-persona','Mesas','Horas','Mesas/día persona','Mín. trabajador','Máx. trabajador','Mesas/día cuadrilla','Mesas/hora','% vs promedio labor','Costo total CLP','Costo por mesa CLP','Muestra'],
+      body: d.rows.map(r=>[r.subjefe, r.predio, `${r.laborId}. ${r.labor}`, r.trabajadores, r.diasLabor, r.diasPersona,
+        r.mesas, r1(r.horas), r1(r.mesasDiaPersona), r1(r.minTrab), r1(r.maxTrab), r1(r.mesasDiaCuadrilla), r1(r.mesasHora),
+        r.pctVsProm===null?'':r.pctVsProm, Math.round(r.costoTotal), r.costoPorMesa===null?'':Math.round(r.costoPorMesa),
+        r.pocaMuestra?'Poca muestra':'']),
+      totales: ['TOTAL','','','','', d.totalDP, d.totalMesas, r1(d.totalHoras), '', '', '', '', '', '', Math.round(d.totalCosto),
+        d.totalMesas?Math.round(d.totalCosto/d.totalMesas):'', ''],
+      chartId: 'chartEfic',
+      landscape: true
+    };
+  }
   if(tab==='inconsist'){
     const { issues } = calcInconsistencias();
     return {
@@ -8530,7 +8767,7 @@ function exportInfExcel(tab){
     const wb = XLSX.utils.book_new();
     const ws = infHojaExcel(tab);
     // Nombre de hoja: máx 31 caracteres permitidos por Excel
-    const sheetNames = { progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', inconsist:'Inconsistencias' };
+    const sheetNames = { progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', eficiencia:'Eficiencia', inconsist:'Inconsistencias' };
     XLSX.utils.book_append_sheet(wb, ws, sheetNames[tab] || 'Informe');
     XLSX.writeFile(wb, `fieldlog_${tab}_${m.suf}.xlsx`);
     toast('✅ Excel descargado');
@@ -8539,7 +8776,7 @@ function exportInfExcel(tab){
   }
 }
 
-// Exportar TODOS los informes a un Excel de 4 hojas
+// Exportar TODOS los informes a un Excel de 6 hojas
 function exportInfExcelTodo(){
   if(!infState.data){ toast('⚠️ Primero genera los informes'); return; }
   if(typeof XLSX === 'undefined'){ toast('⚠️ Librería Excel no cargada. Revisa tu conexión y recarga.'); return; }
@@ -8551,6 +8788,7 @@ function exportInfExcelTodo(){
       ['ciclos','Por ciclo'],
       ['trabajadores','Trabajadores'],
       ['labores','Labores'],
+      ['eficiencia','Eficiencia'],
       ['inconsist','Inconsistencias']
     ];
     tabs.forEach(([tab, nombre])=>{
@@ -8558,7 +8796,7 @@ function exportInfExcelTodo(){
       if(ws) XLSX.utils.book_append_sheet(wb, ws, nombre);
     });
     XLSX.writeFile(wb, `fieldlog_informes_${m.suf}.xlsx`);
-    toast('✅ Excel completo descargado (5 hojas)');
+    toast('✅ Excel completo descargado (6 hojas)');
   }catch(e){
     toast('Error al generar Excel: '+e.message);
   }
@@ -8653,8 +8891,9 @@ function exportInfPDF(tab){
     const t = infTablaExport(tab);
     const m = infExportMeta();
     const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+    const doc = new jsPDF({ orientation: t.landscape ? 'landscape' : 'portrait', unit:'mm', format:'a4' });
     const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
 
     // Encabezado
     doc.setFont('helvetica','bold');
@@ -8688,7 +8927,7 @@ function exportInfPDF(tab){
       head: [t.headers],
       body,
       startY: y,
-      styles: { fontSize: 8, cellPadding: 1.6 },
+      styles: { fontSize: t.landscape ? 7 : 8, cellPadding: 1.6 },
       headStyles: { fillColor: [34,94,60], textColor: 255, fontStyle:'bold' },
       didParseCell: (data)=>{
         // Resaltar fila de totales en negrita
@@ -8705,10 +8944,11 @@ function exportInfPDF(tab){
       if(canvas){
         try{
           const img = canvas.toDataURL('image/png', 1.0);
-          const imgW = pageW - 28; // márgenes de 14mm
-          const imgH = imgW * canvas.height / canvas.width;
+          let imgW = pageW - 28; // márgenes de 14mm
+          let imgH = imgW * canvas.height / canvas.width;
+          if(imgH > pageH - 40){ imgH = pageH - 40; imgW = imgH * canvas.width / canvas.height; }
           let yImg = (doc.lastAutoTable && doc.lastAutoTable.finalY ? doc.lastAutoTable.finalY : y) + 8;
-          if(yImg + imgH > 285){ doc.addPage(); yImg = 16; }
+          if(yImg + imgH > pageH - 12){ doc.addPage(); yImg = 16; }
           doc.addImage(img, 'PNG', 14, yImg, imgW, imgH);
         }catch(e){ /* si el canvas no se puede capturar, el PDF sale sin gráfico */ }
       }
@@ -8720,7 +8960,7 @@ function exportInfPDF(tab){
       doc.setPage(i);
       doc.setFontSize(7);
       doc.setTextColor(150);
-      doc.text(`Generado: ${fDMY(todayIso)} · FieldLog Agrícola Origen · Página ${i}/${pages}`, 14, 292);
+      doc.text(`Generado: ${fDMY(todayIso)} · FieldLog Agrícola Origen · Página ${i}/${pages}`, 14, pageH - 5);
     }
 
     doc.save(`fieldlog_${tab}_${m.suf}.pdf`);
@@ -9414,10 +9654,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v52';
-const MANUAL_FECHA='2026-09-28';
+const MANUAL_VERSION='v53';
+const MANUAL_FECHA='2026-09-30';
 
 const MANUAL_CAMBIOS=[
+  {v:'v53', f:'30-09-2026', txt:'<b>Informes:</b> nueva pestaña <b>⚡ Eficiencia</b>. Por cada encargado (subjefe) y labor muestra cuántas <b>mesas hace un trabajador en un día</b> (con las horas reales registradas), lo que avanza la <b>cuadrilla por día</b>, la comparación con el promedio de la labor, el trabajador más lento y el más rápido, y el <b>costo por mesa</b>. Arriba trae el resumen de mesas, horas y costo de cada encargado. Se filtra por labor, tiene gráfico y entra en el Excel completo (ahora 6 hojas).'},
   {v:'v52', f:'28-09-2026', txt:'Nuevo botón <b>Control</b>: la lista de chequeo del tomate (49 actividades) ordenada por semana desde la plantación. Cada responsable (jefatura predial, encargado de riego, subjefe de sector, asesor) ve qué le toca <b>esta semana y las 4 siguientes</b> en todos los ciclos abiertos, las marca como realizadas o no aplica, y ve lo atrasado. Incluye el <b>cronograma</b> (carta Gantt) de cada ciclo y las <b>actividades anuales del campo</b>. En <b>Ciclos</b> ahora se puede tener abierto más de un ciclo de tomate a la vez, uno por época, porque las épocas se superponen, y cada ciclo guarda su <b>fecha de plantación</b>. Mientras no se abre el ciclo, la época aparece con su fecha de referencia para no olvidar lo que se hace antes de plantar (encargo de plantas, análisis de suelo, preparación).'},
   {v:'v51', f:'25-09-2026', txt:'<b>Bodega:</b> un despacho que todavía no se recibe se puede corregir de destino con <b>✏️ Destino</b> en la tarjeta 📥 Despachos por confirmar (quien lo envió, el responsable del origen, bodega o gerencia). No mueve stock y queda anotado quién lo cambió; en <b>Ingresos y movimientos</b> aparece como "Destino corregido".'},
   {v:'v50', f:'25-09-2026', txt:'<b>Aplicaciones:</b> la lista ahora se llama <b>📋 Aplicaciones registradas</b> y deja revisar <b>todo lo registrado</b>, no solo las 15 últimas. Se filtra por tipo (foliar, fertilización, ácidos, vía riego), predio, fechas, producto y quién registró; se puede ordenar por fecha de aplicación, cargar más con <b>Ver más</b> y bajar lo filtrado a <b>Excel</b>, una fila por producto.'},
@@ -9550,17 +9791,19 @@ const MANUAL_SECCIONES=[
 },
 {
   id:'informes', ico:'📈', tit:'Informes', ver:()=>canViewInformes(),
-  intro:'Los cinco informes de trabajo, con gráficos y descarga a Excel.',
+  intro:'Los seis informes de trabajo, con gráficos y descarga a Excel.',
   pasos:[
     'Elige <b>Desde</b> y <b>Hasta</b>, el <b>Predio</b> y el <b>Subjefe</b> (o "Todos").',
     'Aprieta <b>🔄 Generar informes</b>.',
-    'Cambia entre las pestañas: <b>Prog vs Real</b>, <b>Por ciclo</b>, <b>Trabajadores</b>, <b>Labores</b> e <b>Inconsistencias</b>.',
-    'Con <b>📥 Excel completo</b> bajas las 5 hojas en un solo archivo.',
+    'Cambia entre las pestañas: <b>Prog vs Real</b>, <b>Por ciclo</b>, <b>Trabajadores</b>, <b>Labores</b>, <b>Eficiencia</b> e <b>Inconsistencias</b>.',
+    'En <b>⚡ Eficiencia</b> ves, por encargado y labor, las <b>mesas por día de un trabajador</b>, lo que avanza la cuadrilla por día y el <b>costo por mesa</b>. Elige una labor en el selector para comparar a los encargados entre sí.',
+    'Con <b>📥 Excel completo</b> bajas las 6 hojas en un solo archivo.',
     'Con <b>📷 Anexo de observaciones (PDF)</b> bajas todas las observaciones escritas en el período, con la foto de respaldo de cada una. Sirve para respaldar una conversación sobre trabajo mal hecho, o para dejarlo por escrito.'
   ],
   tips:[
     'Parte siempre por <b>Inconsistencias</b>: ahí salen los datos que no cuadran (días sin registro, horas fuera de rango, labores sin ciclo). Corregir eso primero hace que el resto de los informes sirva.',
     'Los costos por hora salen de lo que esté cargado en Config › Costos del personal. Si el sueldo mínimo cambió y no se actualizó ahí, los pesos van a estar malos.',
+    'En Eficiencia, un día en que el trabajador hizo dos labores cuenta en las dos: en esas labores la cifra sale más baja que si hubiera hecho solo una. Las filas en gris tienen menos de 3 días-persona y todavía no sirven para comparar.',
     'El anexo de observaciones sale del mismo período y predio que tengas arriba: si quieres solo una semana, acota las fechas antes de generarlo. Trae hasta 40 observaciones por archivo.'
   ]
 },
