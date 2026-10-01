@@ -516,6 +516,7 @@ body.vista-escritorio .modal-content{max-width:700px}
       <button class="nb" id="btnCiclos" onclick="showScr('ciclos',this)">Ciclos</button>
       <button class="nb" id="btnControl" style="display:none" onclick="showScr('control',this)">Control</button>
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
+      <button class="nb" id="btnExperiencia" style="display:none" onclick="showScr('experiencia',this)">Experiencia previa</button>
       <button class="nb" id="btnAplic" style="display:none" onclick="showScr('aplic',this)">Aplicaciones</button>
       <button class="nb" id="btnGastos" style="display:none" onclick="showScr('gastos',this)">Gastos</button>
       <button class="nb" id="btnBodega" style="display:none" onclick="showScr('planilla',this)">Bodega</button>
@@ -611,6 +612,23 @@ body.vista-escritorio .modal-content{max-width:700px}
   <div id="screen-control" class="screen">
     <div class="sp" style="height:10px"></div>
     <div id="ctrlContent"></div>
+  </div>
+
+  <!-- v55 · EXPERIENCIA PREVIA (solo EXPERIENCIA_CORREOS) -->
+  <div id="screen-experiencia" class="screen">
+    <div class="sp" style="height:10px"></div>
+    <div class="card" id="expCab">
+      <div class="card-title">🗂️ Experiencia previa</div>
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:10px">Temporadas hechas antes o fuera de FieldLog, para comparar rendimientos y costos de labor. Solo la ven las personas autorizadas.</p>
+      <div class="form-row"><label>Proyecto</label><select id="expProyecto" onchange="expElegir(this.value)"></select></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-secondary" style="flex:1;min-width:150px;padding:8px;font-size:11px" onclick="document.getElementById('expArchivo').click()">📤 Cargar planilla (Excel)</button>
+        <button class="btn btn-secondary" style="flex:1;min-width:150px;padding:8px;font-size:11px" onclick="expExportExcel()">📥 Bajar a Excel lo filtrado</button>
+      </div>
+      <input type="file" id="expArchivo" accept=".xlsx" style="display:none" onchange="expImportar(this)">
+      <div id="expInfo" style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.5"></div>
+    </div>
+    <div id="expContent"></div>
   </div>
 
   <!-- INFORMES -->
@@ -1376,6 +1394,7 @@ function canViewInformes(){
 function canVerPantalla(name){
   if(['registro','prog','avance','ciclos'].includes(name))return isCampo();
   if(name==='informes')return canViewInformes();
+  if(name==='experiencia')return puedeVerExperiencia();   // v55
   if(name==='control')return canVerControl();   // v52
   if(name==='aplic')return canVerAplic();
   if(name==='gastos')return canVerGastos();
@@ -5862,6 +5881,7 @@ function applyRoleUI(){
   show('btnCiclos',   isCampo());
   show('btnControl',  canVerControl());   // v52
   show('btnInformes', canViewInformes());
+  show('btnExperiencia', puedeVerExperiencia());   // v55
   show('btnAplic',    canVerAplic());
   show('btnGastos',   canVerGastos());
   show('btnBodega',   canBodega());
@@ -9237,6 +9257,317 @@ function exportInfPDF(tab){
 }
 
 
+
+// ══════════════════════════════════════════════
+// v55 · EXPERIENCIA PREVIA
+// ══════════════════════════════════════════════
+// Temporadas hechas fuera de FieldLog (p. ej. el tomate verano 25/26 de
+// Paradero 12 con la contratista Alicia), cargadas desde el Excel de análisis
+// (hoja "Datos"). Los datos viven en /experiencia/{id} y las reglas de
+// Firestore solo dejan leer y escribir a estos correos. La lista de acá es solo
+// para mostrar u ocultar el botón: la protección real está en las reglas.
+// ⚠️ Si cambia un correo, hay que cambiarlo acá Y en las reglas.
+const EXPERIENCIA_CORREOS = [
+  'r.elizondo.pasten@gmail.com',     // Rafael Elizondo
+  'CORREO_DE_RICARDO@PENDIENTE'      // Ricardo Stambuk (gerente) — reemplazar
+];
+function puedeVerExperiencia(){
+  const em = (currentUser && currentUser.email || '').toLowerCase();
+  return !!em && EXPERIENCIA_CORREOS.map(x=>x.toLowerCase()).includes(em);
+}
+
+let expState = { lista: [], actual: null, filas: [], sel: { fam:'', vari:'', trab:'', met:'costo', agr:'semana' }, charts: {} };
+const EXP_COLS = ['sem','fec','sec','fam','lab','tar','uni','trab','cant','monto','dia','jeq'];
+
+async function initExperiencia(){
+  if(!puedeVerExperiencia()) return;
+  loading(true,'Cargando proyectos…');
+  try{
+    const snap = await db.collection('experiencia').get();
+    expState.lista = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+  }catch(e){ loading(false); toast('Error: '+e.message); return; }
+  loading(false);
+  const sel = document.getElementById('expProyecto');
+  if(!expState.lista.length){
+    sel.innerHTML = '<option value="">— sin proyectos cargados —</option>';
+    document.getElementById('expInfo').innerHTML = 'Todavía no hay proyectos. Carga el Excel de análisis con <b>📤 Cargar planilla</b> (usa la hoja <b>Datos</b>).';
+    document.getElementById('expContent').innerHTML = '';
+    return;
+  }
+  const actualId = expState.actual ? expState.actual.id : expState.lista[0].id;
+  sel.innerHTML = expState.lista.map(p=>`<option value="${escH(p.id)}" ${p.id===actualId?'selected':''}>${escH(p.nombre||p.id)}</option>`).join('');
+  expElegir(actualId);
+}
+
+function expElegir(id){
+  const p = expState.lista.find(x=>x.id===id);
+  if(!p) return;
+  expState.actual = p;
+  let crudas = [];
+  try{ crudas = JSON.parse(p.filas || '[]'); }catch(e){ toast('⚠️ Los datos del proyecto están dañados'); }
+  expState.filas = crudas.map(a=>{
+    const o = {}; EXP_COLS.forEach((k,i)=>o[k]=a[i]);
+    o.cant = Number(o.cant)||0; o.monto = Number(o.monto)||0; o.jeq = Number(o.jeq)||0; o.dia = !!o.dia;
+    o.vari = o.lab + (o.tar!==null && o.tar!==undefined && o.tar!=='' ? ' · '+fmtCLP(o.tar) : '');
+    return o;
+  });
+  expState.sel = { fam:'', vari:'', trab:'', met:'costo', agr:'semana' };
+  document.getElementById('expInfo').innerHTML =
+    `${escH(p.descripcion||'')}<br>${expState.filas.length.toLocaleString('es-CL')} filas · cargado ${p.cargadoAt?fDMY(String(p.cargadoAt).slice(0,10)):'—'} por ${escH(p.cargadoPorNombre||'—')}`;
+  renderExperiencia();
+}
+
+// ── Importación desde el Excel de análisis (hoja "Datos") ──
+function expCelFecha(v){
+  if(v===null||v===undefined||v==='') return '';
+  if(v instanceof Date) return new Date(v.getTime()-v.getTimezoneOffset()*60000).toISOString().slice(0,10);
+  if(typeof v==='number'){ const d=new Date(Math.round((v-25569)*86400000)); return d.toISOString().slice(0,10); }
+  const m = String(v).match(/(\d{4})-(\d{2})-(\d{2})/); if(m) return m[0];
+  const m2 = String(v).match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})/);
+  if(m2){ const y = m2[3].length===2 ? '20'+m2[3] : m2[3]; return `${y}-${m2[2].padStart(2,'0')}-${m2[1].padStart(2,'0')}`; }
+  return '';
+}
+async function expImportar(inp){
+  const file = inp.files && inp.files[0]; inp.value = '';
+  if(!file) return;
+  if(typeof XLSX==='undefined'){ toast('⚠️ Librería Excel no cargada. Revisa tu conexión y recarga.'); return; }
+  try{
+    const wb = XLSX.read(await file.arrayBuffer(), { type:'array', cellDates:true });
+    const ws = wb.Sheets['Datos'];
+    if(!ws){ toast('⚠️ El archivo no tiene hoja "Datos"'); return; }
+    const aoa = XLSX.utils.sheet_to_json(ws, { header:1, raw:true, defval:null });
+    const H = (aoa[0]||[]).map(h=>String(h||'').trim());
+    const col = n=>H.findIndex(h=>h.toLowerCase().startsWith(n.toLowerCase()));
+    const ix = { sem:col('Semana'), fec:col('Fecha'), sec:col('Sector'), fam:col('Familia'), lab:col('Labor'), tar:col('Tarifa'),
+      uni:col('Unidad'), trab:col('Trabajador'), cant:col('Cantidad'), monto:col('Monto'), dia:col('Cuenta por día'), jeq:col('Jornada equivalente') };
+    const faltan = Object.entries(ix).filter(([k,v])=>v<0).map(([k])=>k);
+    if(faltan.length){ toast('⚠️ Faltan columnas en Datos: '+faltan.join(', ')); return; }
+    const filas = [];
+    aoa.slice(1).forEach(r=>{
+      if(!r || r[ix.trab]===null) return;
+      filas.push([ expCelFecha(r[ix.sem]), expCelFecha(r[ix.fec]), r[ix.sec]===null?'':String(r[ix.sec]),
+        String(r[ix.fam]||''), String(r[ix.lab]||''), r[ix.tar]===null?null:Number(r[ix.tar]), String(r[ix.uni]||''),
+        String(r[ix.trab]||''), r[ix.cant]===null?0:Number(r[ix.cant]), Number(r[ix.monto])||0,
+        Number(r[ix.dia])===1?1:0, Math.round((Number(r[ix.jeq])||0)*10000)/10000 ]);
+    });
+    if(!filas.length){ toast('⚠️ La hoja Datos está vacía'); return; }
+    // Mesas por sector (hoja "Por sector") y notas (hoja "Notas y supuestos"), si vienen
+    const mesasSector = {};
+    if(wb.Sheets['Por sector']){
+      XLSX.utils.sheet_to_json(wb.Sheets['Por sector'], { header:1, raw:true, defval:null }).slice(1).forEach(r=>{
+        if(r && r[0]!==null && typeof r[1]==='number') mesasSector[String(r[0])] = r[1];
+      });
+    }
+    let notas = [];
+    if(wb.Sheets['Notas y supuestos']){
+      notas = XLSX.utils.sheet_to_json(wb.Sheets['Notas y supuestos'], { header:1, raw:true, defval:null })
+        .map(r=>r && r[0] ? String(r[0]) : '').filter(Boolean).slice(0, 80);
+    }
+    const nombreSug = file.name.replace(/\.xlsx$/i,'').replace(/_/g,' ');
+    const nombre = prompt('Nombre del proyecto (así aparece en la lista):', nombreSug);
+    if(!nombre) return;
+    const descripcion = prompt('Descripción corta (campo, temporada, quién hizo el trabajo):', '') || '';
+    const id = nombre.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'').slice(0,60) || ('proy_'+Date.now());
+    const json = JSON.stringify(filas);
+    if(json.length > 900000){ toast('⚠️ El proyecto es demasiado grande para un documento (máx. ~900 KB)'); return; }
+    if(expState.lista.some(p=>p.id===id) && !confirm('Ya existe un proyecto con ese nombre. ¿Reemplazarlo?')) return;
+    loading(true,'Guardando…');
+    const doc = { nombre, descripcion, filas: json, nFilas: filas.length, mesasSector, notas,
+      costoTotal: filas.reduce((s,f)=>s+f[9],0),
+      cargadoPor: currentUser.uid, cargadoPorNombre: (currentProfile&&currentProfile.nombre)||currentUser.email||'', cargadoAt: new Date().toISOString() };
+    await db.collection('experiencia').doc(id).set(doc);
+    loading(false);
+    toast('✅ Proyecto cargado');
+    expState.actual = { id };
+    initExperiencia();
+  }catch(e){ loading(false); toast('Error al leer el archivo: '+e.message); }
+}
+
+// ── Cálculos ──
+function expFiltradas(omitir){
+  const s = expState.sel;
+  return expState.filas.filter(f=>
+    (omitir==='fam'  || !s.fam  || f.fam===s.fam) &&
+    (omitir==='vari' || !s.vari || f.vari===s.vari) &&
+    (omitir==='trab' || !s.trab || f.trab===s.trab));
+}
+function expAgregar(rows){
+  let costo=0, mesas=0, unid=0, cajas=0, costoCaja=0, montoDia=0, udia=0, jeq=0;
+  const dp = new Set(), dpL = new Set(), pers = new Set();
+  rows.forEach(f=>{
+    costo += f.monto; unid += f.cant; pers.add(f.trab);
+    if(f.uni==='mesa') mesas += f.cant;
+    if(f.fam==='Cosecha'){ cajas += f.cant; costoCaja += f.monto; }
+    if(f.dia){ dp.add(f.trab+'|'+f.fec); dpL.add(f.trab+'|'+f.fec+'|'+f.vari); montoDia += f.monto; udia += f.cant; jeq += f.jeq; }
+  });
+  return { costo, mesas, unid, cajas, costoCaja, pers: pers.size, dp: dp.size, dpL: dpL.size, jeq,
+    pagoDia: dp.size ? montoDia/dp.size : null,
+    uDia: dpL.size ? udia/dpL.size : null,
+    uJeq: jeq>0 ? udia/jeq : null,
+    cUnid: unid ? costo/unid : null };
+}
+const EXP_MET = {
+  costo:  { t:'Costo', fmt:n=>fmtCLP(n) },
+  dp:     { t:'Días-persona', fmt:n=>Math.round(n||0).toLocaleString('es-CL') },
+  pagoDia:{ t:'Pago por día-persona', fmt:n=>n===null?'—':fmtCLP(n) },
+  mesas:  { t:'Mesas trabajadas', fmt:n=>Math.round(n||0).toLocaleString('es-CL') },
+  uJeq:   { t:'Unidades por jornada eq.', fmt:n=>n===null?'—':(Math.round(n*10)/10).toLocaleString('es-CL') },
+  cUnid:  { t:'Costo por unidad', fmt:n=>n===null?'—':fmtCLP(n) }
+};
+function expPeriodo(f, agr){
+  const iso = f.fec || f.sem;
+  return agr==='mes' ? iso.slice(0,7) : f.sem;
+}
+function expPorClave(rows, clave){
+  const m = {};
+  rows.forEach(f=>{ const k = clave(f); (m[k] = m[k] || []).push(f); });
+  return Object.entries(m).map(([k,v])=>({ k, filas:v, ...expAgregar(v) }));
+}
+
+// ── Pantalla ──
+function expSet(c, v){ expState.sel[c] = v; if(c==='fam') expState.sel.vari=''; renderExperiencia(); }
+
+function renderExperiencia(){
+  Object.values(expState.charts).forEach(ch=>{ try{ ch.destroy(); }catch(e){} });
+  expState.charts = {};
+  const box = document.getElementById('expContent');
+  if(!expState.actual || !expState.filas.length){ box.innerHTML=''; return; }
+  const s = expState.sel, p = expState.actual;
+  const todas = expState.filas;
+  const fams  = [...new Set(todas.map(f=>f.fam))].sort((a,b)=>a.localeCompare(b,'es'));
+  const varis = [...new Set(todas.filter(f=>!s.fam||f.fam===s.fam).map(f=>f.vari))].sort((a,b)=>a.localeCompare(b,'es'));
+  const trabs = [...new Set(todas.map(f=>f.trab))].sort((a,b)=>a.localeCompare(b,'es'));
+  const R = expFiltradas();
+  const t = expAgregar(R);
+  const mesasSup = Object.values(p.mesasSector||{}).reduce((a,b)=>a+(Number(b)||0),0);
+  const sinFiltro = !s.fam && !s.vari && !s.trab;
+  const opt = (v,tx,sel)=>`<option value="${escH(v)}" ${String(v)===String(sel)?'selected':''}>${escH(tx)}</option>`;
+  const unidadSel = s.vari ? ((R.find(f=>f.vari===s.vari)||{}).uni || 'unidad') : null;
+
+  let h = `<div class="inf-card">
+    <div class="dash-sel">
+      <div><label>Familia de labor</label><select onchange="expSet('fam',this.value)">${opt('','Todas',s.fam)}${fams.map(x=>opt(x,x,s.fam)).join('')}</select></div>
+      <div><label>Labor (tarifa)</label><select onchange="expSet('vari',this.value)">${opt('','Todas',s.vari)}${varis.map(x=>opt(x,x,s.vari)).join('')}</select></div>
+      <div><label>Trabajador</label><select onchange="expSet('trab',this.value)">${opt('','Todos',s.trab)}${trabs.map(x=>opt(x,x,s.trab)).join('')}</select></div>
+      <div><label>Agrupar por</label><select onchange="expSet('agr',this.value)">${opt('semana','Semana',s.agr)}${opt('mes','Mes',s.agr)}</select></div>
+    </div>`;
+  const kpi = (k, val, sub)=>`<div class="dash-kpi ${s.met===k?'on':''}" onclick="expSet('met','${k}')"><div class="k-l">${EXP_MET[k].t}</div><div class="k-v">${EXP_MET[k].fmt(val)}</div>${sub?`<div class="k-s">${sub}</div>`:''}</div>`;
+  h += `<div class="dash-kpis">
+    ${kpi('costo', t.costo, sinFiltro && mesasSup ? `${fmtCLP(t.costo/mesasSup)} por mesa de superficie` : `${t.pers} personas`)}
+    ${kpi('dp', t.dp, `${t.pers} personas`)}
+    ${kpi('pagoDia', t.pagoDia, 'lo que ganó una persona por día')}
+    ${kpi('mesas', t.mesas, t.cajas ? `+ ${Math.round(t.cajas).toLocaleString('es-CL')} cajas (${fmtCLP(t.costoCaja/t.cajas)}/caja)` : '')}
+    ${kpi('uJeq', s.vari ? t.uJeq : null, s.vari ? `${unidadSel}s por persona al día` : 'elige una labor')}
+    ${kpi('cUnid', s.vari ? t.cUnid : null, s.vari ? `por ${unidadSel}` : 'elige una labor')}
+  </div>`;
+  if(!s.vari && (s.met==='uJeq' || s.met==='cUnid')){
+    h += `<div class="dash-note">⚠️ Sin una labor elegida, esta métrica mezcla mesas, cajas y jornadas. Elige una labor para leerla.</div>`;
+  }
+  if(!R.length){ box.innerHTML = h + `<div class="inf-empty">No hay datos con estos filtros.</div></div>`; return; }
+
+  // Tabla por labor
+  const porVar = expPorClave(expFiltradas('vari').filter(f=>!s.vari||f.vari===s.vari), f=>f.vari).map(x=>{
+    const f0 = x.filas[0];
+    const pw = {};
+    x.filas.forEach(f=>{ if(!f.dia) return; pw[f.trab] = pw[f.trab] || { u:0, j:0 }; pw[f.trab].u += f.cant; pw[f.trab].j += f.jeq; });
+    const tasas = Object.values(pw).filter(w=>w.j>=1).map(w=>w.u/w.j);
+    return { ...x, fam:f0.fam, uni:f0.uni, tar:f0.tar, min: tasas.length?Math.min(...tasas):null, max: tasas.length?Math.max(...tasas):null };
+  }).sort((a,b)=>b.costo-a.costo);
+  const totCostoVar = porVar.reduce((a,b)=>a+b.costo,0);
+  const d1 = n=> n===null||n===undefined ? '—' : (Math.round(n*10)/10).toLocaleString('es-CL');
+
+  h += `<div class="dash-grid">
+    <div class="dash-box dash-wide"><div class="dash-box-t">${EXP_MET[s.met].t} por ${s.agr}</div><div class="inf-chartwrap"><canvas id="chartExpEvol"></canvas></div></div>
+    <div class="dash-box dash-wide"><div class="dash-box-t">Eficiencia y costo por labor</div>
+      <div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table class="inf-table">
+      <thead><tr><th>Labor</th><th class="num">Unid.</th><th class="num">Costo</th><th class="num">%</th><th class="num">Días<br>pers.</th><th class="num">Por jornada<br>eq.</th><th class="num">Por día<br>pers.</th><th class="num">$/unid.</th></tr></thead>
+      <tbody>${porVar.map(x=>`<tr${x.dpL<3?' style="opacity:.6"':''}>
+        <td>${escH(x.k)}<div style="font-size:9px;color:var(--muted)">${escH(x.fam)} · ${escH(x.uni||'—')} · ${x.pers} pers.${x.min!==null?` · rango ${d1(x.min)}–${d1(x.max)}`:''}</div></td>
+        <td class="num">${Math.round(x.unid).toLocaleString('es-CL')}</td>
+        <td class="num">${fmtCLP(x.costo)}</td>
+        <td class="num">${totCostoVar?Math.round(x.costo/totCostoVar*100):0}%</td>
+        <td class="num">${x.dpL}</td>
+        <td class="num"><b>${d1(x.uJeq)}</b></td>
+        <td class="num">${d1(x.uDia)}</td>
+        <td class="num">${x.cUnid===null?'—':fmtCLP(x.cUnid)}</td>
+      </tr>`).join('')}</tbody></table></div></div>
+    <div class="dash-box"><div class="dash-box-t">Costo por familia</div><div class="inf-chartwrap" style="height:280px"><canvas id="chartExpFam"></canvas></div></div>
+    <div class="dash-box"><div class="dash-box-t">Trabajadores</div>
+      <div style="overflow-x:auto;max-height:280px;overflow-y:auto"><table class="inf-table">
+      <thead><tr><th>Trabajador</th><th class="num">Días</th><th class="num">Ganancia</th><th class="num">$/día</th>${s.vari?'<th class="num">Por jornada eq.</th>':''}</tr></thead>
+      <tbody>${expPorClave(expFiltradas('trab').filter(f=>!s.trab||f.trab===s.trab), f=>f.trab)
+        .sort((a,b)=> s.vari ? ((b.uJeq||0)-(a.uJeq||0)) : (b.costo-a.costo))
+        .map(w=>`<tr${w.dp<3?' style="opacity:.6"':''}><td>${escH(w.k)}</td><td class="num">${w.dp}</td><td class="num">${fmtCLP(w.costo)}</td><td class="num">${w.pagoDia===null?'—':fmtCLP(w.pagoDia)}</td>${s.vari?`<td class="num"><b>${d1(w.uJeq)}</b></td>`:''}</tr>`).join('')}</tbody>
+      </table></div></div>`;
+  // Por sector
+  const ms = p.mesasSector || {};
+  if(Object.keys(ms).length){
+    const porSec = Object.keys(ms).map(sec=>{ const v = R.filter(f=>String(f.sec)===String(sec)); const a = expAgregar(v); return { ...a, sec, mesas:Number(ms[sec])||0, mesasTrab:a.mesas }; });
+    h += `<div class="dash-box dash-wide"><div class="dash-box-t">Por sector (solo lo anotado con un único sector)</div>
+      <div style="overflow-x:auto"><table class="inf-table"><thead><tr><th>Sector</th><th class="num">Mesas</th><th class="num">Costo</th><th class="num">$/mesa sup.</th><th class="num">Mesas trab.</th><th class="num">Cajas</th></tr></thead>
+      <tbody>${porSec.map(x=>`<tr><td>${escH(x.sec)}</td><td class="num">${x.mesas}</td><td class="num">${fmtCLP(x.costo)}</td><td class="num">${x.mesas?fmtCLP(x.costo/x.mesas):'—'}</td><td class="num">${Math.round(x.mesasTrab).toLocaleString('es-CL')}</td><td class="num">${Math.round(x.cajas).toLocaleString('es-CL')}</td></tr>`).join('')}</tbody></table></div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px">Lo anotado como "8 y 9", "8-9-10-11" o sin sector no se asigna a ninguno, así que el costo por sector queda bajo: sirve para comparar sectores entre sí.</div></div>`;
+  }
+  h += `</div>
+  <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-top:8px">
+    <b>Por jornada eq.</b>: unidades ÷ jornadas equivalentes. Cada día de cada persona se reparte entre sus labores según lo que ganó en cada una; es la mejor estimación de lo que rinde una persona en un día completo de esa labor. <b>Por día pers.</b>: unidades ÷ días-persona sin repartir (sale baja si el día se compartió con otra labor). La unidad es la de la tarifa: mesa, caja (cosecha), jornada o tarea. Filas en gris: menos de 3 días-persona.
+  </div>`;
+  if((p.notas||[]).length){
+    h += `<details style="margin-top:10px"><summary style="font-size:11px;font-weight:600;cursor:pointer">Notas y supuestos de la planilla</summary>
+      <div style="font-size:10.5px;color:var(--muted);line-height:1.5;margin-top:6px">${p.notas.map(n=>escH(n)).join('<br>')}</div></details>`;
+  }
+  h += `</div>`;
+  box.innerHTML = h;
+
+  // Gráfico de evolución
+  const per = expPorClave(R, f=>expPeriodo(f, s.agr)).sort((a,b)=>a.k.localeCompare(b.k));
+  const lab = k=> s.agr==='mes' ? ((MESES[parseInt(k.slice(5,7))-1]||'').slice(0,3)+' '+k.slice(2,4)) : fDMY(k).slice(0,5);
+  const val = x=>{ const v = x[s.met]; return v===null||v===undefined ? null : Math.round(v*10)/10; };
+  expState.charts.evol = new Chart(document.getElementById('chartExpEvol').getContext('2d'), {
+    type:'bar',
+    data:{ labels: per.map(x=>lab(x.k)), datasets:[{ label:EXP_MET[s.met].t, data: per.map(val), backgroundColor:'#4ade80' }] },
+    options:{ responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=>`${EXP_MET[s.met].t}: ${EXP_MET[s.met].fmt(per[c.dataIndex][s.met])}` } } },
+      scales:{ y:{ beginAtZero:true, ticks:{font:{size:10}} }, x:{ ticks:{ font:{size:9}, maxRotation:45 } } } }
+  });
+  // Costo por familia (sin el filtro de familia/labor, para ver el reparto)
+  const pf = expPorClave(expState.filas.filter(f=>!s.trab||f.trab===s.trab), f=>f.fam).sort((a,b)=>b.costo-a.costo);
+  expState.charts.fam = new Chart(document.getElementById('chartExpFam').getContext('2d'), {
+    type:'bar',
+    data:{ labels: pf.map(x=>x.k), datasets:[{ data: pf.map(x=>Math.round(x.costo)), backgroundColor: pf.map(x=> !s.fam||x.k===s.fam ? '#4ade80' : '#cbd5e1') }] },
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:(c)=>fmtCLP(c.parsed.x) } } },
+      scales:{ x:{ beginAtZero:true, ticks:{ font:{size:9}, callback:v=>'$'+(v/1e6).toLocaleString('es-CL')+' M' } }, y:{ ticks:{font:{size:9}} } } }
+  });
+}
+
+function expExportExcel(){
+  if(!expState.actual || !expState.filas.length){ toast('⚠️ No hay proyecto cargado'); return; }
+  if(typeof XLSX==='undefined'){ toast('⚠️ Librería Excel no cargada. Revisa tu conexión y recarga.'); return; }
+  const s = expState.sel, R = expFiltradas();
+  const r1 = n=> n===null||n===undefined ? '' : Math.round(n*10)/10;
+  const filtro = `Familia: ${s.fam||'Todas'} · Labor: ${s.vari||'Todas'} · Trabajador: ${s.trab||'Todos'}`;
+  const wb = XLSX.utils.book_new();
+  const porVar = expPorClave(R, f=>f.vari).sort((a,b)=>b.costo-a.costo);
+  const aoa1 = [[`${expState.actual.nombre} — Por labor`],[filtro],[],
+    ['Labor (tarifa)','Familia','Unidad','Unidades','Costo $','Días-persona','Jornadas eq.','Unidades por jornada eq.','Unidades por día-persona','Costo por unidad $','Personas']]
+    .concat(porVar.map(x=>[x.k, x.filas[0].fam, x.filas[0].uni, x.unid, Math.round(x.costo), x.dpL, r1(x.jeq), r1(x.uJeq), r1(x.uDia), x.cUnid===null?'':Math.round(x.cUnid), x.pers]));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa1), 'Por labor');
+  const porT = expPorClave(R, f=>f.trab).sort((a,b)=>b.costo-a.costo);
+  const aoa2 = [[`${expState.actual.nombre} — Por trabajador`],[filtro],[],['Trabajador','Días-persona','Ganancia $','Pago por día $','Unidades por jornada eq.']]
+    .concat(porT.map(x=>[x.k, x.dp, Math.round(x.costo), x.pagoDia===null?'':Math.round(x.pagoDia), s.vari?r1(x.uJeq):'']));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa2), 'Por trabajador');
+  const porS = expPorClave(R, f=>expPeriodo(f, s.agr)).sort((a,b)=>a.k.localeCompare(b.k));
+  const aoa3 = [[`${expState.actual.nombre} — Por ${s.agr}`],[filtro],[],[s.agr==='mes'?'Mes':'Semana (cierre)','Costo $','Días-persona','Pago por día $','Mesas','Cajas']]
+    .concat(porS.map(x=>[x.k, Math.round(x.costo), x.dp, x.pagoDia===null?'':Math.round(x.pagoDia), x.mesas, x.cajas]));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa3), s.agr==='mes'?'Por mes':'Por semana');
+  const aoa4 = [['Semana','Fecha','Sector','Familia','Labor','Tarifa','Unidad','Trabajador','Cantidad','Monto','Cuenta por día','Jornada eq.']]
+    .concat(R.map(f=>[f.sem, f.fec, f.sec, f.fam, f.lab, f.tar, f.uni, f.trab, f.cant, f.monto, f.dia?1:0, f.jeq]));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa4), 'Datos');
+  XLSX.writeFile(wb, `experiencia_${expState.actual.id}.xlsx`);
+  toast('✅ Excel descargado');
+}
+
 // ══════════════════════════════════════════════
 // VISTA: móvil / computador
 // ══════════════════════════════════════════════
@@ -9920,10 +10251,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v54';
+const MANUAL_VERSION='v55';
 const MANUAL_FECHA='2026-09-30';
 
 const MANUAL_CAMBIOS=[
+  {v:'v55', f:'30-09-2026', ver:()=>puedeVerExperiencia(), txt:'Nuevo botón <b>Experiencia previa</b> (solo Rafael y gerencia): el análisis de la temporada de tomate verano 25/26 de Paradero 12 hecha con la contratista Alicia. Muestra costo, días-persona, pago por día, <b>mesas por jornada</b> y <b>costo por mesa</b> de cada labor, con filtros por familia, labor y trabajador, gráficos por semana o mes, y descarga a Excel. Se pueden cargar más proyectos con el mismo formato de Excel.'},
   {v:'v54', f:'30-09-2026', txt:'<b>Informes:</b> nueva pestaña <b>🧭 Dashboard</b>, que queda como la primera. Un solo tablero con selectores de <b>encargado</b>, <b>labor</b>, <b>métrica</b> (mesas, horas, costo, $/mesa, mesas/día persona, cumplimiento de lo programado) y <b>agrupación por día, semana o mes</b>. Muestra las tarjetas de resumen, la evolución en el tiempo, la comparación entre encargados, el resumen por ciclo y la lista de trabajadores. También se baja a Excel y PDF, y entra en el Excel completo (ahora 7 hojas).'},
   {v:'v53', f:'30-09-2026', txt:'<b>Informes:</b> nueva pestaña <b>⚡ Eficiencia</b>. Por cada encargado (subjefe) y labor muestra cuántas <b>mesas hace un trabajador en un día</b> (con las horas reales registradas), lo que avanza la <b>cuadrilla por día</b>, la comparación con el promedio de la labor, el trabajador más lento y el más rápido, y el <b>costo por mesa</b>. Arriba trae el resumen de mesas, horas y costo de cada encargado. Se filtra por labor, tiene gráfico y entra en el Excel completo (ahora 6 hojas).'},
   {v:'v52', f:'28-09-2026', txt:'Nuevo botón <b>Control</b>: la lista de chequeo del tomate (49 actividades) ordenada por semana desde la plantación. Cada responsable (jefatura predial, encargado de riego, subjefe de sector, asesor) ve qué le toca <b>esta semana y las 4 siguientes</b> en todos los ciclos abiertos, las marca como realizadas o no aplica, y ve lo atrasado. Incluye el <b>cronograma</b> (carta Gantt) de cada ciclo y las <b>actividades anuales del campo</b>. En <b>Ciclos</b> ahora se puede tener abierto más de un ciclo de tomate a la vez, uno por época, porque las épocas se superponen, y cada ciclo guarda su <b>fecha de plantación</b>. Mientras no se abre el ciclo, la época aparece con su fecha de referencia para no olvidar lo que se hace antes de plantar (encargo de plantas, análisis de suelo, preparación).'},
@@ -10054,6 +10386,22 @@ const MANUAL_SECCIONES=[
     'Nimitz tiene su propia opción <b>No aplica (fumigado)</b>. El doble techo de plantación se pide solo en plantaciones de diciembre a febrero.',
     'Lo que venció antes de que existiera esta pantalla (28-09-2026) no aparece como atrasado.',
     'Las semanas de inicio y fin de cada actividad son referenciales: se ajustan con la antesis real y el asesor.'
+  ]
+},
+{
+  id:'experiencia', ico:'🗂️', tit:'Experiencia previa', ver:()=>puedeVerExperiencia(),
+  intro:'Temporadas hechas fuera de FieldLog (por ejemplo, con contratista) para comparar rendimientos y costos por labor. Solo la ven los correos autorizados.',
+  pasos:[
+    'Entra a <b>Experiencia previa</b> y elige el <b>Proyecto</b>.',
+    'Filtra por <b>familia de labor</b>, <b>labor (con su tarifa)</b> o <b>trabajador</b>, y agrupa por semana o mes. Tocar una tarjeta cambia la métrica del gráfico.',
+    'En la tabla <b>Eficiencia y costo por labor</b> la columna clave es <b>Por jornada eq.</b>: cuántas unidades hace una persona en un día completo de esa labor.',
+    'Con <b>📥 Bajar a Excel lo filtrado</b> sale lo que tienes en pantalla (por labor, por trabajador, por período y los datos).',
+    'Para agregar otro proyecto usa <b>📤 Cargar planilla</b> con un Excel que tenga la hoja <b>Datos</b> con las mismas columnas del análisis de Alicia.'
+  ],
+  tips:[
+    'La unidad es la de la tarifa: mesa en casi todo, caja en cosecha, jornada o tarea en las tarifas altas. Por eso con "Todas" las labores las unidades se mezclan.',
+    'Jornada equivalente: si alguien ganó 2/3 de su día en desbrote, ese día cuenta 0,67 jornada de desbrote. Supone que las tarifas a trato pagan parecido por hora.',
+    'Los montos son lo que dice la planilla. Si la contratista cobra una comisión aparte, el costo real es mayor.'
   ]
 },
 {
@@ -10292,7 +10640,7 @@ function renderManual(){
   if(!q){
     h+=`<div class="card">
       <div class="card-title">🆕 Novedades</div>
-      ${MANUAL_CAMBIOS.map(c=>`<div style="display:flex;gap:8px;margin-bottom:8px">
+      ${MANUAL_CAMBIOS.filter(c=>{ if(!c.ver) return true; try{ return c.ver(); }catch(e){ return false; } }).map(c=>`<div style="display:flex;gap:8px;margin-bottom:8px">
         <span style="font-family:'DM Mono',monospace;font-size:10.5px;color:var(--green);font-weight:700;min-width:30px">${c.v}</span>
         <div style="flex:1;font-size:12px;line-height:1.5;color:var(--text)">${c.txt}<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);margin-top:2px">${c.f}</div></div>
       </div>`).join('')}
@@ -10339,6 +10687,7 @@ function showScr(name,btn){
   if(name==='config')  renderConfig();
   if(name==='prog')    {populateProgSubjefe();renderProg();}
   if(name==='informes')initInformes();
+  if(name==='experiencia')initExperiencia();   // v55
   if(name==='bodega')  renderBodega();
   if(name==='planilla') initPlanilla();
   if(name==='aplic')   initAplic();
