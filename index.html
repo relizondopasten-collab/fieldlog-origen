@@ -3450,13 +3450,18 @@ function movUnidad(m){
 // Una fila por movimiento, con la cantidad con signo respecto del recinto donde ocurre.
 function movFila(m){
   const u=movUnidad(m);
-  const f={fecha:m.fecha||'', ts:Number(m.createdAt)||0, tipo:m.tipo, tipoTxt:MOV_TIPO_TXT[m.tipo]||m.tipo||'—',
-    nombre:m.nombre||'', unidad:u, cantidad:0, recinto:'', desde:'', estado:'', por:m.registradoPorNombre||'', nota:'', ingreso:false, recintos:[]};
+  const f={id:m._id||'', fecha:m.fecha||'', ts:Number(m.createdAt)||0, tipo:m.tipo, tipoTxt:MOV_TIPO_TXT[m.tipo]||m.tipo||'—',
+    productoId:m.productoId||'', nombre:m.nombre||'', unidad:u, cantidad:0, recinto:'', desde:'', estado:'', por:m.registradoPorNombre||'', nota:'', ingreso:false, recintos:[]};
   if(m.tipo==='compra'){
     f.cantidad=Number(m.total)||0; f.recinto=m.recinto||m.predio||''; f.recintos=[f.recinto];
     f.desde=m.proveedor?('Proveedor: '+m.proveedor):'Compra';
     f.nota=[m.envases?`${fmtNum(m.envases)} env × ${fmtNum(m.capEnvase)} ${u}`:'', m.precioUnit?`$${fmtNum(m.precioUnit,0)}/${u||'u'}`:''].filter(Boolean).join(' · ');
     f.ingreso=true;
+    // v57 · Compra anulada: queda en la lista, tachada y con el motivo, pero no cuenta.
+    if(m.estado==='anulado'){ f.estado=MOV_ESTADO_TXT.anulado; f.ingreso=false; f.anulada=true;
+      f.nota=[f.nota, `Anulada por ${m.anuladoPorNombre||''}${m.motivoAnulacion?': '+m.motivoAnulacion:''}`].filter(Boolean).join(' · '); }
+    else f.anulable=true;
+    f.registradoPor=m.registradoPor||'';
   }else if(m.tipo==='despacho'){
     f.cantidad=Number(m.cantidad)||0; f.recinto=m.destino||''; f.desde='Desde '+nombreBodega(m.origen||'',true); f.recintos=[m.destino,m.origen];
     f.estado=m.estado?(MOV_ESTADO_TXT[m.estado]||m.estado):'✅ Recibido';   // los anteriores a la v44 no tenían estado
@@ -3482,7 +3487,7 @@ async function movCargar(){
   movState.docs=null; movState.error=''; renderMovimientos();
   try{
     const snap=await db.collection('movimientos').get();
-    movState.docs=snap.docs.map(d=>movFila(d.data()));
+    movState.docs=snap.docs.map(d=>movFila(Object.assign({}, d.data(), {_id:d.id})));
   }catch(e){ movState.docs=[]; movState.error=e.message||'error'; }
   renderMovimientos();
 }
@@ -3491,7 +3496,7 @@ function movFiltradas(){
   return (movState.docs||[]).filter(f=>{
     if(desde && f.fecha<desde) return false;
     if(hasta && f.fecha>hasta) return false;
-    if(tipo==='ingresos' && !f.ingreso) return false;
+    if(tipo==='ingresos' && !f.ingreso && !f.anulada) return false;   // v57 · las compras anuladas se siguen viendo
     if(tipo!=='ingresos' && tipo!=='todos' && f.tipo!==tipo) return false;
     if(recinto){
       if(recinto.startsWith('campo:')){ const pid=recinto.slice(6);
@@ -3532,18 +3537,60 @@ function movPintarTabla(){
     <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
     <thead><tr style="border-bottom:2px solid var(--sand);text-align:left">
       <th style="padding:4px">Fecha</th><th style="padding:4px">Tipo</th><th style="padding:4px">Producto</th>
-      <th style="padding:4px;text-align:right">Cantidad</th><th style="padding:4px">Recinto</th><th style="padding:4px">Origen / detalle</th><th style="padding:4px">Registró</th>
+      <th style="padding:4px;text-align:right">Cantidad</th><th style="padding:4px">Recinto</th><th style="padding:4px">Origen / detalle</th><th style="padding:4px">Registró</th>${movHayAcciones(filas)?'<th style="padding:4px"></th>':''}
     </tr></thead><tbody>
     ${filas.map(f=>`<tr>
       <td style="${td};white-space:nowrap">${escH(fDMY(f.fecha))}</td>
       <td style="${td};white-space:nowrap">${escH(f.tipoTxt)}${f.estado?`<div style="font-size:10.5px;color:var(--muted)">${escH(f.estado)}</div>`:''}</td>
       <td style="${td}"><b>${escH(f.nombre)}</b></td>
-      <td style="${td};text-align:right;white-space:nowrap;font-weight:700;color:${(f.tipo==='despacho'&&!f.ingreso)?'var(--muted);text-decoration:line-through':f.cantidad<0?'var(--red)':'var(--green)'}">${(f.tipo==='despacho'&&!f.ingreso)?'':f.cantidad>0?'+':f.cantidad<0?'−':''}${fmtNum(Math.abs(f.cantidad),2)} ${escH(f.unidad)}</td>
+      <td style="${td};text-align:right;white-space:nowrap;font-weight:700;color:${((f.tipo==='despacho'&&!f.ingreso)||f.anulada)?'var(--muted);text-decoration:line-through':f.cantidad<0?'var(--red)':'var(--green)'}">${(f.tipo==='despacho'&&!f.ingreso)?'':f.cantidad>0?'+':f.cantidad<0?'−':''}${fmtNum(Math.abs(f.cantidad),2)} ${escH(f.unidad)}</td>
       <td style="${td}">${escH(nombreBodega(f.recinto,true))}</td>
       <td style="${td}">${escH(f.desde)}${f.nota?`<div style="font-size:10.5px;color:var(--muted)">${escH(f.nota)}</div>`:''}</td>
-      <td style="${td}">${escH(f.por)}</td>
+      <td style="${td}">${escH(f.por)}</td>${movHayAcciones(filas)?`<td style="${td};white-space:nowrap">${f.anulable&&puedoAnularCompra(f)?`<button class="btn btn-sm" style="background:#FEE2E2;color:var(--red);padding:3px 8px" onclick="anularCompra('${f.id}')" title="Anular esta compra: el stock se resta del recinto">✖ Anular</button>`:''}</td>`:''}
     </tr>`).join('')}
     </tbody></table></div>`;
+}
+// v57 · Anular una compra mal registrada (repetida, cantidad o recinto equivocado).
+// No se borra: queda estado:'anulado' con el motivo y quién la anuló, y se resta
+// del recinto lo que había sumado. La anula quien tiene 🛒 o gerencia.
+// Si se equivocó en la cantidad o el recinto, se anula y se registra de nuevo.
+function puedoAnularCompra(f){ return canComprar(); }   // gerencia o quien tiene 🛒 (reglas v57)
+function movHayAcciones(filas){ return filas.some(f=>f.anulable && puedoAnularCompra(f)); }
+async function anularCompra(id){
+  const f=(movState.docs||[]).find(x=>x.id===id);
+  if(!f || !f.anulable || !puedoAnularCompra(f)){ toast('Sin permiso para anular esta compra'); return; }
+  const motivo=prompt(`Anular la compra de ${f.nombre} (+${fmtNum(f.cantidad,2)} ${f.unidad}) del ${fDMY(f.fecha)} en ${nombreBodega(f.recinto,true)}.\n\nSe restarán ${fmtNum(f.cantidad,2)} ${f.unidad} de ese recinto y la compra quedará tachada.\n\n¿Por qué se anula? (ej: compra repetida)`);
+  if(motivo===null) return;
+  if(!motivo.trim()){ toast('⚠️ Escribe el motivo para anular'); return; }
+  const yo=quienSoy();
+  loading(true,'Anulando compra…');
+  try{
+    let quedo=0, recinto='';
+    await db.runTransaction(async tx=>{
+      const mref=db.collection('movimientos').doc(id);
+      const mv=(await tx.get(mref)).data();
+      if(!mv || mv.tipo!=='compra') throw new Error('No es una compra');
+      if(mv.estado==='anulado') throw new Error('Esta compra ya estaba anulada');
+      recinto=mv.recinto||mv.predio;
+      const ref=db.collection('productos').doc(mv.productoId);
+      const ps=await tx.get(ref);
+      if(ps.exists){
+        const st=Object.assign({}, ps.data().stock||{});
+        st[recinto]=num(st[recinto])-num(mv.total);
+        quedo=st[recinto];
+        tx.update(ref, {stock:st, updatedAt:Date.now()});
+      }
+      tx.update(mref, {estado:'anulado', motivoAnulacion:motivo.trim(),
+        anuladoPor:yo.uid, anuladoPorNombre:yo.nombre, anuladoAt:Date.now()});
+    });
+    const p=(planProds||[]).find(x=>x.id===f.productoId||x.nombre===f.nombre);
+    if(p && p.stock) p.stock[recinto]=quedo;
+    if(typeof renderPlanilla==='function') renderPlanilla();
+    await movCargar();
+    toast(quedo<-1e-9 ? `Compra anulada · ⚠️ ${nombreBodega(recinto,true)} quedó en ${fmtNum(quedo,2)}: revisa con un ajuste por conteo`
+                      : `✅ Compra anulada · −${fmtNum(f.cantidad,2)} ${f.unidad} en ${nombreBodega(recinto,true)}`);
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
 }
 function movExcel(){
   if(typeof XLSX==='undefined'){ toast('⚠️ Excel no disponible sin conexión'); return; }
@@ -5196,6 +5243,7 @@ async function calcConciliacion(){
     const mov=await db.collection('movimientos').get();
     mov.docs.forEach(doc=>{
       const m=doc.data(); if(!enRango(m.fecha||'')) return;
+      if(m.tipo==='compra' && m.estado==='anulado') return;   // v57
       if(m.tipo==='compra' && (m.recinto||m.predio)){ const o=cell(m.recinto||m.predio,m.productoId); o.nombre=m.nombre||o.nombre; o.entregado+=Number(m.total)||0; }
       else if(m.tipo==='despacho'){
         // v44 · Pendiente: salió del origen pero todavía no entra al destino.
@@ -5341,7 +5389,7 @@ function abrirMovProducto(idx){
     <div class="form-row"><label>Proveedor</label><input type="text" id="mcProv" placeholder="Opcional"></div>
     <div class="form-row"><label>Fecha</label><input type="date" id="mcFecha" value="${todayIso}"></div>
     <div id="mcResumen" style="font-size:12px;color:var(--muted);margin:2px 0 8px"></div>
-    <button class="btn btn-primary" onclick="movCompra(${idx})">Registrar compra</button>
+    <button class="btn btn-primary" id="btnMovCompra" onclick="movCompra(${idx})">Registrar compra</button>
 
     <div class="sec-div" style="margin-top:16px">↩️ Devolución al proveedor (sale stock)</div>
     <div style="display:flex;gap:8px;align-items:flex-end">
@@ -5408,8 +5456,10 @@ function movCalc(){
 
 function quienSoy(){ return {uid:currentUser.uid, nombre:(currentProfile&&currentProfile.nombre)||currentUser.email}; }
 
+let movCompraEnCurso=false;   // v57 · evita que un doble toque registre la compra dos veces
 async function movCompra(idx){
   if(!canComprar()){ toast('Sin permiso para registrar compras'); return; }
+  if(movCompraEnCurso) return;
   const p=planProds[idx];
   const recinto=document.getElementById('mcPredio').value;
   if(!esRecinto(recinto)){ toast('⚠️ Elige el recinto que recibe'); return; }
@@ -5422,6 +5472,17 @@ async function movCompra(idx){
   if(total<=0){ toast('⚠️ Indica envases y capacidad'); return; }
   const pu=cap>0?pre/cap:null;
   const yo=quienSoy();
+  movCompraEnCurso=true;
+  const btnC=document.getElementById('btnMovCompra'); if(btnC) btnC.disabled=true;
+  // v57 · ¿Ya hay una compra igual (producto, recinto, fecha y cantidad) sin anular?
+  try{
+    const prev=await db.collection('movimientos').where('productoId','==',p.id).get();
+    const igual=prev.docs.map(d=>d.data()).find(m=>m.tipo==='compra' && m.estado!=='anulado'
+      && (m.recinto||m.predio)===recinto && m.fecha===fecha && Math.abs(num(m.total)-total)<1e-6);
+    if(igual && !confirm(`Ya hay una compra igual registrada:\n${p.nombre} · +${fmtNum(total)} en ${nombreBodega(recinto,true)} · ${fDMY(fecha)}${igual.registradoPorNombre?' · por '+igual.registradoPorNombre:''}.\n\n¿Es otra compra distinta y quieres registrarla igual?`)){
+      movCompraEnCurso=false; if(btnC) btnC.disabled=false; return;
+    }
+  }catch(e){ /* sin conexión o sin permiso de lectura: se registra igual */ }
   loading(true,'Registrando compra…');
   try{
     await db.runTransaction(async tx=>{
@@ -5446,6 +5507,7 @@ async function movCompra(idx){
     closeModal(); renderPlanilla();
     toast(`✅ Compra registrada en ${nombreBodega(recinto,true)} (+${fmtNum(total)})`);
   }catch(e){ toast('Error: '+e.message); }
+  movCompraEnCurso=false; if(btnC) btnC.disabled=false;
   loading(false);
 }
 
@@ -10251,10 +10313,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v55';
-const MANUAL_FECHA='2026-09-30';
+const MANUAL_VERSION='v57';
+const MANUAL_FECHA='2026-10-01';
 
 const MANUAL_CAMBIOS=[
+  {v:'v57', f:'01-10-2026', ver:()=>canBodega(), txt:'<b>Bodega:</b> una compra mal registrada (repetida, con otra cantidad o en otro recinto) se puede <b>anular</b> con <b>✖ Anular</b> en <b>📥 Ingresos y movimientos</b>. La anula quien tiene 🛒 (Luciano) o gerencia. Se resta del recinto lo que había sumado, la compra queda <b>tachada</b> con el motivo y quién la anuló, y deja de contar en la conciliación. Si la cantidad o el recinto estaban mal, se anula y se registra de nuevo. Además, el botón Registrar compra ya no registra dos veces con un doble toque, y avisa si ya hay una compra igual (mismo producto, recinto, fecha y cantidad).'},
   {v:'v55', f:'30-09-2026', ver:()=>puedeVerExperiencia(), txt:'Nuevo botón <b>Experiencia previa</b> (solo Rafael y gerencia): el análisis de la temporada de tomate verano 25/26 de Paradero 12 hecha con la contratista Alicia. Muestra costo, días-persona, pago por día, <b>mesas por jornada</b> y <b>costo por mesa</b> de cada labor, con filtros por familia, labor y trabajador, gráficos por semana o mes, y descarga a Excel. Se pueden cargar más proyectos con el mismo formato de Excel.'},
   {v:'v54', f:'30-09-2026', txt:'<b>Informes:</b> nueva pestaña <b>🧭 Dashboard</b>, que queda como la primera. Un solo tablero con selectores de <b>encargado</b>, <b>labor</b>, <b>métrica</b> (mesas, horas, costo, $/mesa, mesas/día persona, cumplimiento de lo programado) y <b>agrupación por día, semana o mes</b>. Muestra las tarjetas de resumen, la evolución en el tiempo, la comparación entre encargados, el resumen por ciclo y la lista de trabajadores. También se baja a Excel y PDF, y entra en el Excel completo (ahora 7 hojas).'},
   {v:'v53', f:'30-09-2026', txt:'<b>Informes:</b> nueva pestaña <b>⚡ Eficiencia</b>. Por cada encargado (subjefe) y labor muestra cuántas <b>mesas hace un trabajador en un día</b> (con las horas reales registradas), lo que avanza la <b>cuadrilla por día</b>, la comparación con el promedio de la labor, el trabajador más lento y el más rápido, y el <b>costo por mesa</b>. Arriba trae el resumen de mesas, horas y costo de cada encargado. Se filtra por labor, tiene gráfico y entra en el Excel completo (ahora 6 hojas).'},
@@ -10528,8 +10591,9 @@ const MANUAL_SECCIONES=[
     '<b>Confirmar lo que te llega</b>: al entrar, la app avisa si tienes despachos por confirmar, y el botón Bodega muestra cuántos son. En la tarjeta <b>📥 Despachos por confirmar</b> aprieta <b>✅ Recibido</b>, y recién ahí entra a tu recinto. Si no llegó, aprieta <b>✖ No llegó</b>: el producto vuelve al origen y queda anotado el motivo.',
     '<b>Corregir el destino de un despacho</b> (quien lo envió, el responsable del recinto de origen, bodega o gerencia): mientras esté <b>pendiente</b>, en <b>📥 Despachos por confirmar</b> aprieta <b>✏️ Destino</b>, elige el recinto correcto y, si quieres, el motivo. El stock no cambia; el despacho pasa a esperar la confirmación del nuevo destino y la corrección queda anotada. Si ya se recibió, hay que hacerlo con un despacho de vuelta.',
     '<b>Devolver al proveedor</b> (quien tenga 🛒, hoy Luciano, y gerencia): 📦 del producto → <b>↩️ Devolución al proveedor</b> → recinto desde donde sale, cantidad, motivo (producto con problema, se compró de más u otro), proveedor y, si hay, el N° de guía o nota de crédito. Sale al tiro del stock del recinto y queda registrada con el valor al último precio de compra.',
+    '<b>Anular una compra mal registrada</b> (quien tenga 🛒, hoy Luciano, y gerencia): en <b>📥 Ingresos y movimientos</b> aprieta <b>✖ Anular</b> en la fila de la compra y escribe el motivo (ej: compra repetida). Se resta del recinto lo que había sumado y la compra queda tachada, con el motivo. No se borra. Si estaba mal la cantidad o el recinto, anúlala y regístrala de nuevo. Si al registrar una compra ya existe una igual (mismo producto, recinto, fecha y cantidad), la app pregunta antes de guardarla.',
     '<b>Ajustar por conteo</b>: 📦 del producto → Ajuste → recinto, lo que contaste y el motivo. Queda registrado como movimiento con la diferencia.',
-    '<b>Ver lo que ha entrado</b>: tarjeta <b>📥 Ingresos y movimientos</b>, debajo de la planilla. Parte mostrando los ingresos (compras y despachos) de los últimos 30 días. Cambia las fechas, elige un recinto o un campo completo, el tipo de movimiento o escribe el producto. Los despachos muestran si están ✅ recibidos o ⏳ por confirmar. El botón <b>⬇️ Excel</b> baja lo que estás viendo. Es solo consulta: no cambia el stock.',
+    '<b>Ver lo que ha entrado</b>: tarjeta <b>📥 Ingresos y movimientos</b>, debajo de la planilla. Parte mostrando los ingresos (compras y despachos) de los últimos 30 días. Cambia las fechas, elige un recinto o un campo completo, el tipo de movimiento o escribe el producto. Los despachos muestran si están ✅ recibidos o ⏳ por confirmar. El botón <b>⬇️ Excel</b> baja lo que estás viendo. Es solo consulta, salvo el botón <b>✖ Anular</b> de las compras (ver más abajo).',
     '<b>Descuentos que no llegaron</b> (gerencia y bodega): si la bodega rechazó el descuento de una aplicación, aparece la tarjeta roja <b>⚠️ Descuentos que no llegaron a bodega</b> con el producto, la cantidad y el recinto. <b>✅ Aplicar</b> lo descuenta ahora; <b>Descartar</b> si ya se corrigió a mano.',
     'Quien mantiene el catálogo (bodega y gerencia) también puede editar las celdas directamente y apretar <b>💾 Guardar cambios</b>. Mientras no lo apriete, nada queda guardado.',
     'Abajo, en <b>Conciliación</b>, compara lo que recibió cada recinto (compras, despachos confirmados y ajustes, menos las devoluciones al proveedor) con lo que se usó en aplicaciones. Ajusta el rango de fechas, porque la entrega y el uso no tienen por qué caer el mismo mes.'
