@@ -694,6 +694,7 @@ body.vista-escritorio .modal-content{max-width:700px}
       </div>
       <div id="planInfo" class="plan-hint"></div>
       <div id="planMigrar" style="display:none"></div>
+      <div id="planOrdenLC" style="display:none"></div>
       <div id="planGrid" class="plan-wrap"></div>
       <div class="plan-hint">💡 El <b>precio unitario</b> y el <b>total</b> se calculan solos. Los cambios no se guardan hasta que pulses "Guardar cambios".</div>
     </div>
@@ -2638,14 +2639,19 @@ function renderViaRiegoForm(){
 
 // v44 · Recintos desde los que puede salir la vía riego del predio. En La
 // Constancia los bioestimulantes pueden estar en la Caseta o en su bodega.
-function viaRecintosPosibles(pid){
-  if(pid==='constancia') return ['lc_caseta','lc_bioest'];
+// v60 · En La Constancia depende del producto: los fertilizantes de la lista
+// salen de la Caseta; el resto, de Bodega Principal o Bioestimulantes.
+function viaRecintosPosibles(pid, productoId){
+  if(pid==='constancia'){
+    const p=productoId ? productosCache.find(x=>x.id===productoId) : null;
+    return vaEnCasetaLC(p) ? ['lc_caseta'] : [RECINTO_LC_BODEGA,'lc_bioest'];
+  }
   return recintoCaseta(pid) ? [recintoCaseta(pid)] : [];
 }
 // Recinto de un producto: el elegido a mano; si no, la Caseta, salvo que la
 // Caseta no tenga y la otra opción sí.
 function viaRecintoDe(productoId){
-  const pos=viaRecintosPosibles(aplVia.predioId);
+  const pos=viaRecintosPosibles(aplVia.predioId, productoId);
   if(!pos.length) return '';
   aplVia.recintos=aplVia.recintos||{};
   if(aplVia.recintos[productoId] && pos.includes(aplVia.recintos[productoId])) return aplVia.recintos[productoId];
@@ -2655,7 +2661,7 @@ function viaRecintoDe(productoId){
 }
 function viaSetRecinto(productoId, k){ aplVia.recintos=aplVia.recintos||{}; aplVia.recintos[productoId]=k; renderViaRiegoForm(); }
 function viaRecintoHTML(productoId){
-  const pos=viaRecintosPosibles(aplVia.predioId);
+  const pos=viaRecintosPosibles(aplVia.predioId, productoId);
   if(pos.length<2) return '';
   const sel=viaRecintoDe(productoId);
   const p=productosCache.find(x=>x.id===productoId);
@@ -3358,7 +3364,8 @@ const BODEGA_NOMBRES = {constancia:'Bodega La Constancia', transito:'Bodega El T
 //   foliar (los tres campos) → Bodega Pesticidas de La Constancia
 //   fertirriego y ácidos     → Caseta de Riego del campo
 //   vía riego                → Caseta de Riego del campo; en La Constancia,
-//                              Caseta o Bodega Bioestimulantes (por producto)
+//                              Caseta solo para los fertilizantes de la lista
+//                              (v60); el resto, Bodega Principal o Bioestimulantes
 //   Bodega de Proveedores    → nunca: el producto se despacha antes a un recinto
 // Las IDs no se cambian nunca: están guardadas en stock, movimientos y
 // aplicaciones. El nombre y los responsables sí se pueden corregir acá.
@@ -4824,6 +4831,36 @@ const ACIDOS={
   nitrico:  {nombre:'Ácido nítrico',   corto:'nítrico',   densidad:1.40, alias:['ACIDO NITRICO','AC NITRICO','AC. NITRICO','NITRICO','HNO3']}
 };
 const ACIDOS_ORDEN=['nitrico','fosforico'];
+
+// ══════════════════════════════════════════════
+// v60 · CASETA DE RIEGO DE LA CONSTANCIA: solo fertilizantes de fertirriego
+// Pedido de La Constancia (05-10-2026): en la Caseta quedan solo estos
+// productos; el resto pasa a la Bodega Principal y de ahí se descuenta.
+// Un producto puede llevar casetaLC:true/false (lo fija gerencia al ordenar la
+// Caseta); si no lo trae, se reconoce por nombre o alias.
+// ══════════════════════════════════════════════
+const CASETA_LC_EXTRA=[
+  {nombre:'KSC rosado',   alias:['KSC ROSADO','KSC ROSA','KSC-ROSADO'], sinAprox:true},
+  {nombre:'KSC amarillo', alias:['KSC AMARILLO','KSC-AMARILLO'], sinAprox:true},
+  {nombre:'KSC blanco',   alias:['KSC BLANCO','KSC-BLANCO'], sinAprox:true}
+];
+const RECINTO_LC_BODEGA='lc_principal';
+let _clavesCasetaLC=null;
+function clavesCasetaLC(){
+  if(_clavesCasetaLC) return _clavesCasetaLC;
+  const fuentes=FERTIRRIEGO_SALES.concat(CASETA_LC_EXTRA)
+    .concat(ACIDOS_ORDEN.map(k=>({nombre:ACIDOS[k].nombre, alias:ACIDOS[k].alias})));
+  _clavesCasetaLC=new Set(fuentes.flatMap(x=>[x.nombre].concat(x.alias||[])).map(claveProd).filter(Boolean));
+  return _clavesCasetaLC;
+}
+function vaEnCasetaLC(p){
+  if(!p) return false;
+  if(typeof p.casetaLC==='boolean') return p.casetaLC;
+  const cl=clavesCasetaLC();
+  return clavesProd(p).some(k=>cl.has(k));
+}
+// ¿Puede este producto entrar a este recinto? Solo restringe la Caseta LC.
+function recintoAdmite(p, k){ return k!=='lc_caseta' || vaEnCasetaLC(p); }
 const ACIDO_MAX_LHA_DIA=4;
 let aplAci=null;
 let aplDocsCache=[];
@@ -5225,6 +5262,16 @@ function renderPlanilla(){
       ${canManageUsers()?`<button class="btn btn-sm" style="background:#B45309;color:#fff;margin-left:6px" onclick="abrirMigracionRecintos()">🔀 Pasar a recintos</button>`:' Gerencia tiene que pasarlo a los recintos.'}
     </div>` : '';
   }
+  // v60 · Productos que no corresponden en la Caseta de Riego de La Constancia
+  const ordLC=document.getElementById('planOrdenLC');
+  if(ordLC){
+    const n=planProds.filter(p=>p.id && Math.abs(num((p.stock||{}).lc_caseta))>1e-9 && !vaEnCasetaLC(p)).length;
+    ordLC.style.display = n ? '' : 'none';
+    ordLC.innerHTML = n ? `<div style="background:#E0F2FE;border-radius:8px;padding:8px 10px;font-size:11.5px;color:#075985;margin-bottom:8px">
+      Hay <b>${n}</b> producto${n>1?'s':''} con stock en la <b>Caseta de Riego de La Constancia</b> que no ${n>1?'son':'es'} fertilizante${n>1?'s':''} de fertirriego. Tienen que pasar a <b>Bodega Principal</b>.
+      ${canManageUsers()?`<button class="btn btn-sm" style="background:#0369A1;color:#fff;margin-left:6px" onclick="abrirOrdenCasetaLC()">🔀 Ordenar Caseta LC</button>`:' Gerencia lo ordena desde aquí.'}
+    </div>` : '';
+  }
   // Quien no mantiene el catálogo ve la planilla en solo lectura: mueve stock
   // por despachos y aplicaciones, no editando celdas.
   if(!canCatalogo()){
@@ -5567,6 +5614,7 @@ async function movCompra(idx){
   const p=planProds[idx];
   const recinto=document.getElementById('mcPredio').value;
   if(!esRecinto(recinto)){ toast('⚠️ Elige el recinto que recibe'); return; }
+  if(!recintoAdmite(p, recinto)){ toast('⚠️ La Caseta de Riego de La Constancia recibe solo los fertilizantes de fertirriego. Este producto va a Bodega Principal.'); return; }   // v60
   const env=num(document.getElementById('mcEnv').value);
   const cap=num(document.getElementById('mcCap').value);
   const pre=num(document.getElementById('mcPrecio').value);
@@ -5670,6 +5718,7 @@ async function movDespacho(idx){
   if(!recintosOperables().includes(origen)){ toast('⚠️ Solo puedes despachar desde un recinto a tu cargo'); return; }
   if(!esRecinto(destino)){ toast('⚠️ Elige el recinto de destino'); return; }
   if(origen===destino){ toast('⚠️ El origen y el destino deben ser distintos'); return; }
+  if(!recintoAdmite(p, destino)){ toast('⚠️ La Caseta de Riego de La Constancia recibe solo los fertilizantes de fertirriego.'); return; }   // v60
   if(cant<=0){ toast('⚠️ Indica la cantidad'); return; }
   const yo=quienSoy();
   loading(true,'Enviando despacho…');
@@ -5877,6 +5926,72 @@ async function revisarDespachosAlEntrar(){
   actualizarBadgeDespachos();
   const n=despPorRecibir().length;
   if(n) toast(`📥 Tienes ${n} despacho${n>1?'s':''} por confirmar en Bodega`);
+}
+
+// ── v60 · Ordenar la Caseta de Riego de La Constancia (gerencia) ──
+// Lista todo lo que tiene stock en lc_caseta y lo que por nombre corresponde a
+// la Caseta. Lo marcado queda (casetaLC:true); lo desmarcado pasa su stock a
+// Bodega Principal (casetaLC:false) y queda un movimiento tipo 'migracion'.
+let ordenLCFilas=[];
+function abrirOrdenCasetaLC(){
+  if(!canManageUsers()){ toast('Solo gerencia'); return; }
+  ordenLCFilas=planProds.filter(p=>p.id && (Math.abs(num((p.stock||{}).lc_caseta))>1e-9 || vaEnCasetaLC(p)))
+    .map(p=>({productoId:p.id, nombre:p.nombre, unidad:p.unidad||'', cantidad:num((p.stock||{}).lc_caseta), queda:vaEnCasetaLC(p)}))
+    .sort((a,b)=> (b.queda-a.queda) || a.nombre.localeCompare(b.nombre,'es'));
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">🔀 Caseta de Riego · La Constancia</div>
+    <div class="modal-sub">Marcados = <b>quedan en la Caseta</b> (fertilizantes de fertirriego, ácidos, KSC). Desmarcados = su stock pasa a <b>Bodega Principal</b> y desde ahora la vía riego los descuenta de ahí. La marca sale del nombre del producto: revísala, sobre todo si hay nombres abreviados o duplicados.</div>
+    <div style="max-height:52vh;overflow:auto;border:1px solid var(--sand);border-radius:8px;margin:8px 0">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="background:var(--sand)"><th style="padding:5px;text-align:center">Queda</th><th style="padding:5px;text-align:left">Producto</th><th style="padding:5px;text-align:right">Stock Caseta</th></tr></thead>
+        <tbody>${ordenLCFilas.map((f,i)=>`<tr style="border-top:1px solid var(--sand)">
+          <td style="padding:4px;text-align:center"><input type="checkbox" ${f.queda?'checked':''} onchange="ordenLCFilas[${i}].queda=this.checked"></td>
+          <td style="padding:4px">${escH(f.nombre)}</td>
+          <td style="padding:4px;text-align:right;font-family:'DM Mono',monospace">${fmtNum(f.cantidad,2)} ${escH(f.unidad)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <button class="btn btn-primary" onclick="ejecutarOrdenCasetaLC()">Aplicar</button>
+    <button class="btn btn-secondary" style="margin-top:6px" onclick="closeModal()">Cancelar</button>`;
+  document.getElementById('overlay').classList.add('open');
+}
+async function ejecutarOrdenCasetaLC(){
+  if(!canManageUsers()) return;
+  const mover=ordenLCFilas.filter(f=>!f.queda && Math.abs(f.cantidad)>1e-9);
+  if(!confirm(`${ordenLCFilas.filter(f=>f.queda).length} productos quedan en la Caseta.\n${mover.length} pasan su stock a Bodega Principal.\n\n¿Seguir?`)) return;
+  const yo=quienSoy();
+  loading(true,'Ordenando la Caseta…');
+  let ok=0, err=0;
+  for(const f of ordenLCFilas){
+    try{
+      const pasa=!f.queda && Math.abs(f.cantidad)>1e-9;
+      if(pasa){
+        await db.runTransaction(async tx=>{
+          const ref=db.collection('productos').doc(f.productoId);
+          const d=(await tx.get(ref)).data()||{};
+          const st=Object.assign({}, d.stock||{});
+          const q=num(st.lc_caseta);
+          st[RECINTO_LC_BODEGA]=num(st[RECINTO_LC_BODEGA])+q;
+          st.lc_caseta=0;
+          tx.update(ref, {stock:st, casetaLC:false, updatedAt:Date.now()});
+          tx.set(db.collection('movimientos').doc(), {tipo:'migracion', motivo:'Caseta LC solo fertilizantes (v60)',
+            productoId:f.productoId, nombre:f.nombre, unidad:f.unidad, origen:'lc_caseta', destino:RECINTO_LC_BODEGA,
+            cantidad:q, fecha:todayIso, registradoPor:yo.uid, registradoPorNombre:yo.nombre, createdAt:Date.now()});
+          f.cantidad=q;
+        });
+      }else{
+        await db.collection('productos').doc(f.productoId).update({casetaLC:!!f.queda, updatedAt:Date.now()});
+      }
+      [planProds, productosCache].forEach(lista=>{
+        const x=lista.find(y=>y.id===f.productoId); if(!x) return;
+        x.casetaLC=!!f.queda;
+        if(pasa){ x.stock=x.stock||{}; x.stock[RECINTO_LC_BODEGA]=num(x.stock[RECINTO_LC_BODEGA])+f.cantidad; x.stock.lc_caseta=0; }
+      });
+      ok++;
+    }catch(e){ err++; console.warn(e); }
+  }
+  loading(false); closeModal(); renderPlanilla();
+  toast(err?`Listo ${ok}, ${err} con error: vuelve a intentar`:`✅ Caseta ordenada · ${mover.length} producto${mover.length===1?'':'s'} pasado${mover.length===1?'':'s'} a Bodega Principal`);
 }
 
 // ── Migración de las bodegas antiguas a recintos (una vez, gerencia) ──
@@ -10682,10 +10797,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v59';
+const MANUAL_VERSION='v60';
 const MANUAL_FECHA='2026-10-05';
 
 const MANUAL_CAMBIOS=[
+  {v:'v60', f:'05-10-2026', txt:'<b>Caseta de Riego de La Constancia:</b> ahora guarda solo los fertilizantes de fertirriego: nitratos de potasio (incluidos K acid y Prohidric), de calcio y de magnesio, sulfatos de magnesio y de potasio, cloruro de potasio, fosfatos mono amónico y mono potásico, Ultrasol multipropósito, Ultrasol Pro P, ácidos nítrico y fosfórico, y KSC rosado, amarillo y blanco. Todo lo demás pasa a <b>Bodega Principal</b>. En <b>vía riego</b> de La Constancia, esos productos salen de Bodega Principal (o de Bioestimulantes, si se elige). La Caseta ya no acepta compras ni despachos de otros productos. Gerencia traspasa el stock que quedó en la Caseta con <b>🔀 Ordenar Caseta LC</b> en Bodega.'},
   {v:'v59', f:'05-10-2026', ver:()=>isCampo(), txt:'<b>Contratistas.</b> Cada contratista aparece como un <b>subjefe más</b> (🧑‍🌾) en los predios donde trabaja, con sus propios trabajadores y ciclos. Los subjefes registran a su gente igual que siempre: labores, horas y mesas. Al elegir un trabajador de contratista aparece <b>Pago contratista</b>: se anotan las <b>cajas toro</b> y <b>cajas gamela</b> cosechadas en la jornada (van con la labor 48, Cosecha) y la app calcula lo que se le paga: <b>mesas × $ por mesa de cada labor + cajas × $ por caja</b>. Las tarifas las fija gerencia en <b>Config › Contratistas</b>, una lista por contratista. En Informes, la pestaña <b>🧑‍🌾 Contratistas</b> muestra el total a pagar por trabajador, y el costo de esas labores en los demás informes es lo pagado, no las horas.'},
   {v:'v58', f:'05-10-2026', ver:()=>isCampo(), txt:'<b>Registro diario:</b> nueva labor <b>94. Packing</b>, que se anota en <b>horas</b> (las mesas pueden ir en 0 sin que salga en Inconsistencias). En la lista de trabajadores aparece al final <b>🚜 Tractorista</b>, un puesto genérico sin nombre de persona, en todos los predios y para todos los subjefes. Sirve para anotar labores de tractor como <b>11</b> (pasado de encamador), <b>57</b> (chip de quillay) o <b>71</b> (guano). Queda a nombre del subjefe que lo registra; no se marca ausente ni vacaciones.'},
   {v:'v57', f:'01-10-2026', ver:()=>canBodega(), txt:'<b>Bodega:</b> una compra mal registrada (repetida, con otra cantidad o en otro recinto) se puede <b>anular</b> con <b>✖ Anular</b> en <b>📥 Ingresos y movimientos</b>. La anula quien tiene 🛒 (Luciano) o gerencia. Se resta del recinto lo que había sumado, la compra queda <b>tachada</b> con el motivo y quién la anuló, y deja de contar en la conciliación. Si la cantidad o el recinto estaban mal, se anula y se registra de nuevo. Además, el botón Registrar compra ya no registra dos veces con un doble toque, y avisa si ya hay una compra igual (mismo producto, recinto, fecha y cantidad).'},
@@ -10971,7 +11087,7 @@ const MANUAL_SECCIONES=[
     'Abajo, en <b>Conciliación</b>, compara lo que recibió cada recinto (compras, despachos confirmados y ajustes, menos las devoluciones al proveedor) con lo que se usó en aplicaciones. Ajusta el rango de fechas, porque la entrega y el uso no tienen por qué caer el mismo mes.'
   ],
   tips:[
-    '<b>De dónde sale cada aplicación:</b> las desinfecciones foliares de los tres campos salen de <b>Pesticidas</b>. Fertirriego, ácidos y vía riego salen de la <b>Caseta de Riego del campo</b>. En La Constancia la vía riego puede salir de la Caseta o de <b>Bioestimulantes</b>, y se elige por producto. De la <b>Bodega de Proveedores</b> no sale ninguna aplicación: primero hay que despachar el producto a un recinto del campo.',
+    '<b>De dónde sale cada aplicación:</b> las desinfecciones foliares de los tres campos salen de <b>Pesticidas</b>. Fertirriego, ácidos y vía riego salen de la <b>Caseta de Riego del campo</b>. En La Constancia la Caseta guarda <b>solo los fertilizantes de fertirriego</b> (nitratos, sulfatos, cloruro de potasio, fosfatos, Ultrasol multipropósito y Pro P, ácidos y KSC); en vía riego, todo lo demás sale de <b>Bodega Principal</b> o de <b>Bioestimulantes</b>, y se elige por producto. De la <b>Bodega de Proveedores</b> no sale ninguna aplicación: primero hay que despachar el producto a un recinto del campo.',
     'Por eso, para que no quede stock negativo en la Caseta, los fertilizantes tienen que <b>despacharse a la Caseta</b> antes de usarse.',
     'Una diferencia grande en conciliación casi siempre es una aplicación sin registrar, un despacho sin confirmar o una aplicación registrada en el predio equivocado.',
     'Mientras queden saldos en las <b>bodegas antiguas</b> (columnas en naranjo), gerencia ve el botón <b>🔀 Pasar a recintos</b>. Ahí revisa producto por producto a qué recinto pasa cada saldo y los traslada. Se hace una sola vez.',
