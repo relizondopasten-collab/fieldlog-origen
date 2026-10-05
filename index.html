@@ -1042,8 +1042,23 @@ const LABORES=[
   {id:90,d:"Instalación de cinta gareta por piso en pimentón"},
   {id:91,d:"Desinfección de plantas"},
   {id:92,d:"Sacar pétalos"},
-  {id:93,d:"Aseo de tejido muerto"}
+  {id:93,d:"Aseo de tejido muerto"},
+  {id:94,d:"Packing",sinMesas:true}   // v58 · se mide en horas, no en mesas
 ];
+
+// v58 · Personal genérico: un puesto, no una persona. Aparece en el registro
+// diario de todos los predios y bajo todos los subjefes, sin estar en
+// /workers. La entrada guarda workerNombre y workerSubjefe (el subjefe que
+// registra), así que Avance, Informes y el informe semanal lo ven igual que a
+// cualquier trabajador, separado por encargado.
+const PERSONAL_GENERICO=[
+  {id:'gen_tractorista', nombre:'Tractorista', ico:'🚜'}
+];
+const esGenerico = id => typeof id==='string' && id.indexOf('gen_')===0;
+const genericoDe = id => PERSONAL_GENERICO.find(g=>g.id===id) || null;
+// Clave de trabajador para agrupar en informes: el genérico se separa por
+// subjefe, porque el Tractorista de un encargado no es el mismo de otro.
+const wKeyReg = r => r.workerId + (esGenerico(r.workerId) ? '@'+(r.workerSubjefe||'') : '');
 
 // Umbrales de validación para detectar errores de tipeo
 const LIMITES={
@@ -1159,6 +1174,8 @@ const pWs  = ()=>wMap[activePred]||[];
 // maestro (dato vivo) y cae al nombre congelado en la entrada.
 // El flag _histor marca que el trabajador ya no está en el maestro.
 function wDe(e, pred){
+  const g = genericoDe(e.workerId);
+  if(g) return {id:g.id, nombre:g.nombre, subjefe:e.workerSubjefe||'', generico:true};
   const lista = (pred && pred!==activePred) ? (wMap[pred]||[]) : pWs();
   const w = lista.find(x=>x.id===e.workerId);
   if(w) return w;
@@ -6192,7 +6209,9 @@ function filtW(){
   // Ordenar alfabéticamente por nombre
   let list=sub?pWs().filter(w=>w.subjefe===sub):pWs();
   list=list.slice().sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||'','es',{sensitivity:'base'}));
-  sel.innerHTML=`<option value="">— Seleccionar —</option>`+list.map(w=>`<option value="${w.id}">${w.nombre}</option>`).join('');
+  sel.innerHTML=`<option value="">— Seleccionar —</option>`+list.map(w=>`<option value="${w.id}">${w.nombre}</option>`).join('')+
+    // v58 · Personal genérico (sin nombre de persona), al final de la lista
+    `<optgroup label="Genérico (sin nombre)">`+PERSONAL_GENERICO.map(g=>`<option value="${g.id}">${g.ico} ${g.nombre}</option>`).join('')+`</optgroup>`;
   sel.value=cur;
   // populate reemplazo with ALL workers from ALL predios + Otro
   const selR=document.getElementById('selReemplazo');
@@ -6209,8 +6228,9 @@ function filtW(){
 
 function checkAusente(){
   const wId=document.getElementById('selW').value;
-  document.getElementById('ausenteSection').style.display=wId?'block':'none';
-  if(!wId){document.getElementById('chkAusente').checked=false;document.getElementById('chkLicencia').checked=false;document.getElementById('chkVacaciones').checked=false;document.getElementById('reemplazoDiv').style.display='none';}
+  // v58 · Un puesto genérico no falta ni toma vacaciones
+  document.getElementById('ausenteSection').style.display=(wId&&!esGenerico(wId))?'block':'none';
+  if(!wId||esGenerico(wId)){document.getElementById('chkAusente').checked=false;document.getElementById('chkLicencia').checked=false;document.getElementById('chkVacaciones').checked=false;document.getElementById('reemplazoDiv').style.display='none';}
   filtW();
 }
 
@@ -6562,9 +6582,13 @@ async function verFotos(pred, entryId){
 async function guardar(){
   const wId=document.getElementById('selW').value;
   const obs=document.getElementById('iO').value.trim();
-  const ausente=document.getElementById('chkAusente').checked;
+  let ausente=document.getElementById('chkAusente').checked;
   const reemplazoVal=document.getElementById('selReemplazo').value;
   if(!wId){toast('⚠️ Selecciona un trabajador');return}
+  const gen=genericoDe(wId);   // v58 · Tractorista u otro puesto genérico
+  const subReg=document.getElementById('selSub').value||(verTodosSubjefes()?'':userSubjefe());
+  if(gen && !subReg){toast('⚠️ Elige el subjefe que registra al '+gen.nombre);return}
+  if(gen){ ['chkAusente','chkLicencia','chkVacaciones'].forEach(k=>document.getElementById(k).checked=false); ausente=false; }
   const licencia=document.getElementById('chkLicencia').checked;
   const vacaciones=document.getElementById('chkVacaciones').checked;
   if(ausente&&!reemplazoVal&&!licencia&&!vacaciones){toast('⚠️ Selecciona un reemplazante, licencia médica o vacaciones');return}
@@ -6597,7 +6621,10 @@ async function guardar(){
 
     // También revisar si ya hay otros registros hoy del mismo trabajador que sumen mucho
     const fechaChk = regEdit ? regEdit.data.fecha : selDate;
-    const previosHoy=rCache.filter(r=>r.fecha===fechaChk&&r.workerId===wId&&!(regEdit&&r.id===regEdit.id));
+    // v58 · El genérico se acumula solo dentro del mismo subjefe (puede haber
+    // más de un tractorista en el predio el mismo día).
+    const previosHoy=rCache.filter(r=>r.fecha===fechaChk&&r.workerId===wId&&!(regEdit&&r.id===regEdit.id)
+      &&(!gen||(r.workerSubjefe||'')===subReg));
     const mesasPrevias=previosHoy.reduce((s,e)=>s+((e.labores||[{mesas:e.mesas||0}]).reduce((ss,l)=>ss+(l.mesas||0),0)),0);
     const horasPrevias=previosHoy.reduce((s,e)=>s+((e.labores||[{horas:e.horas||0}]).reduce((ss,l)=>ss+(l.horas||0),0)),0);
     if(mesasPrevias+totalM>LIMITES.mesasTotalDia&&previosHoy.length)avisos.push(`Acumulado del día (con registros previos): ${mesasPrevias+totalM} mesas`);
@@ -6627,7 +6654,8 @@ async function guardar(){
     // v35 · Congelar el nombre del trabajador dentro de la entrada.
     // El maestro /workers cambia (se renombra o se borra gente entre temporadas);
     // el registro histórico no debe depender de él.
-    const wSel = pWs().find(x=>x.id===wId) || {};
+    const wSel = gen ? {id:gen.id, nombre:gen.nombre, subjefe:subReg}
+                     : (pWs().find(x=>x.id===wId) || {});
     let reemplazoNombre = null;
     if(reemplazoWorkerId && reemplazoWorkerId!=='reemplazo' && reemplazoWorkerId!=='otro'){
       const rwSel = (wMap[reemplazoPredioId]||[]).find(x=>x.id===reemplazoWorkerId);
@@ -6807,8 +6835,15 @@ function renderAvance(){
     <div class="sbox"><div class="sval">${tM}</div><div class="slbl">Mesas hoy</div></div>`;
   const wd=weekDates();
   let wRegs=rCache.filter(r=>wd.includes(r.fecha));
+  // v58 · El Tractorista de otro subjefe no se suma a mis barras
+  if(!verTodosSubjefes()) wRegs=wRegs.filter(r=>!esGenerico(r.workerId)||(r.workerSubjefe||'')===userSubjefe());
   const wMesas=e=>(e.labores||[{mesas:e.mesas||0}]).reduce((s,l)=>s+(l.mesas||0),0);
-  const visWs=verTodosSubjefes()?pWs():pWs().filter(w=>w.subjefe===userSubjefe());
+  const visWs=(verTodosSubjefes()?pWs():pWs().filter(w=>w.subjefe===userSubjefe())).slice();
+  // v58 · Genéricos (Tractorista) solo si tienen registros esta semana en lo visible
+  PERSONAL_GENERICO.forEach(g=>{
+    const tiene=wRegs.some(r=>r.workerId===g.id&&(verTodosSubjefes()||(r.workerSubjefe||'')===userSubjefe()));
+    if(tiene) visWs.push({id:g.id, nombre:g.ico+' '+g.nombre});
+  });
   const maxM=Math.max(1,...visWs.map(w=>wd.reduce((s,fd)=>s+wRegs.filter(r=>r.workerId===w.id&&r.fecha===fd).reduce((ss,e)=>ss+wMesas(e),0),0)));
   document.getElementById('avW').innerHTML=visWs.length?visWs.map(w=>{
     const tot=wd.reduce((s,fd)=>s+wRegs.filter(r=>r.workerId===w.id&&r.fecha===fd).reduce((ss,e)=>ss+wMesas(e),0),0);
@@ -7517,6 +7552,11 @@ async function renderConfig(){
         ${canManageWorkers()?`<button class="btn btn-danger btn-sm" onclick="delW('${w.id}')">✕</button>`:''}
       </div>`).join('')
     :`<div class="empty"><div style="padding:8px 0;font-size:12px">Sin trabajadores</div></div>`;
+  // v58 · Personal genérico: fijo, en todos los predios y subjefes, no se borra
+  document.getElementById('wList').insertAdjacentHTML('beforeend', PERSONAL_GENERICO.map(g=>`<div class="wrow">
+        <div><div class="wn">${g.ico} ${g.nombre}</div><div class="wm">Genérico, sin nombre de persona · todos los subjefes</div></div>
+        <span style="font-size:10px;color:var(--muted)">fijo</span>
+      </div>`).join(''));
   // users (solo superadmin)
   if(canManageUsers()){
     loadUsers();
@@ -8030,7 +8070,7 @@ function calcTrabajadores(){
   registros.forEach(r=>{
     if(r.ausente || r.licencia || r.vacaciones) return;
     const w = r._worker || {};
-    const key = r._predio + '|' + r.workerId;
+    const key = r._predio + '|' + wKeyReg(r);
     if(!map[key]) map[key] = {
       nombre: w.nombre || r.workerId,
       subjefe: w.subjefe || '—',
@@ -8067,7 +8107,7 @@ function calcLabores(){
       if(!map[l.laborId]) map[l.laborId] = { mesas:0, horas:0, trabajadores: new Set(), registros: 0 };
       map[l.laborId].mesas += (l.mesas || 0);
       map[l.laborId].horas += (l.horas || 0);
-      map[l.laborId].trabajadores.add(r._predio + '|' + r.workerId);
+      map[l.laborId].trabajadores.add(r._predio + '|' + wKeyReg(r));
       map[l.laborId].registros += 1;
     });
   });
@@ -8120,7 +8160,7 @@ function calcEficiencia(){
       if(!map[k]) map[k] = { predioId:r._predio, subjefe:sub, laborId:l.laborId,
         mesas:0, horas:0, fechas:new Set(), diasPersona:new Set(), porTrab:{} };
       const b = map[k];
-      const wk = r._predio + '|' + r.workerId;
+      const wk = r._predio + '|' + wKeyReg(r);
       b.mesas += m; b.horas += h;
       b.fechas.add(r.fecha);
       b.diasPersona.add(wk + '|' + r.fecha);
@@ -8241,7 +8281,7 @@ function dashHechos(){
       const m = Number(l.mesas)||0, h = Number(l.horas)||0;
       if(m<=0 && h<=0) return;
       reales.push({ fecha:r.fecha, predio:r._predio, sub, laborId:l.laborId, mesas:m, horas:h,
-        wk: r._predio+'|'+r.workerId, wNombre: w.nombre || r.workerNombre || r.workerId,
+        wk: r._predio+'|'+wKeyReg(r), wNombre: w.nombre || r.workerNombre || r.workerId,
         ciclo: c ? cicloLabel(c) : 'Sin ciclo', ef: m>0 && h>0 });
       const k = r.fecha+'|'+r._predio+'|'+sub+'|'+l.laborId;
       realPorClave[k] = (realPorClave[k]||0) + m;
@@ -8341,7 +8381,7 @@ function calcInconsistencias(){
   const porDiaTrab = {};
   registros.forEach(r=>{
     const w = r._worker || {};
-    const key = r.fecha + '|' + r._predio + '|' + r.workerId;
+    const key = r.fecha + '|' + r._predio + '|' + wKeyReg(r);
     if(!porDiaTrab[key]) porDiaTrab[key] = { items: [], w, fecha: r.fecha, predio: r._predio };
     porDiaTrab[key].items.push(r);
   });
@@ -8366,7 +8406,7 @@ function calcInconsistencias(){
     labs.forEach(l=>{
       const lab = LABORES.find(x=>x.id===l.laborId);
       const labNombre = lab ? `${l.laborId}. ${lab.d}` : `Labor ${l.laborId||'?'}`;
-      if((l.horas||0) > 0 && (l.mesas||0) === 0){
+      if((l.horas||0) > 0 && (l.mesas||0) === 0 && !(lab && lab.sinMesas)){
         issues.push({ ...ctx, tipo:'Horas sin mesas', detalle:`${labNombre}: ${l.horas}h pero 0 mesas` });
       }
       if((l.mesas||0) > 0 && (l.horas||0) === 0){
@@ -8464,7 +8504,7 @@ function calcCiclos(){
       b.mesas += (l.mesas || 0);
       b.horas += (l.horas || 0);
     });
-    b.trabajadores.add(r._predio + '|' + r.workerId);
+    b.trabajadores.add(r._predio + '|' + wKeyReg(r));
   });
 
   const rows = Object.values(map).map(v=>({
@@ -10313,10 +10353,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v57';
-const MANUAL_FECHA='2026-10-01';
+const MANUAL_VERSION='v58';
+const MANUAL_FECHA='2026-10-05';
 
 const MANUAL_CAMBIOS=[
+  {v:'v58', f:'05-10-2026', ver:()=>isCampo(), txt:'<b>Registro diario:</b> nueva labor <b>94. Packing</b>, que se anota en <b>horas</b> (las mesas pueden ir en 0 sin que salga en Inconsistencias). En la lista de trabajadores aparece al final <b>🚜 Tractorista</b>, un puesto genérico sin nombre de persona, en todos los predios y para todos los subjefes. Sirve para anotar labores de tractor como <b>11</b> (pasado de encamador), <b>57</b> (chip de quillay) o <b>71</b> (guano). Queda a nombre del subjefe que lo registra; no se marca ausente ni vacaciones.'},
   {v:'v57', f:'01-10-2026', ver:()=>canBodega(), txt:'<b>Bodega:</b> una compra mal registrada (repetida, con otra cantidad o en otro recinto) se puede <b>anular</b> con <b>✖ Anular</b> en <b>📥 Ingresos y movimientos</b>. La anula quien tiene 🛒 (Luciano) o gerencia. Se resta del recinto lo que había sumado, la compra queda <b>tachada</b> con el motivo y quién la anuló, y deja de contar en la conciliación. Si la cantidad o el recinto estaban mal, se anula y se registra de nuevo. Además, el botón Registrar compra ya no registra dos veces con un doble toque, y avisa si ya hay una compra igual (mismo producto, recinto, fecha y cantidad).'},
   {v:'v55', f:'30-09-2026', ver:()=>puedeVerExperiencia(), txt:'Nuevo botón <b>Experiencia previa</b> (solo Rafael y gerencia): el análisis de la temporada de tomate verano 25/26 de Paradero 12 hecha con la contratista Alicia. Muestra costo, días-persona, pago por día, <b>mesas por jornada</b> y <b>costo por mesa</b> de cada labor, con filtros por familia, labor y trabajador, gráficos por semana o mes, y descarga a Excel. Se pueden cargar más proyectos con el mismo formato de Excel.'},
   {v:'v54', f:'30-09-2026', txt:'<b>Informes:</b> nueva pestaña <b>🧭 Dashboard</b>, que queda como la primera. Un solo tablero con selectores de <b>encargado</b>, <b>labor</b>, <b>métrica</b> (mesas, horas, costo, $/mesa, mesas/día persona, cumplimiento de lo programado) y <b>agrupación por día, semana o mes</b>. Muestra las tarjetas de resumen, la evolución en el tiempo, la comparación entre encargados, el resumen por ciclo y la lista de trabajadores. También se baja a Excel y PDF, y entra en el Excel completo (ahora 7 hojas).'},
@@ -10373,7 +10414,7 @@ const MANUAL_SECCIONES=[
     'Elige arriba el <b>predio</b> y, en la tira de días, la <b>fecha</b> que estás registrando (por defecto es hoy).',
     'Elige el <b>Subjefe / Encargado</b>. Si eres subjefe, ya viene fijo con tus trabajadores.',
     'Elige el <b>Cultivo</b> y, cuando corresponda, el <b>Ciclo</b>. Si el ciclo no aparece en la lista, es porque no está abierto: ábrelo primero en la pantalla <b>Ciclos</b>.',
-    'Elige el <b>Trabajador</b>.',
+    'Elige el <b>Trabajador</b>. Para el trabajo con tractor (labores 11, 57, 71 u otras) elige <b>🚜 Tractorista</b>, al final de la lista: es un puesto, no una persona, y queda a nombre del subjefe elegido.',
     'Si el trabajador <b>no vino</b>, marca Trabajador ausente, Licencia médica o Vacaciones. Si hubo alguien que lo reemplazó, elígelo en Reemplazante. Con ausencia, licencia o vacaciones no hace falta cargar labores.',
     'En <b>Labores del día</b>, elige la labor y anota las <b>horas</b> y las <b>mesas</b>. Con "＋ Agregar labor" puedes cargar hasta 6 labores en una misma entrada.',
     'Escribe una <b>Observación</b> si hay algo que explicar (una lluvia, una falla, un cambio de sector, una labor mal hecha).',
@@ -10383,7 +10424,7 @@ const MANUAL_SECCIONES=[
   ],
   tips:[
     'Si un valor se ve raro (más de 10 horas o más de 70 mesas en el día, sumando lo ya registrado), la app pregunta antes de guardar. No es un bloqueo: si el dato es correcto, acepta.',
-    'Se puede hacer más de una entrada por trabajador en el mismo día; se suman.',
+    'Se puede hacer más de una entrada por trabajador en el mismo día; se suman. Con el <b>Tractorista</b> la suma es por subjefe: el de un encargado no se mezcla con el de otro.',
     'Para corregir usa el ✏️. Borrar (✕) queda para una entrada que sobra: al borrarla se borran también sus fotos.',
     'Las fotos se achican solas en el teléfono antes de guardarse, así que no llenan la memoria ni gastan datos de más. Toma la foto de cerca y con luz: una foto general de todo el módulo no sirve de respaldo.',
     'Si estás sin señal, la foto se guarda igual y se envía sola al volver la conexión, junto con el registro.',
@@ -10611,7 +10652,7 @@ const MANUAL_SECCIONES=[
   id:'config', ico:'⚙️', tit:'Config — trabajadores, costos y usuarios', ver:()=>true,
   intro:'Los datos base del sistema. Cada uno ve solo las tarjetas que le corresponden.',
   pasos:[
-    '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes.',
+    '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes. Al final aparece <b>🚜 Tractorista</b> marcado como <i>fijo</i>: es genérico, está en todos los predios y subjefes, y no se borra.',
     '<b>🗺️ Sectores de riego</b> (gerencia con todos los predios): elige el predio y corrige cada sector con su nombre, metros lineales y hectáreas. Los sectores que se riegan juntos van como uno solo (ej. <i>1A-3</i>). Lo ya registrado no cambia, porque cada aplicación guardó la superficie de ese día.',
     '<b>Costos del personal</b> (gerencia con todos los predios): sueldo mínimo mensual, bono o extra fijo y jornada semanal. De ahí sale el costo por hora de los informes; actualízalo cuando cambie el sueldo mínimo legal.',
     '<b>Usuarios del sistema</b> (gerencia con todos los predios): se crea un acceso por persona, con su correo, una contraseña inicial que tú le entregas, el rol y los predios. Al elegir el rol, la app explica en una línea qué podrá hacer esa persona.',
