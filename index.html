@@ -2640,11 +2640,13 @@ function renderViaRiegoForm(){
 // v44 · Recintos desde los que puede salir la vía riego del predio. En La
 // Constancia los bioestimulantes pueden estar en la Caseta o en su bodega.
 // v60 · En La Constancia depende del producto: los fertilizantes de la lista
-// salen de la Caseta; el resto, de Bodega Principal o Bioestimulantes.
+// salen de la Caseta.
+// v61 · El resto sale SOLO de Bodega Pesticidas y Bioestimulantes: un producto
+// que se aplica (foliar o vía riego) vive en una sola bodega del campo.
 function viaRecintosPosibles(pid, productoId){
   if(pid==='constancia'){
     const p=productoId ? productosCache.find(x=>x.id===productoId) : null;
-    return vaEnCasetaLC(p) ? ['lc_caseta'] : [RECINTO_LC_BODEGA,'lc_bioest'];
+    return vaEnCasetaLC(p) ? ['lc_caseta'] : [RECINTO_LC_APLICA];
   }
   return recintoCaseta(pid) ? [recintoCaseta(pid)] : [];
 }
@@ -3365,15 +3367,18 @@ const BODEGA_NOMBRES = {constancia:'Bodega La Constancia', transito:'Bodega El T
 //   fertirriego y ácidos     → Caseta de Riego del campo
 //   vía riego                → Caseta de Riego del campo; en La Constancia,
 //                              Caseta solo para los fertilizantes de la lista
-//                              (v60); el resto, Bodega Principal o Bioestimulantes
+//                              (v60); el resto, Pesticidas y Bioestimulantes (v61)
+// v61 · En La Constancia, Pesticidas y Bioestimulantes se fusionan en un solo
+// recinto, que conserva la ID 'lc_pesticidas'. 'lc_bioest' queda retirado
+// (fusionadoEn) solo para leer el histórico y traspasar lo que le quede.
 //   Bodega de Proveedores    → nunca: el producto se despacha antes a un recinto
 // Las IDs no se cambian nunca: están guardadas en stock, movimientos y
 // aplicaciones. El nombre y los responsables sí se pueden corregir acá.
 // ══════════════════════════════════════════════
 const RECINTOS={
   lc_principal:  {predio:'constancia', nombre:'Bodega Principal',       resp:['Nicolás Flores']},
-  lc_pesticidas: {predio:'constancia', nombre:'Bodega Pesticidas',      resp:['Víctor González']},
-  lc_bioest:     {predio:'constancia', nombre:'Bodega Bioestimulantes', resp:['Nicolás Flores']},
+  lc_pesticidas: {predio:'constancia', nombre:'Bodega Pesticidas y Bioestimulantes', resp:['Víctor González','Nicolás Flores']},   // v61
+  lc_bioest:     {predio:'constancia', nombre:'Bodega Bioestimulantes (fusionada)', resp:['Nicolás Flores'], retirado:true, fusionadoEn:'lc_pesticidas'},   // v61
   lc_caseta:     {predio:'constancia', nombre:'Caseta de Riego',        resp:['Gabriel Contreras','José Cordero','Carlos Vergara']},
   lc_proveedores:{predio:'constancia', nombre:'Bodega de Proveedores',  resp:['Luciano Pinto'], sinAplicar:true},
   et_packing:    {predio:'transito',   nombre:'Bodega Packing',         resp:['Claudio Flores','Gabriela Escobar']},
@@ -3381,7 +3386,11 @@ const RECINTOS={
   p12_caseta:    {predio:'paradero',   nombre:'Caseta de Riego',        resp:['Paulo Gallarce']},
   p12_bodega:    {predio:'paradero',   nombre:'Bodega Paradero 12',     resp:['Gabriela Escobar']}
 };
-const RECINTO_ORDER=Object.keys(RECINTOS);
+// v61 · Los recintos retirados no se ofrecen para comprar, despachar ni
+// aplicar; siguen en RECINTO_TODOS para el histórico y la conciliación.
+const RECINTO_TODOS=Object.keys(RECINTOS);
+const RECINTO_ORDER=RECINTO_TODOS.filter(k=>!RECINTOS[k].retirado);
+function recintoVigente(k){ return (RECINTOS[k]&&RECINTOS[k].fusionadoEn) || k; }
 const RECINTO_FOLIAR='lc_pesticidas';
 const BODEGAS_LEGADO=['constancia','transito','paradero'];
 const CORTO_PREDIO={constancia:'LC', transito:'ET', paradero:'P12'};
@@ -3397,13 +3406,14 @@ function nombreBodega(k, corto){
 // Documentos anteriores a la v44 guardan el PREDIO como bodega. Para devolver o
 // descontar hoy, se traduce al recinto de donde saldría ahora ese consumo.
 function resolverRecinto(bod, tipo, predioId){
-  if(esRecinto(bod)) return bod;
+  if(esRecinto(bod)) return recintoVigente(bod);   // v61 · lo de Bioestimulantes vuelve a la bodega fusionada
   if(tipo==='foliar') return RECINTO_FOLIAR;
   return recintoCaseta(predioId || bod) || recintoCaseta(bod) || bod;
 }
 function userRecintos(){
   const r=(currentProfile&&Array.isArray(currentProfile.recintos))?currentProfile.recintos:[];
-  return r.filter(esRecinto);
+  // v61 · Quien tenía un recinto fusionado opera el recinto que lo absorbió.
+  return [...new Set(r.filter(esRecinto).map(recintoVigente))];
 }
 function esResponsableRecinto(k){ return isAdmin() || userRecintos().includes(k); }
 // Recintos desde los que el usuario puede despachar o ajustar: los suyos; los
@@ -3443,7 +3453,7 @@ async function ajustarStockBodega(descuentos, bodega, signo, sinAnotar){
   const tareas=[], fallidos=[];
   for(const d of descuentos){
     if(!d.productoId || !d.cantidad) continue;
-    const k = d.recinto || bod;   // v44 · un producto puede salir de otro recinto (vía riego en La Constancia)
+    const k = recintoVigente(d.recinto || bod);   // v44 · un producto puede salir de otro recinto · v61 lo de un recinto fusionado va al que lo absorbió
     const p=productosCache.find(x=>x.id===d.productoId);
     tareas.push(
       db.collection('productos').doc(d.productoId).update({
@@ -3623,7 +3633,7 @@ function renderMovimientos(){
   const box=document.getElementById('movBody'); if(!box) return;
   const recOpts=`<option value="">Todos los recintos</option>`+
     PRED_ORDER.map(pid=>`<option value="campo:${pid}"${movState.recinto==='campo:'+pid?' selected':''}>${escH(PREDIOS[pid].nombre)} (todo el campo)</option>`).join('')+
-    recintoOptsHTML(RECINTO_ORDER, movState.recinto);
+    recintoOptsHTML(RECINTO_TODOS, movState.recinto);
   const tipos=[['ingresos','📥 Ingresos (compras y despachos)'],['todos','Todos los movimientos'],['compra','Solo compras'],['despacho','Solo despachos'],['devolucion','Solo devoluciones'],['ajuste','Solo ajustes']];
   const filtros=`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
     <div class="form-row" style="flex:1;min-width:120px;margin:0"><label>Desde</label><input type="date" value="${movState.desde}" onchange="movSet('desde',this.value)"></div>
@@ -3983,16 +3993,20 @@ function aplHistPintar(){
         // v43 · Estanque de ácido
         etiqueta='⚗️';
         // v48 · directo del bidón, mezcla nítrico + fosfórico o (v43) diluido en agua
-        if(a.modo==='mezcla') receta='Mezcla '+(a.acidos||[]).map(x=>`${escH((ACIDOS[x.acido]||{}).corto||x.nombre||x.acido)} ${fmtNum(x.kg)} kg (${fmtNum(x.litros,1)} L)`).join(' + ')+` = ${fmtNum(a.capacidad,1)} L`;
+        if(a.modo==='superficie') receta='Estanque '+(a.acidos||[]).map(x=>`${escH((ACIDOS[x.acido]||{}).corto||x.nombre||x.acido)} ${fmtNum(x.kg)} kg (${fmtNum(x.litros,1)} L)`).join(' + ')+` · repartido por superficie en ${fmtNum(a.haTotal,2)} ha${diasAcido(a.dias)>1?` · ${diasAcido(a.dias)} días`:''}`;   // v61
+        else if(a.modo==='mezcla') receta='Mezcla '+(a.acidos||[]).map(x=>`${escH((ACIDOS[x.acido]||{}).corto||x.nombre||x.acido)} ${fmtNum(x.kg)} kg (${fmtNum(x.litros,1)} L)`).join(' + ')+` = ${fmtNum(a.capacidad,1)} L`;
         else if(a.modo==='directo') receta=`${escH(nombreAcido(a.acido))} directo del bidón · ${fmtNum(a.litrosAcido,2)} L (${fmtNum(a.kgAcido,1)} kg)`;
         else receta=`${escH(nombreAcido(a.acido))} ${fmtNum(a.kgAcido)} kg (${fmtNum(a.litrosAcido,1)} L) en ${fmtNum(a.capacidad,0)} L`;
         const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
         sub=usosDe(a).map(u=>`${escH(fD(u.fecha))}: `+((u.acidoSectores&&u.acidoSectores.length)
-            ? u.acidoSectores.map(x=>`${escH(x.sector)} ${fmtNum(x.lAcido,1)} L${x.lHa!=null?` (<span style="${x.lHa>ACIDO_MAX_LHA_DIA?'color:var(--red);font-weight:700':''}">${fmtNum(x.lHa,2)} L/ha</span>)`:''}`).join(', ')
+            ? a.modo==='superficie'   // v61 · L de cada ácido por sector
+              ? '<br>'+u.acidoSectores.map(x=>`${escH(x.sector)}: `+ACIDOS_ORDEN.filter(k=>(x.porAcido||{})[k]>0).map(k=>`${escH(ACIDOS[k].corto)} ${fmtNum(x.porAcido[k],2)} L`).join(' + ')
+                  +(Object.values(x.costoPorAcido||{}).some(v=>v!=null)?` · $${fmtNum(Object.values(x.costoPorAcido).reduce((t,v)=>t+(v||0),0),0)}`:'')).join('<br>')
+              : u.acidoSectores.map(x=>`${escH(x.sector)} ${fmtNum(x.lAcido,1)} L${x.lHa!=null?` (<span style="${x.lHa>ACIDO_MAX_LHA_DIA?'color:var(--red);font-weight:700':''}">${fmtNum(x.lHa,2)} L/ha</span>)`:''}`).join(', ')
             : (u.sectores||[]).map(x=>escH(x.sector)).join(', '))).join(' · ');
         const disp=litrosDisponibles(a);
         const dispTxt = estanqueAbierto(a) ? ` · <b style="color:#2E7D32">quedan ${fmtNum(disp,0)}L</b>` : (a.cerrado?' · cerrado':'');
-        const queL = a.modo==='directo' ? 'de ácido' : a.modo==='mezcla' ? 'de mezcla' : 'de solución';
+        const queL = (a.modo==='directo'||a.modo==='superficie') ? 'de ácido' : a.modo==='mezcla' ? 'de mezcla' : 'de solución';
         totalTxt=`${escH(pred)}${a.cultivo?' · '+escH(a.cultivo):''}${a.epoca?' · '+(TNAMES[a.epoca]||a.epoca):''} · ${fmtNum(a.totalLitros,a.modo?1:0)}L ${queL} aplicados${dispTxt}`;
         if(usosDe(a).some(u=>u.alarmaAcido)) sub+=`<div style="background:#FEE2E2;color:var(--red);border-radius:6px;padding:3px 8px;margin-top:4px;font-size:10.5px;font-weight:600">⚠️ Sobre ${ACIDO_MAX_LHA_DIA} L/ha en un día</div>`;
       }else if(a.tipo==='fertirriego'){
@@ -4125,9 +4139,14 @@ async function aplEditar(id){
       // con los litros de ácido puro que llegaron a cada sector.
       aplAci=nuevoAcidoForm(a.predioId||'');
       Object.assign(aplAci, {fecha:a.fecha||todayIso, cultivo:a.cultivo||'', epoca:a.epoca||''});
-      aplAci.modo = a.modo==='mezcla' ? 'mezcla' : 'directo';
+      aplAci.modo = a.modo==='superficie' ? 'superficie' : a.modo==='mezcla' ? 'mezcla' : 'directo';
       (a.sales||[]).forEach(sl=>{ const k=ACIDOS_ORDEN.find(z=>ACIDOS[z].nombre===sl.nombre); if(k && sl.productoId) aplAci.prodSel[k]=sl.productoId; });
-      if(aplAci.modo==='mezcla'){
+      if(aplAci.modo==='superficie'){   // v61
+        (a.acidos||[]).forEach(x=>{ if(ACIDOS[x.acido]) aplAci.kg[x.acido]=String(x.kg!=null?x.kg:''); });
+        const dentro=new Set((a.sectores||[]).map(x=>String(x.sector)));
+        aplAci.fuera={}; sectoresDePredio(a.predioId).forEach(sx=>{ if(!dentro.has(String(sx))) aplAci.fuera[sx]=true; });
+        aplAci.dias=String(diasAcido(a.dias));
+      }else if(aplAci.modo==='mezcla'){
         (a.acidos||[]).forEach(x=>{ if(ACIDOS[x.acido]) aplAci.kg[x.acido]=String(x.kg!=null?x.kg:''); });
         (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) aplAci.litros[String(x.sector)]=String(x.litros!=null?x.litros:''); });
       }else{
@@ -4845,6 +4864,7 @@ const CASETA_LC_EXTRA=[
   {nombre:'KSC blanco',   alias:['KSC BLANCO','KSC-BLANCO'], sinAprox:true}
 ];
 const RECINTO_LC_BODEGA='lc_principal';
+const RECINTO_LC_APLICA='lc_pesticidas';   // v61 · Pesticidas y Bioestimulantes
 let _clavesCasetaLC=null;
 function clavesCasetaLC(){
   if(_clavesCasetaLC) return _clavesCasetaLC;
@@ -4860,14 +4880,42 @@ function vaEnCasetaLC(p){
   return clavesProd(p).some(k=>cl.has(k));
 }
 // ¿Puede este producto entrar a este recinto? Solo restringe la Caseta LC.
-function recintoAdmite(p, k){ return k!=='lc_caseta' || vaEnCasetaLC(p); }
+// v61 · Los recintos retirados no reciben nada. Bodega Principal no recibe
+// fitosanitarios, desinfectantes ni bioestimulantes: esos se aplican y van a
+// Pesticidas y Bioestimulantes.
+function esProdAplicableLC(p){
+  const cat=normNombre((p&&p.categoria)||'');
+  return cat.includes('fitosanit') || cat.includes('desinfect') || cat.includes('bioestim');
+}
+function recintoAdmite(p, k){
+  if(RECINTOS[k] && RECINTOS[k].retirado) return false;
+  if(k==='lc_caseta') return vaEnCasetaLC(p);
+  if(k===RECINTO_LC_BODEGA) return !esProdAplicableLC(p);
+  return true;
+}
+function motivoNoAdmite(p, k){
+  if(RECINTOS[k] && RECINTOS[k].retirado) return `⚠️ ${RECINTOS[k].nombre} ya no recibe productos: usa ${nombreBodega(RECINTOS[k].fusionadoEn)}.`;
+  if(k==='lc_caseta') return '⚠️ La Caseta de Riego de La Constancia recibe solo los fertilizantes de fertirriego. Este producto va a Bodega Pesticidas y Bioestimulantes.';
+  if(k===RECINTO_LC_BODEGA) return '⚠️ Fitosanitarios, desinfectantes y bioestimulantes van a Bodega Pesticidas y Bioestimulantes, no a Bodega Principal.';
+  return '⚠️ Este recinto no recibe este producto.';
+}
 const ACIDO_MAX_LHA_DIA=4;
 let aplAci=null;
 let aplDocsCache=[];
 
+// v61 · Modo por defecto 'superficie': se anotan los kg de cada ácido que se
+// echan al estanque y el total se reparte entre los sectores por su superficie.
+// 'directo' y 'mezcla' (v48) quedan solo para corregir registros antiguos.
 function nuevoAcidoForm(pid){
-  return {fecha:todayIso, predioId:pid||'', cultivo:'', epoca:'', modo:'directo', acido:'nitrico',
-          kg:{nitrico:'', fosforico:''}, prodSel:{nitrico:'', fosforico:''}, litros:{}};
+  return {fecha:todayIso, predioId:pid||'', cultivo:'', epoca:'', modo:'superficie', acido:'nitrico',
+          kg:{nitrico:'', fosforico:''}, prodSel:{nitrico:'', fosforico:''}, litros:{},
+          fuera:{}, dias:'1'};
+}
+function diasAcido(v){ const d=Math.round(num(v)); return d>=1 ? d : 1; }
+function sumarDiasIso(iso, n){
+  const [y,m,d]=String(iso).split('-').map(Number); if(!y) return iso;
+  const dt=new Date(y, m-1, d+n);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
 }
 function acidoLporLsol(kg, vol, dens){ return (kg>0 && vol>0 && dens>0) ? (kg/dens)/vol : 0; }
 function nombreAcido(k){ return (ACIDOS[k]&&ACIDOS[k].nombre) || (k==='mezcla'?'Mezcla de ácidos':(k||'Ácido')); }
@@ -4900,9 +4948,12 @@ function acidoPrevioDia(predioId, fecha, sector, excluirDocId, excluirUsoIdx){
   (aplDocsCache||[]).forEach(d=>{
     if(d.subtipo!=='acido' || d.predioId!==predioId) return;
     usosDe(d).forEach((u,i)=>{
-      if(u.fecha!==fecha) return;
+      // v61 · Un estanque prorrateado que dura varios días pesa lo mismo cada día.
+      const dias = d.modo==='superficie' ? diasAcido(d.dias) : 1;
+      const ini=u.fecha||'', fin = dias>1 ? sumarDiasIso(ini, dias-1) : ini;
+      if(!(fecha>=ini && fecha<=fin)) return;
       if(d.id===excluirDocId && (excluirUsoIdx==null || excluirUsoIdx===i)) return;
-      (u.acidoSectores||[]).forEach(x=>{ if(String(x.sector)===String(sector)) tot+=Number(x.lAcido)||0; });
+      (u.acidoSectores||[]).forEach(x=>{ if(String(x.sector)===String(sector)) tot+=(Number(x.lAcido)||0)/dias; });
     });
   });
   return tot;
@@ -4966,6 +5017,7 @@ function renderAcidoForm(){
       ${prod?'':`<div style="font-size:10.5px;color:var(--red);font-weight:700">No se encontró el ${escH(ACIDOS[k].corto)} en bodega: elige el producto o no se descontará stock.</div>`}`;
   };
   const secs=A.predioId?sectoresDePredio(A.predioId):[];
+  if(A.modo==='superficie') return renderAcidoSuperficie(A, predOpts, cultOpts, prodFila, secs);
   const secH = !A.predioId ? '<p style="font-size:11px;color:var(--muted)">Elige el predio para ver sus sectores.</p>'
     : !secs.length ? '<p style="font-size:11px;color:var(--muted)">Este predio no tiene sectores cargados.</p>'
     : secs.map((sx,i)=>{
@@ -4993,10 +5045,7 @@ function renderAcidoForm(){
     <div class="sec-div">Litros de ácido aplicados hoy, por sector (directo del bidón)</div>`;
   box.innerHTML=`
     <div class="form-row"><label>Fecha</label><input type="date" value="${A.fecha}" onchange="aciSet('fecha',this.value);aplActualizarHist()"></div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-      ${btnModo('directo','🛢️ Un ácido (directo)')}
-      ${btnModo('mezcla','⚗️ Nítrico + fosfórico')}
-    </div>
+    <div style="background:#FEF3C7;border-radius:8px;padding:6px 9px;font-size:11px;color:#92400E;margin-bottom:6px">Registro antiguo (${mezcla?'mezcla':'directo del bidón'}). Los registros nuevos se anotan por kilos al estanque y se reparten por superficie.</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap">
       <div style="flex:1;min-width:120px">${lab('Predio')}<select onchange="aciSet('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts}</select></div>
     </div>
@@ -5011,10 +5060,105 @@ function renderAcidoForm(){
     ${aplEdit||!mezcla?'':'<div style="font-size:10.5px;color:var(--muted);margin-top:6px">Si sobra mezcla, el estanque queda abierto y los días siguientes se registran con ➕ Seguir en Aplicaciones registradas.</div>'}`;
   aciRenderCalc();
 }
+// v61 · Formulario por superficie: kg de cada ácido al estanque → L de cada
+// ácido (kg / densidad) → se reparten entre los sectores marcados según sus ha.
+function renderAcidoSuperficie(A, predOpts, cultOpts, prodFila, secs){
+  const box=document.getElementById('aplBody');
+  const lab=t=>`<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">${t}</label>`;
+  const conHa=secs.filter(sx=>{ const h=haSector(A.predioId,sx); return h!=null && h>0; });
+  const secH = !A.predioId ? '<p style="font-size:11px;color:var(--muted)">Elige el predio para ver sus sectores.</p>'
+    : !secs.length ? '<p style="font-size:11px;color:var(--muted)">Este predio no tiene sectores cargados.</p>'
+    : `<div style="display:flex;gap:6px;margin-bottom:4px">
+         <button type="button" class="btn btn-sm" style="flex:1;background:var(--sand);color:var(--dark)" onclick="aciTodos(true)">Marcar todos</button>
+         <button type="button" class="btn btn-sm" style="flex:1;background:var(--sand);color:var(--dark)" onclick="aciTodos(false)">Desmarcar todos</button>
+       </div>`+secs.map((sx,i)=>{
+        const ha=haSector(A.predioId,sx), ok=ha!=null&&ha>0;
+        return `<label style="display:flex;gap:8px;align-items:center;margin-bottom:3px;font-size:12px;cursor:pointer">
+          <input type="checkbox" ${ok&&!A.fuera[sx]?'checked':''} ${ok?'':'disabled'} onchange="aciSetSector(${i},this.checked)" style="width:16px;height:16px">
+          <span style="flex:1">${escH(sx)} ${ok?`<span style="color:var(--muted)">(${fmtNum(ha,2)} ha)</span>`:'<span style="color:#B45309">sin superficie: no entra en el reparto</span>'}</span>
+          <span id="aciSecL_${i}" style="font-size:11px;color:var(--dark);text-align:right"></span>
+        </label>`;
+      }).join('');
+  box.innerHTML=`
+    <div class="form-row"><label>Fecha en que se carga el estanque</label><input type="date" value="${A.fecha}" onchange="aciSet('fecha',this.value);aplActualizarHist()"></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="flex:1;min-width:120px">${lab('Predio')}<select onchange="aciSet('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts}</select></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div style="flex:1;min-width:120px">${lab('Cultivo')}<select onchange="aciSet('cultivo',this.value)">${cultOpts}</select></div>
+      <div style="flex:1;min-width:120px">${lab(esCultivoPim(A.cultivo)?'Mes de plantación':'Época')}<select onchange="aciSet('epoca',this.value)">${epocaOptsHTML(A.cultivo, A.epoca)}</select></div>
+    </div>
+    <div class="sec-div">Kilos de ácido agregados al estanque</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      ${ACIDOS_ORDEN.map(k=>`<div style="flex:1;min-width:120px">${lab(`Kg de ${ACIDOS[k].corto} (${fmtNum(ACIDOS[k].densidad,2)} kg/L)`)}<input type="text" inputmode="decimal" placeholder="0" value="${escH(String(A.kg[k]||''))}" oninput="aciSetKg('${k}',this.value)"></div>`).join('')}
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin:3px 0">Si va un solo ácido, deja el otro en blanco.</div>
+    ${ACIDOS_ORDEN.filter(k=>num(A.kg[k])>0).map(prodFila).join('')}
+    <div class="form-row" style="margin-top:6px"><label>Días que dura el estanque</label><input type="text" inputmode="numeric" value="${escH(String(A.dias||'1'))}" oninput="aciSetDias(this.value)" style="width:90px"></div>
+    <div class="sec-div">Sectores que recibieron el estanque (se reparte por superficie)</div>
+    ${secH}
+    <div id="aciCalc"></div>
+    ${aplBotonGuardar('guardarAcido()','Registrar estanque de ácido')}`;
+  aciRenderCalc();
+}
+function aciSetSector(i, on){
+  const sx=sectoresDePredio(aplAci.predioId)[i]; if(sx==null) return;
+  if(on) delete aplAci.fuera[sx]; else aplAci.fuera[sx]=true;
+  aciRenderCalc();
+}
+function aciTodos(on){
+  aplAci.fuera={};
+  if(!on) sectoresDePredio(aplAci.predioId).forEach(sx=>{ aplAci.fuera[sx]=true; });
+  renderAcidoForm();
+}
+function aciSetDias(v){ aplAci.dias=v; aciRenderCalc(); }
+// Reparto por superficie. Devuelve lo mismo que aciCalc para los otros modos.
+function aciCalcSuperficie(){
+  const A=aplAci, dias=diasAcido(A.dias);
+  const comps=ACIDOS_ORDEN.filter(k=>num(A.kg[k])>0).map(k=>{
+    const d=ACIDOS[k].densidad, kg=num(A.kg[k]); return {acido:k, densidad:d, kg, litros:kg/d};
+  });
+  const vol=comps.reduce((s,c)=>s+c.litros,0);
+  const porL={}; comps.forEach(c=>{ porL[c.acido]= vol>0 ? c.litros/vol : 0; });
+  const secs=(A.predioId?sectoresDePredio(A.predioId):[]).filter(sx=>{ const h=haSector(A.predioId,sx); return h!=null && h>0 && !A.fuera[sx]; });
+  const haTot=secs.reduce((s,sx)=>s+haSector(A.predioId,sx),0);
+  const litros={};
+  if(vol>0 && haTot>0) secs.forEach(sx=>{ litros[sx]=vol*haSector(A.predioId,sx)/haTot; });
+  const excl = aplEdit ? aplEdit.id : null;
+  const filas=acidoPorSector(A.predioId, A.fecha, porL, litros, excl, excl?0:null).map(x=>{
+    // Alarma diaria: lo de este estanque dividido por los días que dura, más lo
+    // que ya hay registrado el peor de esos días.
+    let previo=0;
+    for(let i=0;i<dias;i++) previo=Math.max(previo, acidoPrevioDia(A.predioId, sumarDiasIso(A.fecha,i), x.sector, excl, excl?0:null));
+    const lHaDia = (x.ha&&x.ha>0) ? (x.lAcido/dias + previo)/x.ha : null;
+    return Object.assign(x, {previo, lHaDia, lHaDiaEstanque:(x.ha&&x.ha>0)?x.lAcido/dias/x.ha:null,
+                             alarma: lHaDia!=null && lHaDia>ACIDO_MAX_LHA_DIA+1e-9,
+                             porAcido: Object.assign({}, x.porAcido)});
+  });
+  return {mezcla:comps.length>1, superficie:true, comps, porL, vol, filas, totalSol:vol>0&&haTot>0?vol:0, haTot, dias};
+}
+function aciRenderSuperficie(r){
+  const box=document.getElementById('aciCalc'); if(!box) return;
+  const secs=aplAci.predioId?sectoresDePredio(aplAci.predioId):[];
+  secs.forEach((sx,i)=>{
+    const el=document.getElementById('aciSecL_'+i); if(!el) return;
+    const x=r.filas.find(f=>String(f.sector)===String(sx));
+    el.innerHTML = x ? ACIDOS_ORDEN.filter(k=>x.porAcido[k]>0).map(k=>`${escH(ACIDOS[k].corto)} <b>${fmtNum(x.porAcido[k],2)} L</b>`).join(' · ') : '';
+  });
+  if(!(r.vol>0)){ box.innerHTML='<p style="font-size:11px;color:var(--muted)">Anota los kilos de al menos un ácido.</p>'; return; }
+  if(!(r.haTot>0)){ box.innerHTML='<p style="font-size:11px;color:var(--red);font-weight:700">Marca al menos un sector con superficie.</p>'; return; }
+  const malos=r.filas.filter(x=>x.alarma);
+  box.innerHTML=`<div style="background:var(--sand);border-radius:8px;padding:8px 10px;margin-top:8px;font-size:11.5px;line-height:1.6">
+      ${r.comps.map(c=>`${escH(ACIDOS[c.acido].corto)}: ${fmtNum(c.kg,2)} kg = <b>${fmtNum(c.litros,2)} L</b>`).join('<br>')}
+      <br>Total <b>${fmtNum(r.vol,2)} L</b> en <b>${fmtNum(r.haTot,2)} ha</b> = ${fmtNum(r.vol/r.haTot,2)} L/ha${r.dias>1?` · ${fmtNum(r.vol/r.haTot/r.dias,2)} L/ha/día en ${r.dias} días`:''}
+    </div>
+    ${r.filas.some(x=>x.previo>0)?`<div style="font-size:10.5px;color:var(--muted);margin-top:4px">Hay otros ácidos registrados en esos días; la alarma los suma.</div>`:''}
+    ${malos.length?`<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:4px">⚠️ Sobre ${ACIDO_MAX_LHA_DIA} L/ha/día de ácido en: ${malos.map(x=>`${escH(x.sector)} (${fmtNum(x.lHaDia,2)})`).join(', ')}. Revisa antes de guardar.</div>`:''}`;
+}
 function aciSet(campo,val){
   const cultAntes=aplAci.cultivo;
   aplAci[campo]=val;
-  if(campo==='predioId'){ aplAci.litros={}; aplAci.prodSel={nitrico:'',fosforico:''}; renderAcidoForm(); return; }
+  if(campo==='predioId'){ aplAci.litros={}; aplAci.fuera={}; aplAci.prodSel={nitrico:'',fosforico:''}; renderAcidoForm(); return; }
   if(campo==='acido'||campo==='modo'){ renderAcidoForm(); return; }
   if(campo==='cultivo'){
     if(!epocaCompatible(aplAci.epoca,val)) aplAci.epoca='';
@@ -5023,13 +5167,24 @@ function aciSet(campo,val){
   }
   if(campo==='fecha') aciRenderCalc();
 }
-function aciSetKg(k,val){ aplAci.kg[k]=val; aciRenderCalc(); }
+function aciSetKg(k,val){
+  const antes=num(aplAci.kg[k])>0; aplAci.kg[k]=val;
+  // v61 · En superficie la fila "descuenta de" aparece al anotar kilos.
+  if(aplAci.modo==='superficie' && antes!==(num(val)>0)){
+    renderAcidoForm();
+    const el=[...document.querySelectorAll('#aplBody input[inputmode=decimal]')][ACIDOS_ORDEN.indexOf(k)];
+    if(el){ el.focus(); const n=el.value.length; try{ el.setSelectionRange(n,n); }catch(e){} }
+    return;
+  }
+  aciRenderCalc();
+}
 function aciSetProd(k,val){ aplAci.prodSel[k]=val; renderAcidoForm(); }
 function aciSetLitros(i,val){
   const sx=sectoresDePredio(aplAci.predioId)[i]; if(sx==null) return;
   aplAci.litros[sx]=val; aciRenderCalc();
 }
 function aciCalc(){
+  if(aplAci.modo==='superficie') return aciCalcSuperficie();   // v61
   const A=aplAci, mezcla=A.modo==='mezcla';
   const comps=acidosDelForm().map(k=>{
     const d=ACIDOS[k].densidad;
@@ -5049,6 +5204,7 @@ function aciCalc(){
 }
 function aciRenderCalc(){
   const r=aciCalc();
+  if(r.superficie){ aciRenderSuperficie(r); return; }   // v61
   const c=document.getElementById('aciConc');
   if(c) c.innerHTML = (r.mezcla && r.vol>0)
     ? r.comps.map(x=>`${escH(ACIDOS[x.acido].corto)} ${fmtNum(x.kg,2)} kg = <b>${fmtNum(x.litros,2)} L</b> (${fmtNum(r.porL[x.acido]*100,0)}%)`).join(' · ')+`<br>Mezcla: <b>${fmtNum(r.vol,1)} L</b>`
@@ -5075,12 +5231,15 @@ async function guardarAcido(){
   if(!A.predioId){ toast('⚠️ Elige el predio'); return; }
   if(A.epoca && !epocaCompatible(A.epoca, A.cultivo)){ toast('⚠️ La época no corresponde al cultivo: vuelve a elegirla'); return; }
   const r=aciCalc();
-  if(r.mezcla){
+  if(r.superficie){   // v61
+    if(!(r.vol>0)){ toast('⚠️ Anota los kilos de ácido nítrico y/o fosfórico agregados al estanque'); return; }
+    if(!(r.haTot>0)){ toast('⚠️ Marca al menos un sector con superficie'); return; }
+  }else if(r.mezcla){
     const falta=r.comps.find(x=>!(x.kg>0));
     if(falta){ toast(`⚠️ Indica los kilos de ${ACIDOS[falta.acido].corto}. Si va un solo ácido, usa "Un ácido (directo)"`); return; }
   }
   if(!(r.totalSol>0)){ toast(r.mezcla?'⚠️ Anota los litros de mezcla aplicados en al menos un sector':'⚠️ Anota los litros de ácido aplicados en al menos un sector'); return; }
-  if(r.mezcla && r.totalSol>r.vol+0.5 && !confirm(`Aplicaste ${fmtNum(r.totalSol,1)} L y la mezcla tiene ${fmtNum(r.vol,1)} L.\n\n¿Guardar igual?`)) return;
+  if(r.mezcla && !r.superficie && r.totalSol>r.vol+0.5 && !confirm(`Aplicaste ${fmtNum(r.totalSol,1)} L y la mezcla tiene ${fmtNum(r.vol,1)} L.\n\n¿Guardar igual?`)) return;
   const malos=r.filas.filter(x=>x.alarma);
   if(malos.length && !confirm(acidoTextoAlarma(malos))) return;
 
@@ -5112,9 +5271,25 @@ async function guardarAcido(){
     ts:Date.now()
   };
   const acidosData=r.comps.map(x=>({acido:x.acido, nombre:ACIDOS[x.acido].nombre, densidad:x.densidad, kg:x.kg, litros:x.litros}));
-  const capacidad = r.mezcla ? r.vol : r.totalSol;
+  const capacidad = r.mezcla||r.superficie ? r.vol : r.totalSol;
+  if(r.superficie){
+    // v61 · Por sector: L y kg de cada ácido, y su costo al precio de hoy.
+    usoInicial.acidoSectores = r.filas.map(x=>{
+      const o={sector:x.sector, ha:x.ha, litrosSol:x.litrosSol, lAcido:x.lAcido, lHa:x.lHa, porAcido:{}, kgPorAcido:{}, costoPorAcido:{}};
+      r.comps.forEach(c=>{
+        const L=x.porAcido[c.acido]||0, kg=L*c.densidad;
+        o.porAcido[c.acido]=L; o.kgPorAcido[c.acido]=kg;
+        const s=sales.find(z=>z.nombre===ACIDOS[c.acido].nombre);
+        const p=s&&s.productoId ? productosCache.find(z=>z.id===s.productoId) : null;
+        const pu=(p&&p.precioUnit!=null&&p.precioUnit!=='')?Number(p.precioUnit):null;
+        o.costoPorAcido[c.acido]= pu==null ? null : pu*(String(s.unidad).toUpperCase()==='L'?L:kg);
+      });
+      return o;
+    });
+  }
   const datos={
-    tipo:'fertirriego', subtipo:'acido', modo:r.mezcla?'mezcla':'directo',
+    tipo:'fertirriego', subtipo:'acido', modo:r.superficie?'superficie':(r.mezcla?'mezcla':'directo'),
+    ...(r.superficie ? {dias:r.dias, haTotal:r.haTot, prorrateo:'superficie'} : {}),
     acido: r.mezcla?'mezcla':r.comps[0].acido,
     densidad: r.mezcla?null:r.comps[0].densidad,
     acidos:acidosData, porL:r.porL,
@@ -5131,9 +5306,9 @@ async function guardarAcido(){
     estanque:1, estanquesDia:1,
     descontado: desc,
     ...marcaHistorico(hist, consumoHist),
-    cerrado: r.mezcla ? (r.totalSol >= r.vol-0.5) : true
+    cerrado: (r.mezcla && !r.superficie) ? (r.totalSol >= r.vol-0.5) : true
   };
-  const etiqueta = r.mezcla ? 'Mezcla de ácidos' : ACIDOS[r.comps[0].acido].nombre;
+  const etiqueta = r.superficie ? 'Estanque de ácido' : r.mezcla ? 'Mezcla de ácidos' : ACIDOS[r.comps[0].acido].nombre;
   loading(true, editando?'Guardando cambios…':'Registrando…');
   try{
     if(editando){
@@ -5149,7 +5324,7 @@ async function guardarAcido(){
     }
     const pid=A.predioId, modo=A.modo;
     aplEdit=null;
-    aplAci=nuevoAcidoForm(pid); aplAci.modo=modo;
+    aplAci=nuevoAcidoForm(pid);   // v61 · lo nuevo siempre por superficie
     renderAcidoForm();
     renderAplList();
     avisoGuardado((editando?`✅ ${etiqueta} corregido`:`✅ ${etiqueta} registrado`)
@@ -5202,7 +5377,8 @@ function planTotal(p){ return stockTotal(p); }
 // tres bodegas antiguas que todavía tengan algo.
 function planHayLegado(){ return planProds.some(p=>BODEGAS_LEGADO.some(k=>Math.abs(num(p.stock[k]))>1e-9)); }
 function planColumnasStock(){
-  return RECINTO_ORDER.concat(planHayLegado() ? BODEGAS_LEGADO.filter(k=>planProds.some(p=>Math.abs(num(p.stock[k]))>1e-9)) : []);
+  const retiradosConStock=RECINTO_TODOS.filter(k=>RECINTOS[k].retirado && planProds.some(p=>Math.abs(num(p.stock[k]))>1e-9));   // v61
+  return RECINTO_ORDER.concat(retiradosConStock, planHayLegado() ? BODEGAS_LEGADO.filter(k=>planProds.some(p=>Math.abs(num(p.stock[k]))>1e-9)) : []);
 }
 const TINTE_PREDIO={constancia:'#F3F7EE', transito:'#EEF4F8', paradero:'#F8F2EA'};
 function planPrecioUnit(p){
@@ -5263,13 +5439,14 @@ function renderPlanilla(){
     </div>` : '';
   }
   // v60 · Productos que no corresponden en la Caseta de Riego de La Constancia
+  // v61 · y saldos de Bioestimulantes (fusionada) o de lo aplicable en Principal
   const ordLC=document.getElementById('planOrdenLC');
   if(ordLC){
-    const n=planProds.filter(p=>p.id && Math.abs(num((p.stock||{}).lc_caseta))>1e-9 && !vaEnCasetaLC(p)).length;
+    const n=ordenLCPendientes().length;
     ordLC.style.display = n ? '' : 'none';
     ordLC.innerHTML = n ? `<div style="background:#E0F2FE;border-radius:8px;padding:8px 10px;font-size:11.5px;color:#075985;margin-bottom:8px">
-      Hay <b>${n}</b> producto${n>1?'s':''} con stock en la <b>Caseta de Riego de La Constancia</b> que no ${n>1?'son':'es'} fertilizante${n>1?'s':''} de fertirriego. Tienen que pasar a <b>Bodega Principal</b>.
-      ${canManageUsers()?`<button class="btn btn-sm" style="background:#0369A1;color:#fff;margin-left:6px" onclick="abrirOrdenCasetaLC()">🔀 Ordenar Caseta LC</button>`:' Gerencia lo ordena desde aquí.'}
+      Hay <b>${n}</b> producto${n>1?'s':''} en La Constancia que ${n>1?'tienen':'tiene'} que pasar a <b>Bodega Pesticidas y Bioestimulantes</b> (saldo de la antigua Bodega Bioestimulantes, productos que no son fertilizante de fertirriego en la Caseta, o productos que se aplican en Bodega Principal).
+      ${canManageUsers()?`<button class="btn btn-sm" style="background:#0369A1;color:#fff;margin-left:6px" onclick="abrirOrdenCasetaLC()">🔀 Ordenar bodegas LC</button>`:' Gerencia lo ordena desde aquí.'}
     </div>` : '';
   }
   // Quien no mantiene el catálogo ve la planilla en solo lectura: mueve stock
@@ -5435,7 +5612,7 @@ async function calcConciliacion(){
       });
     });
     // Armar por bodega (todas o la elegida)
-    const orden = pred ? [pred] : RECINTO_ORDER.concat(BODEGAS_LEGADO);   // v44
+    const orden = pred ? [pred] : RECINTO_TODOS.concat(BODEGAS_LEGADO);   // v44 · v61 incluye los retirados
     const grupos=[];
     orden.forEach(b=>{
       const m=acc[b]||{};
@@ -5453,7 +5630,7 @@ async function calcConciliacion(){
 
 function renderConciliacion(){
   const box=document.getElementById('concBody'); if(!box) return;
-  const predOpts=`<option value="">Todos los recintos</option>`+recintoOptsHTML(RECINTO_ORDER, concState.predio)
+  const predOpts=`<option value="">Todos los recintos</option>`+recintoOptsHTML(RECINTO_TODOS, concState.predio)
     +`<optgroup label="Antes de recintos">`+BODEGAS_LEGADO.map(b=>`<option value="${b}"${b===concState.predio?' selected':''}>${escH(BODEGA_NOMBRES[b])}</option>`).join('')+`</optgroup>`;
   let cuerpo='';
   if(!concState.calc){
@@ -5614,7 +5791,7 @@ async function movCompra(idx){
   const p=planProds[idx];
   const recinto=document.getElementById('mcPredio').value;
   if(!esRecinto(recinto)){ toast('⚠️ Elige el recinto que recibe'); return; }
-  if(!recintoAdmite(p, recinto)){ toast('⚠️ La Caseta de Riego de La Constancia recibe solo los fertilizantes de fertirriego. Este producto va a Bodega Principal.'); return; }   // v60
+  if(!recintoAdmite(p, recinto)){ toast(motivoNoAdmite(p, recinto)); return; }   // v60 · v61
   const env=num(document.getElementById('mcEnv').value);
   const cap=num(document.getElementById('mcCap').value);
   const pre=num(document.getElementById('mcPrecio').value);
@@ -5718,7 +5895,7 @@ async function movDespacho(idx){
   if(!recintosOperables().includes(origen)){ toast('⚠️ Solo puedes despachar desde un recinto a tu cargo'); return; }
   if(!esRecinto(destino)){ toast('⚠️ Elige el recinto de destino'); return; }
   if(origen===destino){ toast('⚠️ El origen y el destino deben ser distintos'); return; }
-  if(!recintoAdmite(p, destino)){ toast('⚠️ La Caseta de Riego de La Constancia recibe solo los fertilizantes de fertirriego.'); return; }   // v60
+  if(!recintoAdmite(p, destino)){ toast(motivoNoAdmite(p, destino)); return; }   // v60 · v61
   if(cant<=0){ toast('⚠️ Indica la cantidad'); return; }
   const yo=quienSoy();
   loading(true,'Enviando despacho…');
@@ -5932,23 +6109,59 @@ async function revisarDespachosAlEntrar(){
 // Lista todo lo que tiene stock en lc_caseta y lo que por nombre corresponde a
 // la Caseta. Lo marcado queda (casetaLC:true); lo desmarcado pasa su stock a
 // Bodega Principal (casetaLC:false) y queda un movimiento tipo 'migracion'.
+// v61 · Ordenar las bodegas de La Constancia. Tres orígenes pasan su stock a
+// Bodega Pesticidas y Bioestimulantes (lc_pesticidas):
+//   lc_bioest    → todo, siempre (bodega fusionada)
+//   lc_caseta    → lo que no es fertilizante de fertirriego (v60)
+//   lc_principal → lo que se aplica (foliar o vía riego); gerencia elige
+const ORDEN_LC_ORIGEN={
+  lc_bioest:   'Bioestimulantes (fusionada): pasa todo',
+  lc_caseta:   'Caseta de Riego: marcado = pasa (no es fertilizante de fertirriego)',
+  lc_principal:'Bodega Principal: marcado = pasa (se aplica foliar o vía riego)'
+};
+function principalSugierePasar(p){ return esProdAplicableLC(p) || p.casetaLC===false; }
+function ordenLCPendientes(){
+  const out=[];
+  planProds.forEach(p=>{
+    if(!p.id) return;
+    const st=p.stock||{};
+    if(Math.abs(num(st.lc_bioest))>1e-9) out.push(p.id);
+    else if(Math.abs(num(st.lc_caseta))>1e-9 && !vaEnCasetaLC(p)) out.push(p.id);
+    else if(Math.abs(num(st.lc_principal))>1e-9 && principalSugierePasar(p) && !p.lcPrincipalOk) out.push(p.id);
+  });
+  return out;
+}
 let ordenLCFilas=[];
 function abrirOrdenCasetaLC(){
   if(!canManageUsers()){ toast('Solo gerencia'); return; }
-  ordenLCFilas=planProds.filter(p=>p.id && (Math.abs(num((p.stock||{}).lc_caseta))>1e-9 || vaEnCasetaLC(p)))
-    .map(p=>({productoId:p.id, nombre:p.nombre, unidad:p.unidad||'', cantidad:num((p.stock||{}).lc_caseta), queda:vaEnCasetaLC(p)}))
-    .sort((a,b)=> (b.queda-a.queda) || a.nombre.localeCompare(b.nombre,'es'));
+  const filas=[];
+  planProds.forEach(p=>{
+    if(!p.id) return;
+    const st=p.stock||{};
+    const base={productoId:p.id, nombre:p.nombre||'', unidad:p.unidad||''};
+    if(Math.abs(num(st.lc_bioest))>1e-9) filas.push({...base, origen:'lc_bioest', cantidad:num(st.lc_bioest), pasa:true, fijo:true});
+    if(Math.abs(num(st.lc_caseta))>1e-9 || vaEnCasetaLC(p)) filas.push({...base, origen:'lc_caseta', cantidad:num(st.lc_caseta), pasa:!vaEnCasetaLC(p)});
+    if(Math.abs(num(st.lc_principal))>1e-9) filas.push({...base, origen:'lc_principal', cantidad:num(st.lc_principal), pasa:principalSugierePasar(p) && !p.lcPrincipalOk});
+  });
+  const ordenOrig=Object.keys(ORDEN_LC_ORIGEN);
+  ordenLCFilas=filas.sort((a,b)=>(ordenOrig.indexOf(a.origen)-ordenOrig.indexOf(b.origen)) || (b.pasa-a.pasa) || a.nombre.localeCompare(b.nombre,'es'));
+  let grupoAnt='';
+  const cuerpo=ordenLCFilas.map((f,i)=>{
+    const cab = f.origen!==grupoAnt ? `<tr style="background:#E0F2FE"><td colspan="3" style="padding:5px;font-weight:700;color:#075985">${escH(ORDEN_LC_ORIGEN[f.origen])}</td></tr>` : '';
+    grupoAnt=f.origen;
+    return cab+`<tr style="border-top:1px solid var(--sand)">
+      <td style="padding:4px;text-align:center"><input type="checkbox" ${f.pasa?'checked':''} ${f.fijo?'disabled':''} onchange="ordenLCFilas[${i}].pasa=this.checked"></td>
+      <td style="padding:4px">${escH(f.nombre)}</td>
+      <td style="padding:4px;text-align:right;font-family:'DM Mono',monospace">${fmtNum(f.cantidad,2)} ${escH(f.unidad)}</td>
+    </tr>`;
+  }).join('');
   document.getElementById('modalContent').innerHTML=`
-    <div class="modal-title">🔀 Caseta de Riego · La Constancia</div>
-    <div class="modal-sub">Marcados = <b>quedan en la Caseta</b> (fertilizantes de fertirriego, ácidos, KSC). Desmarcados = su stock pasa a <b>Bodega Principal</b> y desde ahora la vía riego los descuenta de ahí. La marca sale del nombre del producto: revísala, sobre todo si hay nombres abreviados o duplicados.</div>
+    <div class="modal-title">🔀 Bodegas de La Constancia</div>
+    <div class="modal-sub">Lo <b>marcado</b> pasa su stock a <b>Bodega Pesticidas y Bioestimulantes</b>, que es desde donde salen las foliares y la vía riego (salvo los fertilizantes de fertirriego, que salen de la Caseta). Las marcas salen del nombre y la categoría del producto: revísalas.</div>
     <div style="max-height:52vh;overflow:auto;border:1px solid var(--sand);border-radius:8px;margin:8px 0">
       <table style="width:100%;border-collapse:collapse;font-size:12px">
-        <thead><tr style="background:var(--sand)"><th style="padding:5px;text-align:center">Queda</th><th style="padding:5px;text-align:left">Producto</th><th style="padding:5px;text-align:right">Stock Caseta</th></tr></thead>
-        <tbody>${ordenLCFilas.map((f,i)=>`<tr style="border-top:1px solid var(--sand)">
-          <td style="padding:4px;text-align:center"><input type="checkbox" ${f.queda?'checked':''} onchange="ordenLCFilas[${i}].queda=this.checked"></td>
-          <td style="padding:4px">${escH(f.nombre)}</td>
-          <td style="padding:4px;text-align:right;font-family:'DM Mono',monospace">${fmtNum(f.cantidad,2)} ${escH(f.unidad)}</td>
-        </tr>`).join('')}</tbody>
+        <thead><tr style="background:var(--sand)"><th style="padding:5px;text-align:center">Pasa</th><th style="padding:5px;text-align:left">Producto</th><th style="padding:5px;text-align:right">Stock</th></tr></thead>
+        <tbody>${cuerpo || '<tr><td colspan="3" style="padding:8px;color:var(--muted)">Nada que ordenar.</td></tr>'}</tbody>
       </table>
     </div>
     <button class="btn btn-primary" onclick="ejecutarOrdenCasetaLC()">Aplicar</button>
@@ -5957,41 +6170,53 @@ function abrirOrdenCasetaLC(){
 }
 async function ejecutarOrdenCasetaLC(){
   if(!canManageUsers()) return;
-  const mover=ordenLCFilas.filter(f=>!f.queda && Math.abs(f.cantidad)>1e-9);
-  if(!confirm(`${ordenLCFilas.filter(f=>f.queda).length} productos quedan en la Caseta.\n${mover.length} pasan su stock a Bodega Principal.\n\n¿Seguir?`)) return;
-  const yo=quienSoy();
-  loading(true,'Ordenando la Caseta…');
+  const mover=ordenLCFilas.filter(f=>f.pasa && Math.abs(f.cantidad)>1e-9);
+  if(!confirm(`${mover.length} saldo${mover.length===1?'':'s'} pasan a Bodega Pesticidas y Bioestimulantes.\n\n¿Seguir?`)) return;
+  const yo=quienSoy(), destino=RECINTO_LC_APLICA;
+  const porProd={};
+  ordenLCFilas.forEach(f=>{ (porProd[f.productoId]=porProd[f.productoId]||[]).push(f); });
+  loading(true,'Ordenando las bodegas…');
   let ok=0, err=0;
-  for(const f of ordenLCFilas){
+  for(const pid of Object.keys(porProd)){
+    const fs=porProd[pid];
+    const marcas={updatedAt:Date.now()};
+    fs.forEach(f=>{
+      if(f.origen==='lc_caseta') marcas.casetaLC=!f.pasa;
+      if(f.origen==='lc_principal') marcas.lcPrincipalOk=!f.pasa;
+    });
+    const pasan=fs.filter(f=>f.pasa && Math.abs(f.cantidad)>1e-9);
     try{
-      const pasa=!f.queda && Math.abs(f.cantidad)>1e-9;
-      if(pasa){
+      if(pasan.length){
         await db.runTransaction(async tx=>{
-          const ref=db.collection('productos').doc(f.productoId);
+          const ref=db.collection('productos').doc(pid);
           const d=(await tx.get(ref)).data()||{};
           const st=Object.assign({}, d.stock||{});
-          const q=num(st.lc_caseta);
-          st[RECINTO_LC_BODEGA]=num(st[RECINTO_LC_BODEGA])+q;
-          st.lc_caseta=0;
-          tx.update(ref, {stock:st, casetaLC:false, updatedAt:Date.now()});
-          tx.set(db.collection('movimientos').doc(), {tipo:'migracion', motivo:'Caseta LC solo fertilizantes (v60)',
-            productoId:f.productoId, nombre:f.nombre, unidad:f.unidad, origen:'lc_caseta', destino:RECINTO_LC_BODEGA,
-            cantidad:q, fecha:todayIso, registradoPor:yo.uid, registradoPorNombre:yo.nombre, createdAt:Date.now()});
-          f.cantidad=q;
+          const movs=[];
+          pasan.forEach(f=>{
+            const q=num(st[f.origen]);
+            if(Math.abs(q)<1e-9) return;
+            st[destino]=num(st[destino])+q; st[f.origen]=0; f.cantidad=q;
+            movs.push({tipo:'migracion', motivo: f.origen==='lc_bioest' ? 'Fusión Pesticidas y Bioestimulantes (v61)' : f.origen==='lc_caseta' ? 'Caseta LC solo fertilizantes (v61)' : 'Productos que se aplican a Pesticidas y Bioestimulantes (v61)',
+              productoId:pid, nombre:f.nombre, unidad:f.unidad, origen:f.origen, destino, cantidad:q,
+              fecha:todayIso, registradoPor:yo.uid, registradoPorNombre:yo.nombre, createdAt:Date.now()});
+          });
+          tx.update(ref, Object.assign({stock:st}, marcas));
+          movs.forEach(m=>tx.set(db.collection('movimientos').doc(), m));
         });
       }else{
-        await db.collection('productos').doc(f.productoId).update({casetaLC:!!f.queda, updatedAt:Date.now()});
+        await db.collection('productos').doc(pid).update(marcas);
       }
       [planProds, productosCache].forEach(lista=>{
-        const x=lista.find(y=>y.id===f.productoId); if(!x) return;
-        x.casetaLC=!!f.queda;
-        if(pasa){ x.stock=x.stock||{}; x.stock[RECINTO_LC_BODEGA]=num(x.stock[RECINTO_LC_BODEGA])+f.cantidad; x.stock.lc_caseta=0; }
+        const x=lista.find(y=>y.id===pid); if(!x) return;
+        Object.assign(x, marcas); delete x.updatedAt;
+        x.stock=x.stock||{};
+        pasan.forEach(f=>{ const q=num(x.stock[f.origen]); x.stock[destino]=num(x.stock[destino])+q; x.stock[f.origen]=0; });
       });
       ok++;
     }catch(e){ err++; console.warn(e); }
   }
   loading(false); closeModal(); renderPlanilla();
-  toast(err?`Listo ${ok}, ${err} con error: vuelve a intentar`:`✅ Caseta ordenada · ${mover.length} producto${mover.length===1?'':'s'} pasado${mover.length===1?'':'s'} a Bodega Principal`);
+  toast(err?`Listo ${ok}, ${err} con error: vuelve a intentar`:`✅ Bodegas ordenadas · ${mover.length} saldo${mover.length===1?'':'s'} pasado${mover.length===1?'':'s'} a Pesticidas y Bioestimulantes`);
 }
 
 // ── Migración de las bodegas antiguas a recintos (una vez, gerencia) ──
@@ -6002,7 +6227,7 @@ function recintoMigracionSugerido(p, legado){
   const esFert = cat.includes('fertiliz');
   if(legado==='constancia'){
     if(esFito) return 'lc_pesticidas';
-    if(esBio)  return 'lc_bioest';
+    if(esBio)  return 'lc_pesticidas';   // v61 · fusionada
     if(esFert) return 'lc_caseta';
     return 'lc_principal';
   }
@@ -6021,7 +6246,7 @@ function abrirMigracionRecintos(){
   const conteo=RECINTO_ORDER.map(k=>[k, migFilas.filter(f=>f.destino===k).length]).filter(x=>x[1]);
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">🔀 Pasar el stock antiguo a los recintos</div>
-    <div class="modal-sub">${migFilas.length} saldos en las bodegas antiguas. Revisa el recinto de destino de cada uno: la propuesta sale de la categoría del producto (fitosanitarios → Pesticidas; bioestimulantes → Bioestimulantes o Caseta; fertilizantes → Caseta de Riego; el resto → bodega principal del campo).</div>
+    <div class="modal-sub">${migFilas.length} saldos en las bodegas antiguas. Revisa el recinto de destino de cada uno: la propuesta sale de la categoría del producto (fitosanitarios y bioestimulantes → Pesticidas y Bioestimulantes; fertilizantes → Caseta de Riego; el resto → bodega principal del campo).</div>
     <div style="max-height:52vh;overflow:auto;border:1px solid var(--sand);border-radius:8px;margin:8px 0">
       <table style="width:100%;border-collapse:collapse;font-size:11.5px">
         <thead><tr style="background:var(--sand)"><th style="padding:4px;text-align:left">Producto</th><th style="padding:4px">Antes</th><th style="padding:4px;text-align:right">Cantidad</th><th style="padding:4px">Pasa a</th></tr></thead>
@@ -8069,7 +8294,7 @@ function openUserEdit(uid){
     <div class="form-row"><label>📦 Recintos de bodega a su cargo</label>
       <div style="background:var(--cream);border:1.5px solid var(--sand);border-radius:11px;padding:8px 12px">
         ${PRED_ORDER.map(pid=>`<div style="font-size:10.5px;font-weight:700;color:var(--muted);margin:4px 0 2px">${escH(PREDIOS[pid].nombre)}</div>`+
-          recintosDePredio(pid).map(k=>`<label style="display:flex;align-items:center;gap:8px;margin:0 0 3px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="euRecintoChk" value="${k}"${(u.recintos||[]).includes(k)?' checked':''} style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">${escH(RECINTOS[k].nombre)} <span style="color:var(--muted);font-size:10.5px">(${escH(RECINTOS[k].resp.join(', '))})</span></label>`).join('')).join('')}
+          recintosDePredio(pid).map(k=>`<label style="display:flex;align-items:center;gap:8px;margin:0 0 3px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer"><input type="checkbox" class="euRecintoChk" value="${k}"${(u.recintos||[]).some(x=>recintoVigente(x)===k)?' checked':''} style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">${escH(RECINTOS[k].nombre)} <span style="color:var(--muted);font-size:10.5px">(${escH(RECINTOS[k].resp.join(', '))})</span></label>`).join('')).join('')}
       </div>
       <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">En sus recintos puede despachar, confirmar lo que le llega y ajustar el stock por conteo.</div>
     </div>
@@ -10797,10 +11022,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v60';
-const MANUAL_FECHA='2026-10-05';
+const MANUAL_VERSION='v61';
+const MANUAL_FECHA='2026-10-07';
 
 const MANUAL_CAMBIOS=[
+  {v:'v61', f:'07-10-2026', txt:'<b>La Constancia: Pesticidas y Bioestimulantes es ahora una sola bodega</b>, a cargo de Víctor González y Nicolás Flores. Las foliares y la vía riego (salvo los fertilizantes de fertirriego, que siguen en la Caseta) salen solo de ahí: un producto que se aplica queda en una sola bodega. Bodega Principal ya no recibe fitosanitarios, desinfectantes ni bioestimulantes. Gerencia pasa los saldos con <b>🔀 Ordenar bodegas LC</b> en Bodega. <b>Ácidos:</b> el encargado de riego anota los <b>kilos de nítrico y de fosfórico</b> que agrega al estanque, los sectores que lo recibieron y los días que dura; la app reparte los litros de cada ácido entre los sectores <b>según su superficie</b> y lo deja como gasto de cada sector.'},
   {v:'v60', f:'05-10-2026', txt:'<b>Caseta de Riego de La Constancia:</b> ahora guarda solo los fertilizantes de fertirriego: nitratos de potasio (incluidos K acid y Prohidric), de calcio y de magnesio, sulfatos de magnesio y de potasio, cloruro de potasio, fosfatos mono amónico y mono potásico, Ultrasol multipropósito, Ultrasol Pro P, ácidos nítrico y fosfórico, y KSC rosado, amarillo y blanco. Todo lo demás pasa a <b>Bodega Principal</b>. En <b>vía riego</b> de La Constancia, esos productos salen de Bodega Principal (o de Bioestimulantes, si se elige). La Caseta ya no acepta compras ni despachos de otros productos. Gerencia traspasa el stock que quedó en la Caseta con <b>🔀 Ordenar Caseta LC</b> en Bodega.'},
   {v:'v59', f:'05-10-2026', ver:()=>isCampo(), txt:'<b>Contratistas.</b> Cada contratista aparece como un <b>subjefe más</b> (🧑‍🌾) en los predios donde trabaja, con sus propios trabajadores y ciclos. Los subjefes registran a su gente igual que siempre: labores, horas y mesas. Al elegir un trabajador de contratista aparece <b>Pago contratista</b>: se anotan las <b>cajas toro</b> y <b>cajas gamela</b> cosechadas en la jornada (van con la labor 48, Cosecha) y la app calcula lo que se le paga: <b>mesas × $ por mesa de cada labor + cajas × $ por caja</b>. Las tarifas las fija gerencia en <b>Config › Contratistas</b>, una lista por contratista. En Informes, la pestaña <b>🧑‍🌾 Contratistas</b> muestra el total a pagar por trabajador, y el costo de esas labores en los demás informes es lo pagado, no las horas.'},
   {v:'v58', f:'05-10-2026', ver:()=>isCampo(), txt:'<b>Registro diario:</b> nueva labor <b>94. Packing</b>, que se anota en <b>horas</b> (las mesas pueden ir en 0 sin que salga en Inconsistencias). En la lista de trabajadores aparece al final <b>🚜 Tractorista</b>, un puesto genérico sin nombre de persona, en todos los predios y para todos los subjefes. Sirve para anotar labores de tractor como <b>11</b> (pasado de encamador), <b>57</b> (chip de quillay) o <b>71</b> (guano). Queda a nombre del subjefe que lo registra; no se marca ausente ni vacaciones.'},
@@ -10979,7 +11205,7 @@ const MANUAL_SECCIONES=[
   intro:'Registro de las desinfecciones foliares. Lo que registres acá descuenta stock de la bodega.',
   pasos:[
     'En Aplicaciones, entra a la pestaña <b>🍃 Foliar</b>.',
-    'Después de interpretar la receta aparece <b>"Descuenta de Bodega Pesticidas · La Constancia"</b>: de ahí salen las desinfecciones de los tres campos, porque ahí se dosifican. Abajo se ve el stock de cada producto, y en rojo el que no tiene.',
+    'Después de interpretar la receta aparece <b>"Descuenta de Bodega Pesticidas y Bioestimulantes · La Constancia"</b>: de ahí salen las desinfecciones de los tres campos, porque ahí se dosifican. Abajo se ve el stock de cada producto, y en rojo el que no tiene.',
     'Pon la <b>Fecha</b>, el <b>Predio</b>, el <b>Cultivo</b> y la <b>Época</b>. Si el cultivo es <b>pimentón</b>, en vez de época se elige el <b>mes de plantación</b>. Al elegir el predio, la época se llena sola con la del <b>ciclo abierto</b>; si el predio tiene varios ciclos abiertos de distinta época, o ninguno, hay que elegirla a mano. <b>Sin época no se puede guardar</b>: es lo que hace que la aplicación entre en su temporada en el informe de gasto.',
     'Escribe la <b>receta tal como la anotas en terreno</b>, con dosis por 100 L de agua. Ejemplo: <i>Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + ácido cítrico 30 g</i>.',
     'La app trata de reconocer cada producto en la bodega. El que quede en amarillo con "no reconocí", elígelo a mano de la lista.',
@@ -10989,7 +11215,7 @@ const MANUAL_SECCIONES=[
     '<b>Buscar aplicaciones pasadas</b>: en la tarjeta <b>📋 Aplicaciones registradas</b>, arriba de la lista, elige el <b>tipo</b> (🍃 foliar, 🧪 fertilización, ⚗️ ácidos o 💧 vía riego), las fechas <b>Desde/Hasta</b>, el <b>producto</b> o <b>quién registró</b>. Con <b>Orden: Por fecha de aplicación</b> quedan ordenadas por el día en que se aplicaron. Aprieta <b>Ver más</b> para seguir bajando y <b>✕ Limpiar</b> para volver a las últimas registradas. <b>⬇️ Excel</b> baja lo filtrado, una fila por producto (fecha, módulos o sectores, dosis, agua y cantidad usada).'
   ],
   tips:[
-    'Una aplicación con fecha anterior al 14 de septiembre de 2026 es un <b>📜 registro histórico</b>: queda registrada y entra al informe de gasto, pero no descuenta de Pesticidas.',
+    'Una aplicación con fecha anterior al 14 de septiembre de 2026 es un <b>📜 registro histórico</b>: queda registrada y entra al informe de gasto, pero no descuenta de Pesticidas y Bioestimulantes.',
     'Si eres jefe o subjefe y la pantalla te dice <b>"Solo consulta"</b>, te falta el permiso <b>🍃</b>: pídele a gerencia que lo marque en Config › Usuarios y después cierra sesión y vuelve a entrar.',
     'El mojamiento es la base del cálculo: si va mal, el descuento de stock y el informe de gasto quedan mal.',
     'Si no aparece un producto para elegir, primero hay que cargarlo en Bodega.',
@@ -11010,14 +11236,16 @@ const MANUAL_SECCIONES=[
     'Igual que en foliar: el producto que la app no reconozca hay que elegirlo a mano antes de guardar.',
     '<b>¿Registrando algo de semanas o meses atrás?</b> Si la fecha es anterior al <b>14 de septiembre de 2026</b>, aparece el aviso morado <b>📜 Registro histórico</b>: se guarda igual y cuenta en el informe de gasto, pero no descuenta de bodega. Sirve para poner al día lo aplicado antes de esa fecha. Lo que sea desde el 14 de septiembre descuenta de bodega aunque se registre con atraso.',
     '<b>Pimentón:</b> en cada estanque de pimentón aparece <b>Mes de plantación</b> y hay que elegirlo; la época de arriba queda para los estanques de tomate y especialidades. En vía riego pasa lo mismo al elegir pimentón como cultivo.',
-    '<b>⚗️ Ácidos</b> (nítrico y fosfórico). Los ácidos <b>no se disuelven en agua</b>: se aplican puros. Arriba se elige cómo va: <b>🛢️ Un ácido (directo)</b> o <b>⚗️ Nítrico + fosfórico</b>.',
-    '<b>Un ácido, directo del bidón:</b> elige el predio y el ácido, y anota los <b>litros de ácido aplicados</b> en cada sector. La app pasa a kilos con la densidad (nítrico 1,40 y fosfórico 1,68 kg/L) para descontar de bodega, y muestra los <b>litros de ácido por hectárea</b> de cada sector.',
-    '<b>Nítrico + fosfórico en un estanque:</b> anota los <b>kilos de cada ácido</b> cargados al estanque (sin agua). La app calcula los litros de mezcla y la proporción de cada ácido. Después anota los <b>litros de mezcla aplicados</b> en cada sector, y la app reparte cuánto nítrico y cuánto fosfórico llegó a cada uno. Si sobra mezcla, los días siguientes se registran con <b>➕ Seguir</b>.',
-    'Si un sector pasa de <b>4 L de ácido por hectárea en el día</b>, <b>sumando nítrico y fosfórico</b>, se marca en rojo y la app pide confirmar antes de guardar. Se suma todo lo aplicado ese día en el sector, aunque venga de otro registro o de otro estanque. Si se guarda igual, queda marcado con la alarma en "Aplicaciones registradas".',
+    '<b>⚗️ Ácidos</b> (nítrico y fosfórico). Se registra <b>el estanque</b>: el encargado de riego anota la fecha en que lo carga, el predio y los <b>kilos de ácido nítrico y de ácido fosfórico</b> que agrega. Si va un solo ácido, el otro se deja en blanco.',
+    'La app pasa los kilos a litros con la densidad de cada ácido (nítrico 1,40 y fosfórico 1,68 kg/L): por eso los mismos kilos dan volúmenes distintos. Ejemplo: 70 kg de nítrico = 50 L; 70 kg de fosfórico = 41,7 L.',
+    'Abajo aparecen <b>todos los sectores del campo marcados</b>. Desmarca el que no recibió ese estanque. El total de litros de cada ácido se <b>reparte entre los sectores marcados según su superficie</b>, y eso queda como gasto de cada sector (litros de cada ácido y su costo). Un sector sin superficie cargada no entra en el reparto.',
+    'En <b>Días que dura el estanque</b> anota en cuántos días se aplica. Sirve para la alarma de dosis diaria; el gasto completo queda en la fecha de carga.',
+    'Los registros antiguos (un ácido directo del bidón, o mezcla con litros por sector) se siguen viendo y corrigiendo con su formulario de antes.',
+    'Si un sector pasa de <b>4 L de ácido por hectárea en el día</b>, <b>sumando nítrico y fosfórico</b>, se marca en rojo y la app pide confirmar antes de guardar. Se divide el estanque por los días que dura y se suma lo de otros registros esos mismos días. Si se guarda igual, queda marcado con la alarma en "Aplicaciones registradas".',
     'Para corregir algo ya registrado, aprieta el <b>✏️</b> en "Aplicaciones registradas": se reabre en su formulario, y al guardar el stock se recalcula solo.'
   ],
   tips:[
-    'Los litros por sector son los que reparten el consumo entre sectores. Si pones el total en un solo sector, el gasto por hectárea queda deformado.',
+    'En ácidos, el reparto por sector lo hace la app según la superficie: basta con dejar marcados los sectores que recibieron el estanque.',
     'Un estanque con varios días de aplicación <b>no se puede corregir con el ✏️</b>. Si quedó mal, avísale a gerencia.',
     'Los sectores salen de la superficie cargada en el predio. Si falta un sector, avisa a gerencia para que lo agregue.',
     'Si una sal aparece con <b>"revisar: 2 productos"</b>, es que el catálogo tiene ese producto cargado más de una vez. Se elige el que tenga stock en tu predio, pero conviene avisar a gerencia para que junte las entradas repetidas.',
@@ -11072,7 +11300,7 @@ const MANUAL_SECCIONES=[
   id:'bodega', ico:'📦', tit:'Bodega — recintos, despachos y conciliación', ver:()=>canBodega(),
   intro:'Stock por recinto, precios, compras, despachos y comparación entre lo entregado y lo usado. La planilla está pensada para el computador; confirmar despachos se puede hacer desde el teléfono.',
   pasos:[
-    'Cada campo tiene sus <b>recintos</b>. <b>La Constancia:</b> Bodega Principal (Nicolás Flores), Pesticidas (Víctor González), Bioestimulantes (Nicolás Flores), Caseta de Riego (Gabriel Contreras, José Cordero y Carlos Vergara) y Bodega de Proveedores (Luciano Pinto). <b>El Tránsito:</b> Bodega Packing (Claudio Flores y Gabriela Escobar) y Caseta de Riego (Manuel Méndez). <b>Paradero 12:</b> Caseta de Riego (Paulo Gallarce) y Bodega Paradero 12 (Gabriela Escobar).',
+    'Cada campo tiene sus <b>recintos</b>. <b>La Constancia:</b> Bodega Principal (Nicolás Flores), Pesticidas y Bioestimulantes (Víctor González y Nicolás Flores), Caseta de Riego (Gabriel Contreras, José Cordero y Carlos Vergara) y Bodega de Proveedores (Luciano Pinto). <b>El Tránsito:</b> Bodega Packing (Claudio Flores y Gabriela Escobar) y Caseta de Riego (Manuel Méndez). <b>Paradero 12:</b> Caseta de Riego (Paulo Gallarce) y Bodega Paradero 12 (Gabriela Escobar).',
     'La planilla tiene <b>una columna por recinto</b>, agrupadas por campo (LC, ET, P12). Busca el producto con el <b>🔍 buscador</b>.',
     '<b>Comprar</b> (quien tenga 🛒, hoy Luciano): 📦 del producto → Registrar compra → elige el <b>recinto que recibe</b>. Lo que se compra por volumen y queda guardado en el proveedor va a <b>Bodega de Proveedores</b>.',
     '<b>Despachar</b>: 📦 del producto → Despacho → desde uno de tus recintos hacia otro. Sale al tiro del origen y queda <b>pendiente</b> hasta que el responsable del recinto que recibe lo confirma.',
@@ -11087,7 +11315,7 @@ const MANUAL_SECCIONES=[
     'Abajo, en <b>Conciliación</b>, compara lo que recibió cada recinto (compras, despachos confirmados y ajustes, menos las devoluciones al proveedor) con lo que se usó en aplicaciones. Ajusta el rango de fechas, porque la entrega y el uso no tienen por qué caer el mismo mes.'
   ],
   tips:[
-    '<b>De dónde sale cada aplicación:</b> las desinfecciones foliares de los tres campos salen de <b>Pesticidas</b>. Fertirriego, ácidos y vía riego salen de la <b>Caseta de Riego del campo</b>. En La Constancia la Caseta guarda <b>solo los fertilizantes de fertirriego</b> (nitratos, sulfatos, cloruro de potasio, fosfatos, Ultrasol multipropósito y Pro P, ácidos y KSC); en vía riego, todo lo demás sale de <b>Bodega Principal</b> o de <b>Bioestimulantes</b>, y se elige por producto. De la <b>Bodega de Proveedores</b> no sale ninguna aplicación: primero hay que despachar el producto a un recinto del campo.',
+    '<b>De dónde sale cada aplicación:</b> las desinfecciones foliares de los tres campos salen de <b>Pesticidas y Bioestimulantes</b> (La Constancia). Fertirriego, ácidos y vía riego salen de la <b>Caseta de Riego del campo</b>. En La Constancia la Caseta guarda <b>solo los fertilizantes de fertirriego</b> (nitratos, sulfatos, cloruro de potasio, fosfatos, Ultrasol multipropósito y Pro P, ácidos y KSC); en vía riego, todo lo demás sale de <b>Pesticidas y Bioestimulantes</b>: un producto que se aplica (foliar o vía riego) queda en esa sola bodega, nunca en la Caseta ni en Bodega Principal. De la <b>Bodega de Proveedores</b> no sale ninguna aplicación: primero hay que despachar el producto a un recinto del campo.',
     'Por eso, para que no quede stock negativo en la Caseta, los fertilizantes tienen que <b>despacharse a la Caseta</b> antes de usarse.',
     'Una diferencia grande en conciliación casi siempre es una aplicación sin registrar, un despacho sin confirmar o una aplicación registrada en el predio equivocado.',
     'Mientras queden saldos en las <b>bodegas antiguas</b> (columnas en naranjo), gerencia ve el botón <b>🔀 Pasar a recintos</b>. Ahí revisa producto por producto a qué recinto pasa cada saldo y los traslada. Se hace una sola vez.',
