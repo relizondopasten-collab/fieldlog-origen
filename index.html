@@ -6147,9 +6147,7 @@ async function revisarDespachosAlEntrar(){
 // v61/v62 · Ordenar las bodegas de La Constancia (gerencia). Cada saldo elige destino:
 //   lc_bioest    → Pesticidas y Bioestimulantes (siempre: bodega fusionada)
 //   lc_caseta    → Bodega Principal si es fertilizante de fertirriego (v62:
-//                  la Caseta ya no lleva stock; el producto sigue físicamente
-//                  en la caseta, así que queda un envío inicial ya recibido);
-//                  si no, Pesticidas y Bioestimulantes
+//                  la Caseta ya no lleva stock); si no, Pesticidas y Bioestimulantes
 //   lc_principal → queda, o pasa a Pesticidas y Bioestimulantes si se aplica
 const ORDEN_LC_ORIGEN={
   lc_bioest:   'Bioestimulantes (fusionada)',
@@ -6199,7 +6197,7 @@ function abrirOrdenCasetaLC(){
   }).join('');
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">🔀 Bodegas de La Constancia</div>
-    <div class="modal-sub">Elige a dónde va cada saldo. Los <b>fertilizantes</b> de la Caseta pasan a <b>Bodega Principal</b> (de ahí descuenta el riego) y quedan anotados como ya enviados a la caseta, porque físicamente siguen allá. Lo que se aplica foliar o vía riego va a <b>Pesticidas y Bioestimulantes</b>. Las propuestas salen del nombre y la categoría: revísalas.</div>
+    <div class="modal-sub">Elige a dónde va cada saldo. Los <b>fertilizantes</b> de la Caseta pasan a <b>Bodega Principal</b> (de ahí descuenta el riego) Lo que se aplica foliar o vía riego va a <b>Pesticidas y Bioestimulantes</b>. Las propuestas salen del nombre y la categoría: revísalas.</div>
     <div style="max-height:52vh;overflow:auto;border:1px solid var(--sand);border-radius:8px;margin:8px 0">
       <table style="width:100%;border-collapse:collapse;font-size:12px">
         <thead><tr style="background:var(--sand)"><th style="padding:5px;text-align:left">Producto</th><th style="padding:5px;text-align:right">Stock</th><th style="padding:5px;text-align:left">Destino</th></tr></thead>
@@ -6245,12 +6243,6 @@ async function ejecutarOrdenCasetaLC(){
               : 'Productos que se aplican a Pesticidas y Bioestimulantes (v61)';
             movs.push({tipo:'migracion', motivo, productoId:pid, nombre:f.nombre, unidad:f.unidad, origen:f.origen, destino:f.destino, cantidad:q,
               fecha:todayIso, registradoPor:yo.uid, registradoPorNombre:yo.nombre, createdAt:Date.now()});
-            // v62 · Sigue físicamente en la caseta: envío inicial ya recibido.
-            if(f.origen==='lc_caseta' && f.destino===RECINTO_LC_BODEGA && q>0)
-              movs.push({tipo:'envioCaseta', inicial:true, estado:'recibido', productoId:pid, nombre:f.nombre, unidad:f.unidad,
-                origen:RECINTO_LC_BODEGA, destino:'lc_caseta', cantidad:q, cantidadRecibida:q, diferencia:0, fecha:todayIso, fechaRecepcion:todayIso,
-                nota:'Saldo que estaba en la caseta al dejar de llevar stock (v62)',
-                registradoPor:yo.uid, registradoPorNombre:yo.nombre, recibidoPor:yo.uid, recibidoPorNombre:yo.nombre, recibidoAt:Date.now(), createdAt:Date.now()});
           });
           tx.update(ref, Object.assign({stock:st}, marcas));
           movs.forEach(m=>tx.set(db.collection('movimientos').doc(), m));
@@ -6277,13 +6269,13 @@ async function ejecutarOrdenCasetaLC(){
 // cuando se aplica. Nicolás (o bodega/gerencia) avisa lo que manda a la caseta
 // y el encargado confirma lo que llegó, anotando la cantidad recibida. Si no
 // calza, el envío queda marcado con la diferencia. Nada de esto mueve stock.
-// Saldo de control en la caseta = recibido − aplicado desde el primer envío.
+// v63 · Sin saldo de control: el conteo de la caseta se hace en terreno.
 // /movimientos {tipo:'envioCaseta', estado:'pendiente'|'recibido'|'anulado',
 //   productoId, nombre, unidad, origen:'lc_principal', destino:'lc_caseta',
 //   cantidad, fecha, cantidadRecibida, diferencia, fechaRecepcion, notaRecepcion,
 //   inicial?, registradoPor…, recibidoPor…, rechazadoPor…, motivoRechazo}
 // ══════════════════════════════════════════════
-let envLCCache=null, envLCAplic=null, envLCVerSaldo=false;
+let envLCCache=null;
 function envLCPendientes(){ return (envLCCache||[]).filter(m=>m.estado==='pendiente'); }
 function envLCPuedoRecibir(){ return esCasetaLC(); }
 function envLCPuedoAnular(m){ return isAdmin() || puedeEnviarCasetaLC() || (currentUser && m.registradoPor===currentUser.uid); }
@@ -6295,39 +6287,6 @@ async function cargarEnviosCasetaLC(){
   }catch(e){ envLCCache=[]; }
   return envLCCache;
 }
-// Lo aplicado en La Constancia que sale de la caseta: fertirriego y ácidos
-// (todo lo descontado) y, en vía riego, los fertilizantes de la lista.
-async function cargarAplicadoCasetaLC(){
-  try{
-    const snap=await db.collection('aplicaciones').where('predioId','==','constancia').get();
-    const ev=[];
-    snap.docs.forEach(doc=>{
-      const a=doc.data();
-      if(a.tipo==='fertirriego'){
-        const us=(Array.isArray(a.usos)&&a.usos.length)?a.usos:[a];
-        us.forEach(u=>consumoDe(u).forEach(d=>ev.push({fecha:u.fecha||a.fecha||'', productoId:d.productoId, cantidad:num(d.cantidad)})));
-      }else if(a.tipo==='viariego'){
-        consumoDe(a).forEach(d=>{
-          const p=productosCache.find(x=>x.id===d.productoId);
-          if(vaEnCasetaLC(p)) ev.push({fecha:a.fecha||'', productoId:d.productoId, cantidad:num(d.cantidad)});
-        });
-      }
-    });
-    envLCAplic=ev;
-  }catch(e){ envLCAplic=[]; }
-  return envLCAplic;
-}
-function saldoCasetaLC(){
-  const por={};
-  (envLCCache||[]).filter(m=>m.estado==='recibido').forEach(m=>{
-    const o=por[m.productoId]=por[m.productoId]||{productoId:m.productoId, nombre:m.nombre||'', unidad:m.unidad||'', desde:m.fecha||'', recibido:0, aplicado:0, pendiente:0};
-    o.recibido+=num(m.cantidadRecibida!=null?m.cantidadRecibida:m.cantidad);
-    if(m.fecha && (!o.desde || m.fecha<o.desde)) o.desde=m.fecha;
-  });
-  envLCPendientes().forEach(m=>{ if(por[m.productoId]) por[m.productoId].pendiente+=num(m.cantidad); });
-  (envLCAplic||[]).forEach(e=>{ const o=por[e.productoId]; if(o && e.fecha>=o.desde) o.aplicado+=e.cantidad; });
-  return Object.values(por).map(o=>({...o, saldo:o.recibido-o.aplicado})).sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
-}
 async function renderCasetaLC(){
   const card=document.getElementById('casetaLCCard'), box=document.getElementById('casetaLCBody');
   if(!card||!box) return;
@@ -6335,7 +6294,7 @@ async function renderCasetaLC(){
   if(!veo){ card.style.display='none'; return; }
   card.style.display='';
   if(envLCCache===null) box.innerHTML='<p style="font-size:12px;color:var(--muted)">Cargando envíos…</p>';
-  await Promise.all([cargarEnviosCasetaLC(), cargarAplicadoCasetaLC()]);
+  await cargarEnviosCasetaLC();
   actualizarBadgeDespachos();
   const pend=envLCPendientes();
   const fila=(m,acc)=>`<div style="padding:7px 0;border-bottom:1px solid var(--sand);display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -6345,7 +6304,6 @@ async function renderCasetaLC(){
     </div>${acc}</div>`;
   const recientes=(envLCCache||[]).filter(m=>m.estado!=='pendiente' && !m.inicial).slice(0,8);
   const conDif=(envLCCache||[]).filter(m=>m.estado==='recibido' && Math.abs(num(m.diferencia))>1e-9);
-  const saldo=saldoCasetaLC();
   box.innerHTML=`
     <div style="font-size:11px;color:var(--muted);margin-bottom:6px">La caseta ya no lleva stock: el riego descuenta de <b>Bodega Principal</b>. Aquí queda el aviso de lo que se manda y la confirmación de lo que llega.</div>
     ${puedeEnviarCasetaLC()?`<button class="btn btn-sm" style="background:#0369A1;color:#fff;margin-bottom:8px" onclick="abrirEnvioCasetaLC()">🚚 Enviar a caseta</button>`:''}
@@ -6355,14 +6313,7 @@ async function renderCasetaLC(){
       :'<div style="font-size:11.5px;color:var(--muted)">No hay envíos por confirmar.</div>'}
     ${conDif.length?`<div style="background:#FEF3C7;border-radius:8px;padding:6px 9px;margin-top:8px;font-size:11px;color:#92400E"><b>⚠️ Envíos con diferencia:</b><br>${conDif.slice(0,10).map(m=>`${escH(fDMY(m.fecha||''))} · ${escH(m.nombre)}: enviado ${fmtNum(m.cantidad,2)}, recibido ${fmtNum(m.cantidadRecibida,2)} ${escH(m.unidad||'')} (${num(m.diferencia)>0?'+':''}${fmtNum(m.diferencia,2)})${m.notaRecepcion?' · '+escH(m.notaRecepcion):''}`).join('<br>')}</div>`:''}
     ${recientes.length?`<div style="font-size:11px;font-weight:700;color:var(--dark);margin:10px 0 2px">Últimos envíos</div>`+recientes.map(m=>`<div style="font-size:11px;padding:2px 0;color:${m.estado==='anulado'?'var(--muted)':'var(--dark)'}">${escH(fDMY(m.fecha||''))} · ${escH(m.nombre)} ${fmtNum(m.cantidad,2)} ${escH(m.unidad||'')} → ${m.estado==='recibido'?`✅ recibido ${fmtNum(m.cantidadRecibida,2)} el ${escH(fDMY(m.fechaRecepcion||''))} (${escH(m.recibidoPorNombre||'')})`:m.estado==='anulado'?'anulado'+(m.motivoRechazo?': '+escH(m.motivoRechazo):''):escH(m.estado||'')}</div>`).join(''):''}
-    <button class="btn btn-sm" style="background:var(--sand);color:var(--dark);margin-top:8px" onclick="envLCVerSaldo=!envLCVerSaldo;renderCasetaLC()">${envLCVerSaldo?'Ocultar':'Ver'} saldo en la caseta</button>
-    ${envLCVerSaldo?(saldo.length?`<div style="overflow-x:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:11.5px">
-      <thead><tr style="border-bottom:2px solid var(--sand);text-align:right"><th style="padding:4px;text-align:left">Producto</th><th style="padding:4px">Recibido</th><th style="padding:4px">Aplicado</th><th style="padding:4px">Saldo</th></tr></thead>
-      <tbody>${saldo.map(o=>`<tr style="border-bottom:1px solid var(--sand);text-align:right"><td style="padding:4px;text-align:left">${escH(o.nombre)}<div style="font-size:10px;color:var(--muted)">desde ${escH(fDMY(o.desde))}${o.pendiente>0?` · ${fmtNum(o.pendiente,2)} en camino`:''}</div></td>
-        <td style="padding:4px">${fmtNum(o.recibido,2)}</td><td style="padding:4px">${fmtNum(o.aplicado,2)}</td>
-        <td style="padding:4px;font-weight:700;color:${o.saldo<-1e-9?'var(--red)':'var(--dark)'}">${fmtNum(o.saldo,2)} ${escH(o.unidad)}</td></tr>`).join('')}</tbody></table>
-      <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Saldo de control = recibido − aplicado (fertirriego, ácidos y fertilizantes vía riego de La Constancia desde el primer envío). No es stock: el stock está en Bodega Principal. Un saldo negativo indica aplicaciones sin envío registrado.</div></div>`
-      :'<div style="font-size:11.5px;color:var(--muted);margin-top:6px">Todavía no hay envíos recibidos.</div>'):''}`;
+`;
 }
 function abrirEnvioCasetaLC(){
   if(!puedeEnviarCasetaLC()){ toast('Sin permiso'); return; }
@@ -11257,11 +11208,12 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v62';
+const MANUAL_VERSION='v63';
 const MANUAL_FECHA='2026-10-07';
 
 const MANUAL_CAMBIOS=[
-  {v:'v62', f:'07-10-2026', txt:'<b>La Constancia: la Caseta de Riego deja de llevar stock.</b> Los fertilizantes quedan en <b>Bodega Principal</b> y de ahí descuentan el fertirriego, los ácidos y los fertilizantes vía riego. Nicolás (o bodega) avisa lo que manda a la caseta con <b>🚚 Enviar a caseta</b> (ejemplo: nitrato de potasio 1.000 kg, 7 de octubre) y el encargado de la caseta lo confirma en Bodega anotando cuánto llegó; si no calza, el envío queda marcado con la diferencia. El aviso no mueve stock. En Bodega se ve además el <b>saldo de control</b> de la caseta (recibido menos aplicado). Los <b>bioestimulantes vía riego</b> (ej. Spurt) salen de Pesticidas y Bioestimulantes y se descuenta solo lo aplicado: lo que sobra vuelve a esa bodega sin registrar nada. Gerencia pasa el saldo de la caseta a Principal con <b>🔀 Ordenar bodegas LC</b>.'},
+  {v:'v63', f:'07-10-2026', txt:'<b>Caseta de Riego de La Constancia:</b> se quita el saldo de control (recibido menos aplicado). Queda solo el aviso de envío desde Bodega Principal y la confirmación de la caseta; el conteo en la caseta se hace en terreno.'},
+  {v:'v62', f:'07-10-2026', txt:'<b>La Constancia: la Caseta de Riego deja de llevar stock.</b> Los fertilizantes quedan en <b>Bodega Principal</b> y de ahí descuentan el fertirriego, los ácidos y los fertilizantes vía riego. Nicolás (o bodega) avisa lo que manda a la caseta con <b>🚚 Enviar a caseta</b> (ejemplo: nitrato de potasio 1.000 kg, 7 de octubre) y el encargado de la caseta lo confirma en Bodega anotando cuánto llegó; si no calza, el envío queda marcado con la diferencia. El aviso no mueve stock. Los <b>bioestimulantes vía riego</b> (ej. Spurt) salen de Pesticidas y Bioestimulantes y se descuenta solo lo aplicado: lo que sobra vuelve a esa bodega sin registrar nada. Gerencia pasa el saldo de la caseta a Principal con <b>🔀 Ordenar bodegas LC</b>.'},
   {v:'v61', f:'07-10-2026', txt:'<b>La Constancia: Pesticidas y Bioestimulantes es ahora una sola bodega</b>, a cargo de Víctor González y Nicolás Flores. Las foliares y la vía riego (salvo los fertilizantes de fertirriego, que siguen en la Caseta) salen solo de ahí: un producto que se aplica queda en una sola bodega. Bodega Principal ya no recibe fitosanitarios, desinfectantes ni bioestimulantes. Gerencia pasa los saldos con <b>🔀 Ordenar bodegas LC</b> en Bodega. <b>Ácidos:</b> el encargado de riego anota los <b>kilos de nítrico y de fosfórico</b> que agrega al estanque, los sectores que lo recibieron y los días que dura; la app reparte los litros de cada ácido entre los sectores <b>según su superficie</b> y lo deja como gasto de cada sector.'},
   {v:'v60', f:'05-10-2026', txt:'<b>Caseta de Riego de La Constancia:</b> ahora guarda solo los fertilizantes de fertirriego: nitratos de potasio (incluidos K acid y Prohidric), de calcio y de magnesio, sulfatos de magnesio y de potasio, cloruro de potasio, fosfatos mono amónico y mono potásico, Ultrasol multipropósito, Ultrasol Pro P, ácidos nítrico y fosfórico, y KSC rosado, amarillo y blanco. Todo lo demás pasa a <b>Bodega Principal</b>. En <b>vía riego</b> de La Constancia, esos productos salen de Bodega Principal (o de Bioestimulantes, si se elige). La Caseta ya no acepta compras ni despachos de otros productos. Gerencia traspasa el stock que quedó en la Caseta con <b>🔀 Ordenar Caseta LC</b> en Bodega.'},
   {v:'v59', f:'05-10-2026', ver:()=>isCampo(), txt:'<b>Contratistas.</b> Cada contratista aparece como un <b>subjefe más</b> (🧑‍🌾) en los predios donde trabaja, con sus propios trabajadores y ciclos. Los subjefes registran a su gente igual que siempre: labores, horas y mesas. Al elegir un trabajador de contratista aparece <b>Pago contratista</b>: se anotan las <b>cajas toro</b> y <b>cajas gamela</b> cosechadas en la jornada (van con la labor 48, Cosecha) y la app calcula lo que se le paga: <b>mesas × $ por mesa de cada labor + cajas × $ por caja</b>. Las tarifas las fija gerencia en <b>Config › Contratistas</b>, una lista por contratista. En Informes, la pestaña <b>🧑‍🌾 Contratistas</b> muestra el total a pagar por trabajador, y el costo de esas labores en los demás informes es lo pagado, no las horas.'},
@@ -11552,7 +11504,7 @@ const MANUAL_SECCIONES=[
   ],
   tips:[
     '<b>De dónde sale cada aplicación:</b> las desinfecciones foliares de los tres campos salen de <b>Pesticidas y Bioestimulantes</b> (La Constancia). En El Tránsito y Paradero 12, fertirriego, ácidos y vía riego salen de la <b>Caseta de Riego del campo</b>. En <b>La Constancia</b> la Caseta no lleva stock: fertirriego, ácidos y fertilizantes vía riego (nitratos, sulfatos, cloruro de potasio, fosfatos, Ultrasol, ácidos y KSC) salen de <b>Bodega Principal</b>; lo demás vía riego (bioestimulantes como Spurt) sale de <b>Pesticidas y Bioestimulantes</b>. Se descuenta solo lo aplicado: si sobra producto, vuelve a su bodega sin registrar nada. De la <b>Bodega de Proveedores</b> no sale ninguna aplicación: primero hay que despachar el producto a un recinto del campo.',
-    '<b>Envíos a la Caseta de Riego de La Constancia:</b> Nicolás (o bodega) aprieta <b>🚚 Enviar a caseta</b> en la tarjeta <b>🚰 Caseta de Riego</b> de Bodega, elige el producto, la cantidad y la fecha. El encargado de la caseta ve el aviso en esa misma tarjeta y aprieta <b>✅ Recibido</b>, anotando cuánto llegó. Si no coincide con lo enviado, queda marcado con la diferencia para que bodega lo revise. El envío no mueve stock (sigue en Bodega Principal hasta que se aplica). <b>Ver saldo en la caseta</b> muestra lo recibido menos lo aplicado de cada fertilizante.',
+    '<b>Envíos a la Caseta de Riego de La Constancia:</b> Nicolás (o bodega) aprieta <b>🚚 Enviar a caseta</b> en la tarjeta <b>🚰 Caseta de Riego</b> de Bodega, elige el producto, la cantidad y la fecha. El encargado de la caseta ve el aviso en esa misma tarjeta y aprieta <b>✅ Recibido</b>, anotando cuánto llegó. Si no coincide con lo enviado, queda marcado con la diferencia para que bodega lo revise. El envío no mueve stock (sigue en Bodega Principal hasta que se aplica).',
     'Una diferencia grande en conciliación casi siempre es una aplicación sin registrar, un despacho sin confirmar o una aplicación registrada en el predio equivocado.',
     'Mientras queden saldos en las <b>bodegas antiguas</b> (columnas en naranjo), gerencia ve el botón <b>🔀 Pasar a recintos</b>. Ahí revisa producto por producto a qué recinto pasa cada saldo y los traslada. Se hace una sola vez.',
     'Las <b>jefaturas de predio</b> entran a esta pantalla en <b>solo lectura</b>: ven el stock y la conciliación, pero no editan celdas ni mueven productos.',
