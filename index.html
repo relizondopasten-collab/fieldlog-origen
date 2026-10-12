@@ -122,6 +122,7 @@ body.wide{max-width:1500px}
 
 /* ── CARDS ── */
 .card{background:var(--white);border-radius:var(--r);padding:14px;margin-bottom:10px;box-shadow:var(--shadow)}
+.dib.dib-fds:not(.active){background:#F0F7EE;border-style:dashed}
 .card-title{font-family:'Syne',sans-serif;font-size:12px;font-weight:700;color:var(--dark);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;display:flex;align-items:center;gap:5px}
 
 /* ── CTX PILL ── */
@@ -671,7 +672,7 @@ body.vista-escritorio .modal-content{max-width:700px}
         <button class="inftab" data-tab="contratistas" onclick="switchInfTab('contratistas')">🧑‍🌾 Contratistas</button>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (8 hojas)</button>
+        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (9 hojas)</button>
         <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportAnexoFotos()">📷 Anexo de observaciones (PDF)</button>
       </div>
       <div id="infContent"></div>
@@ -883,7 +884,7 @@ body.vista-escritorio .modal-content{max-width:700px}
     <div id="contratistasConfigSection" style="display:none">
       <div class="card">
         <div class="card-title">🧑‍🌾 Contratistas</div>
-        <p style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Cada contratista aparece como un subjefe más en los predios marcados. Sus trabajadores se agregan arriba, en Trabajadores, eligiéndolo como subjefe. Se paga por mesa según la labor y por caja cosechada (toro o gamela). Cambiar una tarifa no altera lo ya registrado.</p>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Cada contratista aparece como un subjefe más en los predios marcados. Sus trabajadores se agregan arriba, en Trabajadores, eligiéndolo como subjefe. Cada labor tiene un valor fijo <b>por mesa o por techo</b> (1 techo = 3 mesas), y se paga además por caja cosechada (toro o gamela). Las tarifas tienen fecha de vigencia: al cambiarlas se indica desde qué día rigen, y lo registrado antes conserva el valor anterior.</p>
         <div id="contList"></div>
         <div id="contForm"></div>
         <button class="btn btn-secondary" id="contNuevoBtn" style="margin-top:6px" onclick="contEditar('')">＋ Nuevo contratista</button>
@@ -991,7 +992,8 @@ const PREDIOS_SUBJEFES_BASE=Object.fromEntries(Object.entries(PREDIOS).map(([k,v
 const CNAMES={tomate:'Tomate',especialidades:'Especialidades',pimenton:'Pimentón'};
 const CICONS={tomate:'🍅',especialidades:'🌶️',pimenton:'🫑'};
 const PRED_ORDER=['transito','constancia','paradero'];
-const DIAS=['Lunes','Martes','Miérc.','Jueves','Viernes'];
+const DIAS=['Lunes','Martes','Miérc.','Jueves','Viernes','Sábado','Domingo'];
+const DIAS_CORTO=['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];   // v65
 const TNAMES={otono:'Otoño',invierno:'Invierno',primor:'Primor',trastomate:'Trastomate',verano:'Verano'};
 const TICONS={otono:'🍂',invierno:'❄️',primor:'🌱',trastomate:'🔄',verano:'☀️'};
 const TORDER=['otono','invierno','primor','trastomate','verano'];
@@ -1393,18 +1395,49 @@ async function loadContratistas(){
   }catch(e){ console.warn('Sin contratistas:', e && e.code); contratistasCache=[]; }
   aplicarContratistas();
 }
-// Monto a pagar de una entrada de contratista, con las tarifas vigentes.
-function calcPagoContratista(cont, labores, toro, gamela){
-  const t=(cont&&cont.tarifas)||{};
+// v65 · Cada labor se paga por MESA o por TECHO (1 techo = 3 mesas). El
+// trabajo se sigue anotando en mesas; si la labor se paga por techo, el monto
+// es mesas ÷ 3 × $/techo.
+// Las tarifas tienen vigencia: /contratistas/{id}.historial = [{desde:'AAAA-MM-DD',
+// tarifas:{laborId:$}, unidades:{laborId:'mesa'|'techo'}, precioToro,
+// precioGamela, ts, uid, por}]. A cada registro se le aplica el tramo con el
+// 'desde' más reciente que no pase su fecha. Los campos sueltos (tarifas,
+// unidades, precioToro, precioGamela) quedan con lo vigente hoy, para las
+// versiones anteriores de la app. Un contratista de la v59 sin historial usa
+// esos campos sueltos para cualquier fecha.
+const TECHO_MESAS=3;
+const TARIFA_DESDE_INICIO='2000-01-01';
+function unidadTxt(u, n){ return u==='techo' ? (n===1?'techo':'techos') : (n===1?'mesa':'mesas'); }
+function tarifaVigente(cont, fecha){
+  const vacio={tarifas:{}, unidades:{}, precioToro:0, precioGamela:0, desde:''};
+  if(!cont) return vacio;
+  const hist=(cont.historial||[]).filter(x=>x && x.desde);
+  if(!hist.length) return {tarifas:cont.tarifas||{}, unidades:cont.unidades||{},
+    precioToro:Number(cont.precioToro)||0, precioGamela:Number(cont.precioGamela)||0, desde:''};
+  const f=fecha||todayIso;
+  const v=hist.filter(x=>x.desde<=f).sort((a,b)=>a.desde.localeCompare(b.desde)).pop();
+  if(!v) return vacio;   // fecha anterior a la primera tarifa: sin precio
+  return {tarifas:v.tarifas||{}, unidades:v.unidades||{},
+    precioToro:Number(v.precioToro)||0, precioGamela:Number(v.precioGamela)||0, desde:v.desde};
+}
+// Monto a pagar de una entrada de contratista, con la tarifa vigente en `fecha`.
+function calcPagoContratista(cont, labores, toro, gamela, fecha){
+  const tv=tarifaVigente(cont, fecha);
+  const t=tv.tarifas, u=tv.unidades;
   const labs=labores.map(l=>{
+    const mesas=Number(l.mesas)||0;
     const tarifa=Number(t[l.laborId])||0;
-    return {laborId:l.laborId, mesas:Number(l.mesas)||0, tarifa, monto:Math.round((Number(l.mesas)||0)*tarifa)};
+    const unidad=u[l.laborId]==='techo' ? 'techo' : 'mesa';
+    const cantidad=unidad==='techo' ? Math.round(mesas/TECHO_MESAS*100)/100 : mesas;
+    const monto=unidad==='techo' ? Math.round(mesas*tarifa/TECHO_MESAS) : Math.round(mesas*tarifa);
+    return {laborId:l.laborId, mesas, unidad, cantidad, tarifa, monto};
   });
-  const pT=Number(cont&&cont.precioToro)||0, pG=Number(cont&&cont.precioGamela)||0;
+  const pT=tv.precioToro, pG=tv.precioGamela;
   const nT=Math.max(0,Number(toro)||0), nG=Math.max(0,Number(gamela)||0);
   const pago={labores:labs,
     toro:{n:nT, precio:pT, monto:Math.round(nT*pT)},
-    gamela:{n:nG, precio:pG, monto:Math.round(nG*pG)}};
+    gamela:{n:nG, precio:pG, monto:Math.round(nG*pG)},
+    tarifaDesde:tv.desde||''};
   pago.total=labs.reduce((s,x)=>s+x.monto,0)+pago.toro.monto+pago.gamela.monto;
   return pago;
 }
@@ -1515,8 +1548,16 @@ function canVerPantalla(name){
 function weekDates(){
   const d=new Date(todayIso+'T12:00:00'),dow=d.getDay(),mon=new Date(d);   // v48 · mediodía local: sin corrimiento de día por UTC
   mon.setDate(d.getDate()-(dow===0?6:dow-1)+(semOffset*7));
-  return Array.from({length:5},(_,i)=>{const dd=new Date(mon);dd.setDate(mon.getDate()+i);return dd.toISOString().slice(0,10)});
+  return Array.from({length:diasSemanaRegistro()},(_,i)=>{const dd=new Date(mon);dd.setDate(mon.getDate()+i);return dd.toISOString().slice(0,10)});
 }
+// v65 · Los contratistas trabajan de lunes a domingo; el personal propio, de
+// lunes a viernes. Si el predio tiene contratistas activos, la tira de días del
+// registro muestra la semana completa.
+function diasSemanaRegistro(){
+  try{ return (typeof activePred!=='undefined' && contratistasDePredio(activePred).length) ? 7 : 5; }
+  catch(e){ return 5; }
+}
+function esFinDeSemana(iso){ const d=new Date(iso+'T12:00:00').getDay(); return d===0||d===6; }
 
 // ══════════════════════════════════════════════
 // AUTH
@@ -6896,16 +6937,22 @@ function pagoPreview(){
   if(!cont){ sec.style.display='none'; return; }
   sec.style.display='block';
   document.getElementById('contratoNombre').textContent=cont.nombre;
-  document.getElementById('precioToroLbl').textContent=cont.precioToro?`(${fmtCLP(cont.precioToro)} c/u)`:'(sin precio)';
-  document.getElementById('precioGamelaLbl').textContent=cont.precioGamela?`(${fmtCLP(cont.precioGamela)} c/u)`:'(sin precio)';
+  const fechaPago=(regEdit&&regEdit.data&&regEdit.data.fecha)||selDate;   // v65 · tarifa del día registrado
+  const tv=tarifaVigente(cont, fechaPago);
+  document.getElementById('precioToroLbl').textContent=tv.precioToro?`(${fmtCLP(tv.precioToro)} c/u)`:'(sin precio)';
+  document.getElementById('precioGamelaLbl').textContent=tv.precioGamela?`(${fmtCLP(tv.precioGamela)} c/u)`:'(sin precio)';
   const labs=[...document.querySelectorAll('#laborRows .labor-row')].map(row=>({
     laborId:parseInt(row.querySelector('.lr-labor').value)||0,
     mesas:parseInt(row.querySelector('.lr-mesas').value)||0
   })).filter(l=>l.laborId);
-  const pago=calcPagoContratista(cont, labs, document.getElementById('cajasToro').value, document.getElementById('cajasGamela').value);
+  const pago=calcPagoContratista(cont, labs, document.getElementById('cajasToro').value, document.getElementById('cajasGamela').value, fechaPago);
   const lineas=pago.labores.map(x=>{
     const l=LABORES.find(y=>y.id===x.laborId);
-    return `<div>${x.laborId}. ${escH(l?l.d:'')}: ${x.mesas} mesas × ${x.tarifa?fmtCLP(x.tarifa):'<b style="color:var(--red)">sin tarifa</b>'} = <b>${fmtCLP(x.monto)}</b></div>`;
+    const precio=x.tarifa?`${fmtCLP(x.tarifa)}/${x.unidad}`:'<b style="color:var(--red)">sin tarifa</b>';
+    const cant=x.unidad==='techo'
+      ? `${x.mesas} mesas = ${x.cantidad.toLocaleString('es-CL')} ${unidadTxt('techo',x.cantidad)}${x.mesas%TECHO_MESAS?' <span style="color:#B45309">(no es múltiplo de 3)</span>':''}`
+      : `${x.mesas} ${unidadTxt('mesa',x.mesas)}`;
+    return `<div>${x.laborId}. ${escH(l?l.d:'')}: ${cant} × ${precio} = <b>${fmtCLP(x.monto)}</b></div>`;
   });
   if(pago.toro.n) lineas.push(`<div>Toros: ${pago.toro.n} × ${fmtCLP(pago.toro.precio)} = <b>${fmtCLP(pago.toro.monto)}</b></div>`);
   if(pago.gamela.n) lineas.push(`<div>Gamelas: ${pago.gamela.n} × ${fmtCLP(pago.gamela.precio)} = <b>${fmtCLP(pago.gamela.monto)}</b></div>`);
@@ -7032,7 +7079,8 @@ function buildSem(){
   const hdr=document.createElement('div');
   hdr.style.cssText='display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;gap:6px';
   const lblTxt=semOffset===0?'Esta semana':(semOffset===-1?'Semana pasada':`${Math.abs(semOffset)} semanas atrás`);
-  const rango=`${wd[0].slice(8)}/${wd[0].slice(5,7)} — ${wd[4].slice(8)}/${wd[4].slice(5,7)}`;
+  const wl=wd[wd.length-1];   // v65 · viernes o domingo
+  const rango=`${wd[0].slice(8)}/${wd[0].slice(5,7)} — ${wl.slice(8)}/${wl.slice(5,7)}`;
   hdr.innerHTML=`
     <button onclick="navSem(-1)" style="padding:4px 10px;border:1px solid var(--sand);border-radius:6px;background:var(--white);cursor:pointer;font-size:13px">‹</button>
     <div style="flex:1;text-align:center;font-size:11px"><div style="font-weight:600">${lblTxt}</div><div style="color:var(--muted);font-family:'DM Mono',monospace">${rango}</div></div>
@@ -7041,12 +7089,13 @@ function buildSem(){
   g.appendChild(hdr);
   // Grid de días
   const dg=document.createElement('div');
-  dg.style.cssText='display:grid;grid-template-columns:repeat(5,1fr);gap:6px';
+  dg.style.cssText=`display:grid;grid-template-columns:repeat(${wd.length},1fr);gap:${wd.length>5?4:6}px`;
   wd.forEach((iso,i)=>{
     const hasD=rCache.some(r=>r.fecha===iso),isA=iso===selDate;
     const b=document.createElement('div');
-    b.className=`dib${isA?' active':''}${hasD&&!isA?' has-data':''}`;
-    b.innerHTML=`<div class="dn">${DIAS[i]}</div><div class="dd">${iso.slice(8)}</div>`;
+    b.className=`dib${isA?' active':''}${hasD&&!isA?' has-data':''}${i>=5?' dib-fds':''}`;
+    b.innerHTML=`<div class="dn">${wd.length>5?DIAS_CORTO[i]:DIAS[i]}</div><div class="dd">${iso.slice(8)}</div>`;
+    if(i>=5) b.title='Fin de semana: solo contratistas';
     b.onclick=()=>{selDate=iso;buildSem();renderHoy();renderCtx()};
     dg.appendChild(b);
   });
@@ -7350,7 +7399,7 @@ async function guardar(){
     if((nT||nG) && !labores.some(l=>l.laborId===LABOR_COSECHA)){
       toast('⚠️ Hay cajas: agrega la labor 48 (Cosecha)');return;
     }
-    pagoReg=calcPagoContratista(contReg, labores, nT, nG);
+    pagoReg=calcPagoContratista(contReg, labores, nT, nG, (regEdit&&regEdit.data&&regEdit.data.fecha)||selDate);   // v65 · tarifa del día
     const sinTarifa=pagoReg.labores.filter(x=>!x.tarifa && x.mesas>0).map(x=>x.laborId);
     const faltaPrecio=(nT&&!pagoReg.toro.precio)||(nG&&!pagoReg.gamela.precio);
     if(sinTarifa.length||faltaPrecio){
@@ -7359,6 +7408,12 @@ async function guardar(){
         `.\n\nEso queda en $0. Gerencia lo completa en Config › Contratistas.\n¿Guardar igual?`)) return;
     }
     cajasReg={toro:nT, gamela:nG};
+  }
+  // v65 · Sábado y domingo son días de contratistas; el personal propio no
+  // trabaja el fin de semana. Se avisa, no se bloquea (puede haber excepciones).
+  const fechaReg=(regEdit&&regEdit.data&&regEdit.data.fecha)||selDate;
+  if(esFinDeSemana(fechaReg) && !contReg && !ausente && !vacaciones){
+    if(!confirm(`El ${fDMY(fechaReg)} es ${new Date(fechaReg+'T12:00:00').getDay()===0?'domingo':'sábado'}. El fin de semana trabajan solo los contratistas.\n\n¿Registrar igual a este trabajador de planta?`)) return;
   }
   loading(true,'Guardando…');
   try{
@@ -8296,35 +8351,65 @@ async function renderConfig(){
   }
 }
 
-// ── v59 · Config › Contratistas ──
+// ── v59 · Config › Contratistas ── (v65: unidad mesa/techo y vigencia)
+function fDesdeTxt(d){ return (!d||d===TARIFA_DESDE_INICIO) ? 'el inicio' : fDMY(d); }
 function renderContratistasConfig(){
   const el=document.getElementById('contList'); if(!el) return;
   el.innerHTML=contratistasCache.length ? contratistasCache.slice().sort((a,b)=>a.nombre.localeCompare(b.nombre,'es')).map(c=>{
-    const nT=Object.values(c.tarifas||{}).filter(v=>Number(v)>0).length;
+    const tv=tarifaVigente(c, todayIso);
+    const nT=Object.values(tv.tarifas||{}).filter(v=>Number(v)>0).length;
+    const nTe=Object.keys(tv.tarifas||{}).filter(k=>Number(tv.tarifas[k])>0 && (tv.unidades||{})[k]==='techo').length;
+    const fut=(c.historial||[]).filter(x=>x.desde>todayIso).sort((a,b)=>a.desde.localeCompare(b.desde))[0];
     return `<div class="wrow">
       <div><div class="wn">🧑‍🌾 ${escH(c.nombre)}${c.activo===false?' <span style="color:var(--muted);font-weight:400">(inactivo)</span>':''}</div>
-      <div class="wm">${(c.predios||[]).map(p=>PREDIOS[p]?PREDIOS[p].nombre:p).join(', ')||'sin predio'} · ${nT} labores con tarifa · toro ${c.precioToro?fmtCLP(c.precioToro):'—'} · gamela ${c.precioGamela?fmtCLP(c.precioGamela):'—'}</div></div>
+      <div class="wm">${(c.predios||[]).map(p=>PREDIOS[p]?PREDIOS[p].nombre:p).join(', ')||'sin predio'} · ${nT} labores con tarifa${nTe?` (${nTe} por techo)`:''} · toro ${tv.precioToro?fmtCLP(tv.precioToro):'—'} · gamela ${tv.precioGamela?fmtCLP(tv.precioGamela):'—'}${tv.desde?` · vigente desde ${fDesdeTxt(tv.desde)}`:''}${fut?` · <b>cambia el ${fDMY(fut.desde)}</b>`:''}</div></div>
       <button class="btn btn-secondary btn-sm" onclick="contEditar('${c.id}')">✏️</button>
     </div>`;}).join('') : `<div class="empty"><div style="padding:8px 0;font-size:12px">Sin contratistas</div></div>`;
 }
-function contEditar(id){
+// Abre el formulario. `desdeTramo`: carga ese tramo del historial para corregirlo.
+function contEditar(id, desdeTramo){
   const c=id ? (contratistasCache.find(x=>x.id===id)||{}) : {tarifas:{}, predios:[activePred], activo:true};
-  const t=c.tarifas||{};
+  const hist=(c.historial||[]).filter(x=>x&&x.desde).slice().sort((a,b)=>b.desde.localeCompare(a.desde));
+  const tramo = desdeTramo ? (hist.find(x=>x.desde===desdeTramo)||null) : null;
+  const base = tramo ? {tarifas:tramo.tarifas||{}, unidades:tramo.unidades||{}, precioToro:tramo.precioToro, precioGamela:tramo.precioGamela}
+                     : (id ? tarifaVigente(c, todayIso) : {tarifas:{}, unidades:{}, precioToro:0, precioGamela:0});
+  const t=base.tarifas||{}, u=base.unidades||{};
+  const desdeVal = tramo ? (tramo.desde===TARIFA_DESDE_INICIO?'':tramo.desde) : todayIso;
+  const histHTML = hist.length ? `<div style="font-size:11px;margin:2px 0 8px;line-height:1.6">
+      <div style="font-weight:700;margin-bottom:2px">Historial de tarifas</div>
+      ${hist.map(h=>{
+        const n=Object.values(h.tarifas||{}).filter(v=>Number(v)>0).length;
+        const esVig=tarifaVigente(c,todayIso).desde===h.desde;
+        return `<div style="display:flex;gap:6px;align-items:center;${tramo&&tramo.desde===h.desde?'background:var(--lime);border-radius:5px;padding:0 4px;':''}">
+          <span style="flex:1">Desde ${fDesdeTxt(h.desde)} · ${n} labores${esVig?' · <b>vigente</b>':h.desde>todayIso?' · <b>futura</b>':''}${h.por?` · ${escH(h.por)}`:''}</span>
+          <button class="btn btn-secondary btn-sm" style="padding:2px 7px;font-size:10.5px" onclick="contEditar('${escH(id)}','${h.desde}')">Ver / corregir</button>
+        </div>`;}).join('')}
+    </div>` : '';
   document.getElementById('contForm').innerHTML=`<div style="border:1px solid var(--sand);border-radius:9px;padding:10px;margin-top:8px">
     <input type="hidden" id="contId" value="${escH(id)}">
+    <input type="hidden" id="contTramoOrig" value="${tramo?escH(tramo.desde):''}">
     <div class="form-row"><label>Nombre</label><input type="text" id="contNombre" value="${escH(c.nombre||'')}" ${id?'disabled title="El nombre no se cambia: amarra trabajadores, ciclos y registros"':''} placeholder="Ej: Contratista Alicia"></div>
     <div class="form-row"><label>Predios</label><div style="display:flex;gap:12px;flex-wrap:wrap">${PRED_ORDER.map(p=>`<label style="display:flex;gap:4px;align-items:center;text-transform:none;font-weight:400;margin:0"><input type="checkbox" class="contPred" value="${p}" ${(c.predios||[]).includes(p)?'checked':''}> ${PREDIOS[p].nombre}</label>`).join('')}</div></div>
-    <div class="form-grid">
-      <div><label>$ por caja toro</label><input type="number" id="contToro" min="0" value="${c.precioToro||''}"></div>
-      <div><label>$ por caja gamela</label><input type="number" id="contGamela" min="0" value="${c.precioGamela||''}"></div>
-    </div>
     <label style="display:flex;gap:6px;align-items:center;text-transform:none;font-weight:400;margin:4px 0 8px"><input type="checkbox" id="contActivo" ${c.activo!==false?'checked':''}> Activo (aparece como subjefe y en el registro)</label>
-    <label>$ por mesa, por labor <span style="font-weight:400;color:var(--muted)">(vacío = no se le paga esa labor)</span></label>
+    ${histHTML}
+    <div style="background:#F0F7EE;border:1px solid #CFE3C8;border-radius:8px;padding:8px;margin-bottom:8px">
+      <div class="form-row" style="margin-bottom:4px"><label>Tarifas vigentes desde</label><input type="date" id="contDesde" value="${desdeVal}"></div>
+      <div style="font-size:10.5px;color:var(--muted);line-height:1.45">${tramo?`Estás corrigiendo las tarifas que rigen desde ${fDesdeTxt(tramo.desde)}.`:'Para un cambio de precio, deja la fecha desde la que rige el valor nuevo: lo registrado antes de esa fecha conserva el valor anterior.'} Vacío = desde el inicio.</div>
+    </div>
+    <div class="form-grid">
+      <div><label>$ por caja toro</label><input type="number" id="contToro" min="0" value="${base.precioToro||''}"></div>
+      <div><label>$ por caja gamela</label><input type="number" id="contGamela" min="0" value="${base.precioGamela||''}"></div>
+    </div>
+    <label>Valor por labor <span style="font-weight:400;color:var(--muted)">($ por mesa o por techo de 3 mesas · vacío = no se le paga esa labor)</span></label>
     <input type="text" id="contFiltro" placeholder="Buscar labor…" oninput="contFiltrar()" style="margin-bottom:6px">
-    <div id="contTarifas" style="max-height:320px;overflow-y:auto;border:1px solid var(--sand);border-radius:7px;padding:4px 8px">
-      ${LABORES.filter(l=>!l.hidden).map(l=>`<div class="contTarRow" data-txt="${escH((l.id+' '+l.d).toLowerCase())}" style="display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--sand)">
+    <div id="contTarifas" style="max-height:340px;overflow-y:auto;border:1px solid var(--sand);border-radius:7px;padding:4px 8px">
+      ${LABORES.filter(l=>!l.hidden).map(l=>`<div class="contTarRow" data-txt="${escH((l.id+' '+l.d).toLowerCase())}" style="display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid var(--sand)">
         <span style="flex:1;font-size:12px"><span style="color:var(--muted);font-family:'DM Mono',monospace">${l.id}.</span> ${escH(l.d)}</span>
-        <input type="number" class="contTar" data-id="${l.id}" min="0" value="${t[l.id]||''}" style="width:95px;padding:5px">
+        <input type="number" class="contTar" data-id="${l.id}" min="0" value="${t[l.id]||''}" style="width:88px;padding:5px">
+        <select class="contUni" data-id="${l.id}" style="width:82px;padding:5px;font-size:11.5px">
+          <option value="mesa" ${u[l.id]==='techo'?'':'selected'}>/ mesa</option>
+          <option value="techo" ${u[l.id]==='techo'?'selected':''}>/ techo</option>
+        </select>
       </div>`).join('')}
     </div>
     <div style="display:flex;gap:6px;margin-top:8px">
@@ -8349,23 +8434,94 @@ async function contGuardar(){
   }
   const predios=[...document.querySelectorAll('.contPred:checked')].map(x=>x.value);
   if(!predios.length){ toast('⚠️ Marca al menos un predio'); return; }
-  const tarifas={};
-  document.querySelectorAll('.contTar').forEach(inp=>{ const v=Number(inp.value); if(v>0) tarifas[inp.dataset.id]=Math.round(v); });
-  const data={ nombre, predios, tarifas,
+  const desde=document.getElementById('contDesde').value || TARIFA_DESDE_INICIO;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(desde)){ toast('⚠️ Fecha de vigencia no válida'); return; }
+  const tramoOrig=document.getElementById('contTramoOrig').value;
+  const tarifas={}, unidades={};
+  document.querySelectorAll('.contTar').forEach(inp=>{
+    const v=Number(inp.value);
+    if(v>0){
+      tarifas[inp.dataset.id]=Math.round(v);
+      const sel=document.querySelector(`.contUni[data-id="${inp.dataset.id}"]`);
+      if(sel && sel.value==='techo') unidades[inp.dataset.id]='techo';
+    }
+  });
+  const prev = id ? (contratistasCache.find(x=>x.id===id)||{}) : {};
+  let hist=(prev.historial||[]).filter(x=>x&&x.desde).map(x=>({...x}));
+  // Contratista de la v59 (sin historial): lo que tenía pasa a ser la tarifa
+  // "desde el inicio", para que lo ya registrado conserve su valor.
+  if(id && !hist.length && (Object.keys(prev.tarifas||{}).length || prev.precioToro || prev.precioGamela)){
+    hist.push({desde:TARIFA_DESDE_INICIO, tarifas:prev.tarifas||{}, unidades:prev.unidades||{},
+      precioToro:Number(prev.precioToro)||0, precioGamela:Number(prev.precioGamela)||0,
+      ts:prev.updatedAt||Date.now(), uid:prev.updatedBy||'', por:'(tarifa inicial)'});
+  }
+  const tramo={desde, tarifas, unidades,
     precioToro: Math.max(0,Math.round(Number(document.getElementById('contToro').value)||0)),
     precioGamela: Math.max(0,Math.round(Number(document.getElementById('contGamela').value)||0)),
+    ts: Date.now(), uid: currentUser.uid, por: (currentProfile&&currentProfile.nombre)||currentUser.email||''};
+  // Corrigiendo un tramo y cambiándole la fecha: se reemplaza el original.
+  if(tramoOrig && tramoOrig!==desde) hist=hist.filter(x=>x.desde!==tramoOrig);
+  const yaHay=hist.findIndex(x=>x.desde===desde);
+  if(yaHay>=0){
+    if(!tramoOrig && !confirm(`Ya hay tarifas que rigen desde ${fDesdeTxt(desde)}. ¿Reemplazarlas por estas?`)) return;
+    hist[yaHay]=tramo;
+  } else hist.push(tramo);
+  hist.sort((a,b)=>a.desde.localeCompare(b.desde));
+  const vig=tarifaVigente({historial:hist}, todayIso);
+  const data={ nombre, predios, historial:hist,
+    // Vigente hoy, para las versiones anteriores de la app (v59-v64)
+    tarifas:vig.tarifas, unidades:vig.unidades, precioToro:vig.precioToro, precioGamela:vig.precioGamela,
     activo: document.getElementById('contActivo').checked,
     updatedAt: Date.now(), updatedBy: currentUser.uid };
   loading(true,'Guardando contratista…');
+  let guardado=null;
   try{
     const ref = id ? db.collection('contratistas').doc(id) : db.collection('contratistas').doc();
     await ref.set(data);
     await loadContratistas();
+    guardado=contratistasCache.find(x=>x.id===ref.id)||{id:ref.id,...data};
     document.getElementById('contForm').innerHTML='';
     toast('✅ Contratista guardado');
     loadPredioData(activePred);   // recarga subjefes, ciclos y selectores
     renderContratistasConfig();
   }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+  // v65 · Si la tarifa rige desde una fecha pasada, ofrecer recalcular lo ya registrado.
+  if(guardado && id && desde<=todayIso){
+    const sig=hist.find(x=>x.desde>desde);
+    const hasta=sig?sig.desde:null;
+    if(confirm(`Las tarifas rigen desde ${fDesdeTxt(desde)}.\n\n¿Recalcular el pago de lo ya registrado de ${nombre} desde esa fecha${hasta?` hasta el ${fDMY(hasta)} (sin incluirlo)`:''} con estos valores?\n\nSi eliges Cancelar, lo registrado conserva el valor con que se guardó.`))
+      await contRecalcular(guardado, desde, hasta);
+  }
+}
+// v65 · Recalcula el pago de las entradas del contratista en [desde, hasta).
+async function contRecalcular(cont, desde, hasta){
+  loading(true,'Recalculando pagos…');
+  let n=0, dif=0;
+  try{
+    for(const pid of (cont.predios||PRED_ORDER)){
+      let q=colRegistros(pid).where('fecha','>=',desde===TARIFA_DESDE_INICIO?'0000':desde);
+      if(hasta) q=q.where('fecha','<',hasta);
+      const snap=await q.get();
+      const ops=[];
+      snap.forEach(d=>{
+        const r=d.data();
+        if(r.contratistaId!==cont.id || !r.pago) return;
+        const cj=r.cajas||{};
+        const nuevo=calcPagoContratista(cont, r.labores||[], cj.toro, cj.gamela, r.fecha);
+        if(JSON.stringify(nuevo)===JSON.stringify(r.pago)) return;
+        dif+=(nuevo.total||0)-(Number(r.pago.total)||0);
+        ops.push({ref:d.ref, pago:nuevo});
+      });
+      for(let i=0;i<ops.length;i+=400){
+        const b=db.batch();
+        ops.slice(i,i+400).forEach(o=>b.update(o.ref,{pago:o.pago, pagoRecalcAt:Date.now(), pagoRecalcPor:currentUser.uid}));
+        await b.commit();
+      }
+      n+=ops.length;
+    }
+    toast(n?`✅ ${n} registro(s) recalculado(s) · diferencia ${dif>=0?'+':''}${fmtCLP(dif)}`:'Nada que recalcular: los montos ya coincidían');
+  }catch(e){ toast('Error al recalcular: '+e.message); }
   loading(false);
 }
 
@@ -8807,9 +8963,12 @@ function calcContratistas(){
     t.dias.add(r.fecha);
     (r.pago.labores||[]).forEach(x=>{
       t.mesas += Number(x.mesas)||0; t.montoLab += Number(x.monto)||0;
-      const kl = cont+'|'+x.laborId+'|'+(Number(x.tarifa)||0);
-      if(!porLabor[kl]) porLabor[kl] = { contratista:cont, laborId:x.laborId, tarifa:Number(x.tarifa)||0, mesas:0, monto:0 };
-      porLabor[kl].mesas += Number(x.mesas)||0; porLabor[kl].monto += Number(x.monto)||0;
+      const uni = x.unidad==='techo' ? 'techo' : 'mesa';   // v65
+      const kl = cont+'|'+x.laborId+'|'+(Number(x.tarifa)||0)+'|'+uni;
+      if(!porLabor[kl]) porLabor[kl] = { contratista:cont, laborId:x.laborId, tarifa:Number(x.tarifa)||0, unidad:uni, mesas:0, cantidad:0, monto:0 };
+      porLabor[kl].mesas += Number(x.mesas)||0;
+      porLabor[kl].cantidad += uni==='techo' ? (Number(x.mesas)||0)/TECHO_MESAS : (Number(x.mesas)||0);
+      porLabor[kl].monto += Number(x.monto)||0;
     });
     const pt=r.pago.toro||{}, pg=r.pago.gamela||{};
     t.toro += Number(pt.n)||0; t.gamela += Number(pg.n)||0;
@@ -8818,8 +8977,8 @@ function calcContratistas(){
     [['toro','Caja toro',pt],['gamela','Caja gamela',pg]].forEach(([id,nom,c])=>{
       if(!(Number(c.n)>0)) return;
       const kl = cont+'|'+id+'|'+(Number(c.precio)||0);
-      if(!porLabor[kl]) porLabor[kl] = { contratista:cont, laborId:id, nombreItem:nom, tarifa:Number(c.precio)||0, mesas:0, monto:0, esCaja:true };
-      porLabor[kl].mesas += Number(c.n)||0; porLabor[kl].monto += Number(c.monto)||0;
+      if(!porLabor[kl]) porLabor[kl] = { contratista:cont, laborId:id, nombreItem:nom, tarifa:Number(c.precio)||0, unidad:'caja', mesas:0, cantidad:0, monto:0, esCaja:true };
+      porLabor[kl].mesas += Number(c.n)||0; porLabor[kl].cantidad += Number(c.n)||0; porLabor[kl].monto += Number(c.monto)||0;
     });
   });
   const rows = Object.values(porTrab).map(v=>({...v, diasTrabajados:v.dias.size}))
@@ -8839,7 +8998,11 @@ function renderInfContratistas(){
   const conts=[...new Set(rows.map(r=>r.contratista))];
   let html = `<div class="inf-card">
     <div class="inf-hdr"><div class="inf-card-title">🧑‍🌾 Pago a contratistas</div>${infDlBtnsHTML('contratistas')}</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Con la tarifa vigente el día de cada registro (mesas × $/mesa + cajas × $/caja).</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Con la tarifa vigente el día de cada registro (mesas × $/mesa, o mesas ÷ 3 × $/techo, + cajas × $/caja).</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+      <button class="btn btn-secondary btn-sm" onclick="infSemanaContratistas(-1)">📅 Semana pasada (lun–dom)</button>
+      <button class="btn btn-secondary btn-sm" onclick="infSemanaContratistas(0)">📅 Esta semana</button>
+    </div>
     <div class="inf-summary">
       <div class="inf-pill"><div class="inf-pill-label">Contratistas</div><div class="inf-pill-value">${conts.length}</div></div>
       <div class="inf-pill"><div class="inf-pill-label">Mesas</div><div class="inf-pill-value">${tot.mesas.toLocaleString('es-CL')}</div></div>
@@ -8856,11 +9019,73 @@ function renderInfContratistas(){
     html += `<div style="font-weight:700;margin:12px 0 4px">${escH(c)} · ${fmtCLP(tc)}</div>
     <table class="inf-table"><thead><tr><th>Trabajador</th><th class="num">Días</th><th class="num">Mesas</th><th class="num">$ labores</th><th class="num">Toros</th><th class="num">Gamelas</th><th class="num">$ cajas</th><th class="num">Total</th></tr></thead>
     <tbody>${rs.map(r=>`<tr><td>${escH(r.nombre)}</td><td class="num">${r.diasTrabajados}</td><td class="num">${r.mesas.toLocaleString('es-CL')}</td><td class="num">${fmtCLP(r.montoLab)}</td><td class="num">${r.toro}</td><td class="num">${r.gamela}</td><td class="num">${fmtCLP(r.montoCajas)}</td><td class="num"><b>${fmtCLP(r.total)}</b></td></tr>`).join('')}</tbody></table>
-    <table class="inf-table" style="margin-top:6px"><thead><tr><th>Labor / caja</th><th class="num">Mesas o cajas</th><th class="num">Tarifa</th><th class="num">Monto</th></tr></thead>
-    <tbody>${its.map(x=>`<tr><td>${escH(itemNombre(x))}</td><td class="num">${x.mesas.toLocaleString('es-CL')}</td><td class="num">${x.tarifa?fmtCLP(x.tarifa):'<span style="color:var(--red)">sin tarifa</span>'}</td><td class="num">${fmtCLP(x.monto)}</td></tr>`).join('')}</tbody></table>`;
+    <table class="inf-table" style="margin-top:6px"><thead><tr><th>Labor / caja</th><th class="num">Mesas</th><th class="num">Cantidad pagada</th><th class="num">Tarifa</th><th class="num">Monto</th></tr></thead>
+    <tbody>${its.map(x=>`<tr><td>${escH(itemNombre(x))}</td><td class="num">${x.esCaja?'—':x.mesas.toLocaleString('es-CL')}</td><td class="num">${(Math.round(x.cantidad*100)/100).toLocaleString('es-CL')} ${x.esCaja?'cajas':unidadTxt(x.unidad,x.cantidad)}</td><td class="num">${x.tarifa?`${fmtCLP(x.tarifa)}/${x.esCaja?'caja':x.unidad}`:'<span style="color:var(--red)">sin tarifa</span>'}</td><td class="num">${fmtCLP(x.monto)}</td></tr>`).join('')}</tbody></table>`;
   });
   html += `</div>`;
+  html += pagoSemanalHTML();
   document.getElementById('infContent').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+// v65 · PAGO SEMANAL A CONTRATISTAS (lunes a domingo)
+// Suma, por contratista y semana, lo pagado a cada trabajador cada día.
+// ─────────────────────────────────────────────
+function infSemanaContratistas(offset){
+  const lun=new Date(dashLunes(todayIso)+'T12:00:00'); lun.setDate(lun.getDate()+offset*7);
+  const dom=new Date(lun); dom.setDate(lun.getDate()+6);
+  document.getElementById('infDesde').value=lun.toISOString().slice(0,10);
+  document.getElementById('infHasta').value=dom.toISOString().slice(0,10);
+  infState.tab='contratistas';
+  cargarYRenderInformes();
+}
+function calcPagoSemanal(){
+  const { registros, desde, hasta } = infState.data;
+  const sem={};   // cont|lunes -> {contratista, lunes, trab:{k:{nombre,predio,dias[7],mesas,toro,gamela,total}}, dias[7], total}
+  registros.forEach(r=>{
+    if(!r.pago) return;
+    const w=r._worker||{};
+    const cont=r.contratista||w.subjefe||'—';
+    const lunes=dashLunes(r.fecha);
+    const di=Math.round((new Date(r.fecha+'T12:00:00')-new Date(lunes+'T12:00:00'))/86400000);
+    const ks=cont+'|'+lunes;
+    if(!sem[ks]) sem[ks]={contratista:cont, lunes, trab:{}, dias:[0,0,0,0,0,0,0], total:0, mesas:0, toro:0, gamela:0};
+    const S=sem[ks];
+    const kt=r._predio+'|'+wKeyReg(r);
+    if(!S.trab[kt]) S.trab[kt]={nombre:w.nombre||r.workerNombre||r.workerId, predio:PREDIOS[r._predio]?PREDIOS[r._predio].nombre:r._predio,
+      dias:[0,0,0,0,0,0,0], mesas:0, toro:0, gamela:0, total:0};
+    const T=S.trab[kt], m=Number(r.pago.total)||0;
+    const ms=(r.pago.labores||[]).reduce((a,x)=>a+(Number(x.mesas)||0),0);
+    const nT=Number(r.pago.toro&&r.pago.toro.n)||0, nG=Number(r.pago.gamela&&r.pago.gamela.n)||0;
+    T.dias[di]+=m; T.total+=m; T.mesas+=ms; T.toro+=nT; T.gamela+=nG;
+    S.dias[di]+=m; S.total+=m; S.mesas+=ms; S.toro+=nT; S.gamela+=nG;
+  });
+  const semanas=Object.values(sem).map(S=>{
+    const dom=new Date(S.lunes+'T12:00:00'); dom.setDate(dom.getDate()+6);
+    S.domingo=dom.toISOString().slice(0,10);
+    S.incompleta = S.lunes<desde || S.domingo>hasta;
+    S.filas=Object.values(S.trab).sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
+    return S;
+  }).sort((a,b)=> b.lunes.localeCompare(a.lunes) || a.contratista.localeCompare(b.contratista,'es'));
+  return { semanas };
+}
+function pagoSemanalHTML(){
+  const { semanas } = calcPagoSemanal();
+  let html=`<div class="inf-card">
+    <div class="inf-hdr"><div class="inf-card-title">📅 Pago semanal (lunes a domingo)</div>${infDlBtnsHTML('contratistasSem')}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Monto a pagar por trabajador y día, con el total de la semana de cada contratista.</div>`;
+  if(!semanas.length){ return html+`<div class="inf-empty">No hay trabajo de contratistas en el período.</div></div>`; }
+  const num=v=>v?fmtCLP(v):'<span style="color:var(--muted)">—</span>';
+  semanas.forEach(S=>{
+    html+=`<div style="display:flex;justify-content:space-between;align-items:baseline;margin:12px 0 4px;gap:8px;flex-wrap:wrap">
+      <div style="font-weight:700">${escH(S.contratista)} · ${fDMY(S.lunes).slice(0,5)} al ${fDMY(S.domingo)}</div>
+      <div style="font-weight:700">${fmtCLP(S.total)}</div></div>
+      ${S.incompleta?`<div style="font-size:10.5px;color:#B45309;margin-bottom:4px">⚠️ Semana incompleta: el período elegido no cubre de lunes a domingo. Usa “Semana pasada” o amplía las fechas.</div>`:''}
+      <div style="overflow-x:auto"><table class="inf-table"><thead><tr><th>Trabajador</th>${DIAS_CORTO.map(d=>`<th class="num">${d}</th>`).join('')}<th class="num">Mesas</th><th class="num">Cajas T/G</th><th class="num">Total</th></tr></thead>
+      <tbody>${S.filas.map(f=>`<tr><td>${escH(f.nombre)}</td>${f.dias.map(v=>`<td class="num">${num(v)}</td>`).join('')}<td class="num">${f.mesas.toLocaleString('es-CL')}</td><td class="num">${f.toro}/${f.gamela}</td><td class="num"><b>${fmtCLP(f.total)}</b></td></tr>`).join('')}
+      <tr style="font-weight:700;background:#F4F1EA"><td>Total día</td>${S.dias.map(v=>`<td class="num">${num(v)}</td>`).join('')}<td class="num">${S.mesas.toLocaleString('es-CL')}</td><td class="num">${S.toro}/${S.gamela}</td><td class="num">${fmtCLP(S.total)}</td></tr></tbody></table></div>`;
+  });
+  return html+`</div>`;
 }
 
 // ─────────────────────────────────────────────
@@ -9920,11 +10145,29 @@ function infTablaExport(tab){
       chartId: 'chartCiclos'
     };
   }
+  if(tab==='contratistasSem'){   // v65
+    const { semanas } = calcPagoSemanal();
+    const body=[]; let tot=0;
+    semanas.forEach(S=>{
+      const sem=`${fDMY(S.lunes)} al ${fDMY(S.domingo)}${S.incompleta?' (incompleta)':''}`;
+      S.filas.forEach(f=>body.push([sem, S.contratista, f.predio, f.nombre, ...f.dias.map(v=>Math.round(v)), f.mesas, f.toro, f.gamela, Math.round(f.total)]));
+      body.push([sem, S.contratista, '', 'Subtotal semana', ...S.dias.map(v=>Math.round(v)), S.mesas, S.toro, S.gamela, Math.round(S.total)]);
+      tot+=S.total;
+    });
+    return {
+      titulo: 'Pago semanal a contratistas (lunes a domingo)',
+      nota: 'Monto por trabajador y día, con la tarifa vigente el día de cada registro',
+      headers: ['Semana','Contratista','Predio','Trabajador',...DIAS_CORTO,'Mesas','Cajas toro','Cajas gamela','Total semana'],
+      body,
+      totales: ['TOTAL PERÍODO','','','','','','','','','','','','','',Math.round(tot)],
+      landscape: true
+    };
+  }
   if(tab==='contratistas'){
     const { rows, tot } = calcContratistas();
     return {
       titulo: 'Pago a contratistas',
-      nota: 'Tarifa vigente el día de cada registro: mesas × $/mesa + cajas × $/caja',
+      nota: 'Tarifa vigente el día de cada registro: mesas × $/mesa (o mesas ÷ 3 × $/techo) + cajas × $/caja',
       headers: ['Contratista','Predio','Trabajador','Días','Mesas','$ labores','Cajas toro','Cajas gamela','$ cajas','Total a pagar'],
       body: rows.map(r=>[r.contratista, r.predio, r.nombre, r.diasTrabajados, r.mesas, Math.round(r.montoLab), r.toro, r.gamela, Math.round(r.montoCajas), Math.round(r.total)]),
       totales: ['TOTAL','','','', tot.mesas, Math.round(tot.montoLab), tot.toro, tot.gamela, Math.round(tot.montoCajas), Math.round(tot.total)]
@@ -10046,8 +10289,9 @@ function exportInfExcel(tab){
     const wb = XLSX.utils.book_new();
     const ws = infHojaExcel(tab);
     // Nombre de hoja: máx 31 caracteres permitidos por Excel
-    const sheetNames = { dashboard:'Dashboard', progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', eficiencia:'Eficiencia', inconsist:'Inconsistencias', contratistas:'Contratistas' };
+    const sheetNames = { dashboard:'Dashboard', progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', eficiencia:'Eficiencia', inconsist:'Inconsistencias', contratistas:'Contratistas', contratistasSem:'Pago semanal' };
     XLSX.utils.book_append_sheet(wb, ws, sheetNames[tab] || 'Informe');
+    if(tab==='contratistas'){ const w2=infHojaExcel('contratistasSem'); if(w2) XLSX.utils.book_append_sheet(wb, w2, 'Pago semanal'); }   // v65
     XLSX.writeFile(wb, `fieldlog_${tab}_${m.suf}.xlsx`);
     toast('✅ Excel descargado');
   }catch(e){
@@ -10070,14 +10314,15 @@ function exportInfExcelTodo(){
       ['labores','Labores'],
       ['eficiencia','Eficiencia'],
       ['inconsist','Inconsistencias'],
-      ['contratistas','Contratistas']
+      ['contratistas','Contratistas'],
+      ['contratistasSem','Pago semanal']   // v65
     ];
     tabs.forEach(([tab, nombre])=>{
       const ws = infHojaExcel(tab);
       if(ws) XLSX.utils.book_append_sheet(wb, ws, nombre);
     });
     XLSX.writeFile(wb, `fieldlog_informes_${m.suf}.xlsx`);
-    toast('✅ Excel completo descargado (8 hojas)');
+    toast('✅ Excel completo descargado (9 hojas)');
   }catch(e){
     toast('Error al generar Excel: '+e.message);
   }
@@ -11246,10 +11491,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v64';
-const MANUAL_FECHA='2026-10-07';
+const MANUAL_VERSION='v65';
+const MANUAL_FECHA='2026-10-12';
 
 const MANUAL_CAMBIOS=[
+  {v:'v65', f:'12-10-2026', ver:()=>isCampo()||canViewInformes(), txt:'<b>Contratistas: valor por mesa o por techo, con vigencia, y pago semanal.</b> En <b>Config › Contratistas</b> cada labor lleva su valor fijo <b>por mesa o por techo</b> (1 techo = 3 mesas) y la fecha <b>desde la que rige</b>; al cambiar un precio se pone la fecha nueva y lo registrado antes conserva el valor anterior (o se puede recalcular). En el registro se siguen anotando mesas: si la labor se paga por techo, la app divide por 3. Los predios con contratistas muestran la semana completa, <b>de lunes a domingo</b>, para registrar a diario también sábado y domingo. En Informes › 🧑‍🌾 Contratistas aparece el <b>📅 Pago semanal</b>: lo que se paga a cada trabajador cada día y el total de la semana, con botones para la semana pasada y la actual.'},
   {v:'v64', f:'07-10-2026', txt:'<b>Ácidos:</b> ya no se anotan los días que dura el estanque. Al cargarlo se anotan los kg de nítrico y fosfórico y los <b>litros gastados ese día</b>; los días siguientes, con <b>➕ Seguir</b>, solo los litros gastados. Los litros de cada día se reparten entre los sectores marcados según su superficie.'},
   {v:'v63', f:'07-10-2026', txt:'<b>Caseta de Riego de La Constancia:</b> se quita el saldo de control (recibido menos aplicado). Queda solo el aviso de envío desde Bodega Principal y la confirmación de la caseta; el conteo en la caseta se hace en terreno.'},
   {v:'v62', f:'07-10-2026', txt:'<b>La Constancia: la Caseta de Riego deja de llevar stock.</b> Los fertilizantes quedan en <b>Bodega Principal</b> y de ahí descuentan el fertirriego, los ácidos y los fertilizantes vía riego. Nicolás (o bodega) avisa lo que manda a la caseta con <b>🚚 Enviar a caseta</b> (ejemplo: nitrato de potasio 1.000 kg, 7 de octubre) y el encargado de la caseta lo confirma en Bodega anotando cuánto llegó; si no calza, el envío queda marcado con la diferencia. El aviso no mueve stock. Los <b>bioestimulantes vía riego</b> (ej. Spurt) salen de Pesticidas y Bioestimulantes y se descuenta solo lo aplicado: lo que sobra vuelve a esa bodega sin registrar nada. Gerencia pasa el saldo de la caseta a Principal con <b>🔀 Ordenar bodegas LC</b>.'},
@@ -11313,7 +11559,8 @@ const MANUAL_SECCIONES=[
     'Elige arriba el <b>predio</b> y, en la tira de días, la <b>fecha</b> que estás registrando (por defecto es hoy).',
     'Elige el <b>Subjefe / Encargado</b>. Si eres subjefe, ya viene fijo con tus trabajadores.',
     'Elige el <b>Cultivo</b> y, cuando corresponda, el <b>Ciclo</b>. Si el ciclo no aparece en la lista, es porque no está abierto: ábrelo primero en la pantalla <b>Ciclos</b>.',
-    'Si la gente es de un <b>contratista</b>, elige el contratista (🧑‍🌾) en Subjefe / Encargado. Al elegir al trabajador aparece <b>Pago contratista</b>: anota las <b>cajas toro</b> y <b>gamela</b> que cosechó (con la labor 48, Cosecha). Debajo se ve cuánto se le paga ese día, con las tarifas de su contratista. Si una labor dice <b>sin tarifa</b>, avisa a gerencia.',
+    'Si la gente es de un <b>contratista</b>, elige el contratista (🧑‍🌾) en Subjefe / Encargado. Al elegir al trabajador aparece <b>Pago contratista</b>: anota las <b>cajas toro</b> y <b>gamela</b> que cosechó (con la labor 48, Cosecha). Debajo se ve cuánto se le paga ese día, con las tarifas de su contratista vigentes ese día. Las mesas se anotan igual que siempre: si la labor se paga por <b>techo</b>, la app divide por 3 (1 techo = 3 mesas). Si una labor dice <b>sin tarifa</b>, avisa a gerencia.',
+    'Los contratistas trabajan <b>de lunes a domingo</b>: en los predios con contratistas la tira de días muestra también sábado y domingo (en verde claro). Registra cada día. El personal de planta no trabaja el fin de semana: si registras a alguien de planta en sábado o domingo, la app pide confirmar.',
     'Elige el <b>Trabajador</b>. Para el trabajo con tractor (labores 11, 57, 71 u otras) elige <b>🚜 Tractorista</b>, al final de la lista: es un puesto, no una persona, y queda a nombre del subjefe elegido.',
     'Si el trabajador <b>no vino</b>, marca Trabajador ausente, Licencia médica o Vacaciones. Si hubo alguien que lo reemplazó, elígelo en Reemplazante. Con ausencia, licencia o vacaciones no hace falta cargar labores.',
     'En <b>Labores del día</b>, elige la labor y anota las <b>horas</b> y las <b>mesas</b>. Con "＋ Agregar labor" puedes cargar hasta 6 labores en una misma entrada.',
@@ -11417,7 +11664,8 @@ const MANUAL_SECCIONES=[
     'Parte en <b>🧭 Dashboard</b>: con los selectores eliges encargado, labor, métrica y si agrupar por día, semana o mes. Tocar una tarjeta de arriba también cambia la métrica de los gráficos. El gráfico por encargado siempre muestra a todos, con el elegido destacado, para comparar.',
     'Cambia entre las pestañas: <b>Prog vs Real</b>, <b>Por ciclo</b>, <b>Trabajadores</b>, <b>Labores</b>, <b>Eficiencia</b> e <b>Inconsistencias</b>.',
     'En <b>⚡ Eficiencia</b> ves, por encargado y labor, las <b>mesas por día de un trabajador</b>, lo que avanza la cuadrilla por día y el <b>costo por mesa</b>. Elige una labor en el selector para comparar a los encargados entre sí.',
-    'Con <b>📥 Excel completo</b> bajas las 7 hojas en un solo archivo.',
+    'En <b>🧑‍🌾 Contratistas</b> está lo que se paga a cada trabajador de contratista y, abajo, el <b>📅 Pago semanal</b> de lunes a domingo: el monto de cada trabajador cada día y el total de la semana por contratista. Los botones <b>Semana pasada</b> y <b>Esta semana</b> ajustan las fechas solos. Si la semana sale “incompleta”, las fechas elegidas no cubren de lunes a domingo.',
+    'Con <b>📥 Excel completo</b> bajas todas las hojas en un solo archivo (incluido el pago semanal).',
     'Con <b>📷 Anexo de observaciones (PDF)</b> bajas todas las observaciones escritas en el período, con la foto de respaldo de cada una. Sirve para respaldar una conversación sobre trabajo mal hecho, o para dejarlo por escrito.'
   ],
   tips:[
@@ -11553,7 +11801,8 @@ const MANUAL_SECCIONES=[
   id:'config', ico:'⚙️', tit:'Config — trabajadores, costos y usuarios', ver:()=>true,
   intro:'Los datos base del sistema. Cada uno ve solo las tarjetas que le corresponden.',
   pasos:[
-    '<b>🧑‍🌾 Contratistas</b> (gerencia): nombre, predios donde trabaja, <b>$ por caja toro</b>, <b>$ por caja gamela</b> y <b>$ por mesa</b> de cada labor que hace (las que queden vacías no se pagan). El nombre no se cambia después. Para darle gente, agrega sus trabajadores en <b>Trabajadores</b> eligiendo al contratista como subjefe. Cambiar una tarifa no cambia lo ya registrado: cada entrada guarda el precio del día. Si un contratista deja de trabajar, desmárcalo como activo.',
+    '<b>🧑‍🌾 Contratistas</b> (gerencia): nombre, predios donde trabaja, <b>$ por caja toro</b>, <b>$ por caja gamela</b> y el <b>valor de cada labor</b>, eligiendo si es <b>por mesa o por techo</b> (1 techo = 3 mesas). Las labores que queden vacías no se pagan. El nombre no se cambia después. Para darle gente, agrega sus trabajadores en <b>Trabajadores</b> eligiendo al contratista como subjefe. Si un contratista deja de trabajar, desmárcalo como activo.',
+    '<b>Cambio de precios:</b> el valor de cada labor es fijo hasta que se cambie. Para cambiarlo, abre el contratista, pon en <b>Tarifas vigentes desde</b> el día en que rige el valor nuevo y guarda: queda en el <b>historial</b> y lo registrado antes de esa fecha conserva el valor anterior. Si la fecha es pasada, la app ofrece <b>recalcular</b> lo ya registrado desde ese día. Con <b>Ver / corregir</b> se arregla una tarifa del historial.',
     '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes. Al final aparece <b>🚜 Tractorista</b> marcado como <i>fijo</i>: es genérico, está en todos los predios y subjefes, y no se borra.',
     '<b>🗺️ Sectores de riego</b> (gerencia con todos los predios): elige el predio y corrige cada sector con su nombre, metros lineales y hectáreas. Los sectores que se riegan juntos van como uno solo (ej. <i>1A-3</i>). Lo ya registrado no cambia, porque cada aplicación guardó la superficie de ese día.',
     '<b>Costos del personal</b> (gerencia con todos los predios): sueldo mínimo mensual, bono o extra fijo y jornada semanal. De ahí sale el costo por hora de los informes; actualízalo cuando cambie el sueldo mínimo legal.',
