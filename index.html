@@ -514,6 +514,7 @@ body.vista-escritorio .modal-content{max-width:700px}
       <button class="nb active" id="btnRegistro" onclick="showScr('registro',this)">Registrar</button>
       <button class="nb" id="btnProg"   onclick="showScr('prog',this)">Prog.</button>
       <button class="nb" id="btnAvance" onclick="showScr('avance',this)">Avance</button>
+      <button class="nb" id="btnModulo" onclick="showScr('modulo',this)">Labor × módulo</button>
       <button class="nb" id="btnCiclos" onclick="showScr('ciclos',this)">Ciclos</button>
       <button class="nb" id="btnControl" style="display:none" onclick="showScr('control',this)">Control</button>
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
@@ -599,6 +600,20 @@ body.vista-escritorio .modal-content{max-width:700px}
     <div id="progNewBtn"></div>
   </div>
 
+  <!-- v68 · LABOR × MÓDULO: registro de control por módulo -->
+  <div id="screen-modulo" class="screen">
+    <div class="sp" style="height:10px"></div>
+    <div class="card">
+      <div class="card-title">📦 Labor por módulo</div>
+      <p style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">Registro de control, aparte del diario: cuántos encargados hicieron una labor en un módulo, y cuándo empezaron y terminaron. Sirve para contrastar el registro diario por trabajador.</p>
+      <div id="lmForm"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">📋 Registrado</div>
+      <div id="lmLista"></div>
+    </div>
+  </div>
+
   <!-- AVANCE -->
   <div id="screen-avance" class="screen">
     <div id="ctx2" style="margin-top:10px"></div>
@@ -670,9 +685,10 @@ body.vista-escritorio .modal-content{max-width:700px}
         <button class="inftab" data-tab="eficiencia" onclick="switchInfTab('eficiencia')">⚡ Eficiencia</button>
         <button class="inftab" data-tab="inconsist" onclick="switchInfTab('inconsist')">⚠️ Inconsistencias</button>
         <button class="inftab" data-tab="contratistas" onclick="switchInfTab('contratistas')">🧑‍🌾 Contratistas</button>
+        <button class="inftab" data-tab="modulos" onclick="switchInfTab('modulos')">📦 Por módulo</button>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (9 hojas)</button>
+        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (10 hojas)</button>
         <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportAnexoFotos()">📷 Anexo de observaciones (PDF)</button>
       </div>
       <div id="infContent"></div>
@@ -888,6 +904,24 @@ body.vista-escritorio .modal-content{max-width:700px}
         <div id="contList"></div>
         <div id="contForm"></div>
         <button class="btn btn-secondary" id="contNuevoBtn" style="margin-top:6px" onclick="contEditar('')">＋ Nuevo contratista</button>
+      </div>
+    </div>
+    <!-- v68 · Jornada y mesas por módulo (para Labor × módulo) -->
+    <div id="jornadaConfigSection" style="display:none">
+      <div class="card">
+        <div class="card-title">🕗 Jornada y mesas por módulo</div>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Con la jornada se calculan las horas trabajadas entre el inicio y el término de una labor por módulo (solo cuenta el horario de trabajo y descuenta la colación). Las mesas de cada módulo se proponen solas al registrar.</p>
+        <div class="form-grid">
+          <div><label>Entrada</label><input type="time" id="jorEntrada"></div>
+          <div><label>Salida</label><input type="time" id="jorSalida"></div>
+          <div><label>Colación desde</label><input type="time" id="jorColIni"></div>
+          <div><label>Colación hasta</label><input type="time" id="jorColFin"></div>
+        </div>
+        <div id="jorTxt" style="font-size:11px;color:var(--muted);margin:2px 0 8px"></div>
+        <button class="btn btn-primary" onclick="guardarJornada()">Guardar jornada</button>
+        <div class="sec-div">Mesas por módulo</div>
+        <div class="form-row"><label>Predio</label><select id="mmPredio" onchange="renderMesasModulo()"></select></div>
+        <div id="mmBody"></div>
       </div>
     </div>
     <div id="costosConfigSection" style="display:none">
@@ -1534,7 +1568,7 @@ function canViewInformes(){
 
 // Pantallas permitidas por rol (defensa por si se navega a mano)
 function canVerPantalla(name){
-  if(['registro','prog','avance','ciclos'].includes(name))return isCampo();
+  if(['registro','prog','avance','ciclos','modulo'].includes(name))return isCampo();   // v68 · modulo
   if(name==='informes')return canViewInformes();
   if(name==='experiencia')return puedeVerExperiencia();   // v55
   if(name==='control')return canVerControl();   // v52
@@ -1706,6 +1740,10 @@ async function loadCatalogos(){
       terrenoCache = {};
       terrSnap.docs.forEach(d=>{ terrenoCache[d.id] = d.data()||{}; });
     }catch(e){ terrenoCache = {}; }
+    try{   // v68 · jornada para Labor × módulo
+      const js = await db.collection('config').doc('jornada').get();
+      if(js.exists) jornadaCfg = Object.assign({}, JORNADA_DEF, js.data()||{});
+    }catch(e){}
     if(costoSnap.exists){
       const data = costoSnap.data();
       if(typeof data.sueldoMinimo === 'number') costosConfig.sueldoMinimo = data.sueldoMinimo;
@@ -1715,6 +1753,304 @@ async function loadCatalogos(){
   }catch(e){
     console.warn('No se pudieron cargar catálogos de Firestore:', e.message);
   }
+}
+
+// ══════════════════════════════════════════════
+// v68 · LABOR × MÓDULO
+// Registro de control, independiente del diario por trabajador:
+//   /labMod/{predioId}/items/{id} = {subjefe, cicloId, cicloLbl, cultivo,
+//     laborId, modulo, mesas, personas, inicio:'AAAA-MM-DDTHH:MM',
+//     fin:'AAAA-MM-DDTHH:MM'|null, finDeSemana, obs, ts, creadoPor, ...}
+// Horas = tiempo entre inicio y término que cae dentro de la jornada
+// (/config/jornada), sin la colación; sábado y domingo solo si se marca.
+// Días-persona = personas × horas ÷ horas de una jornada completa.
+// ══════════════════════════════════════════════
+const JORNADA_DEF={entrada:'08:00', salida:'17:30', colIni:'13:00', colFin:'14:00'};
+let jornadaCfg=Object.assign({}, JORNADA_DEF);
+function hm2min(t){ const m=String(t||'').match(/^(\d{1,2}):(\d{2})/); return m ? (+m[1])*60+(+m[2]) : null; }
+function solape(a1,a2,b1,b2){ return Math.max(0, Math.min(a2,b2)-Math.max(a1,b1)); }
+function horasJornadaDia(){
+  const e=hm2min(jornadaCfg.entrada), s=hm2min(jornadaCfg.salida), ci=hm2min(jornadaCfg.colIni), cf=hm2min(jornadaCfg.colFin);
+  if(e===null||s===null||s<=e) return 0;
+  return (s-e - (ci!==null&&cf!==null ? solape(e,s,ci,cf) : 0))/60;
+}
+// Horas de jornada entre dos instantes 'AAAA-MM-DDTHH:MM'
+function horasEntre(ini, fin, finDeSemana){
+  if(!ini||!fin||fin<=ini) return 0;
+  const e=hm2min(jornadaCfg.entrada), s=hm2min(jornadaCfg.salida), ci=hm2min(jornadaCfg.colIni), cf=hm2min(jornadaCfg.colFin);
+  if(e===null||s===null||s<=e) return 0;
+  const dIni=ini.slice(0,10), dFin=fin.slice(0,10);
+  let tot=0, d=new Date(dIni+'T12:00:00'), guard=0;
+  while(guard++<400){
+    const iso=d.toISOString().slice(0,10);
+    if(iso>dFin) break;
+    const dw=d.getDay();
+    if(finDeSemana || (dw!==0 && dw!==6)){
+      const a = iso===dIni ? hm2min(ini.slice(11)) : 0;
+      const b = iso===dFin ? hm2min(fin.slice(11)) : 24*60;
+      let m = solape(a,b,e,s);
+      if(ci!==null&&cf!==null) m -= solape(Math.max(a,e),Math.min(b,s),ci,cf);
+      tot += Math.max(0,m);
+    }
+    d.setDate(d.getDate()+1);
+  }
+  return tot/60;
+}
+function lmMesasModulo(pid, mod){
+  const t=terrenoCache[pid]||{}, mm=t.mesasModulo||{};
+  const v=mm[mod]; return v==null ? null : Number(v);
+}
+function lmCalc(x){
+  const horas = x.fin ? horasEntre(x.inicio, x.fin, x.finDeSemana) : 0;
+  const hj = horasJornadaDia();
+  const hp = horas * (Number(x.personas)||0);
+  const dp = hj>0 ? hp/hj : 0;
+  const mesas = Number(x.mesas)||0;
+  return { horas, horasPersona:hp, diasPersona:dp, mesasDP: dp>0 ? mesas/dp : null, mesasHP: hp>0 ? mesas/hp : null };
+}
+const colLabMod = pid => db.collection('labMod').doc(pid).collection('items');
+let lmCache=[], lmEdit=null, lmUnsub=null;
+
+function lmSubjefes(){
+  const p=pD();
+  if(verTodosSubjefes()) return p.subjefes.slice();
+  const conts=contratistasDePredio(activePred).map(c=>c.nombre);
+  return [userSubjefe(), ...conts.filter(n=>n!==userSubjefe())].filter(Boolean);
+}
+function initModulo(){
+  if(lmUnsub){ lmUnsub(); lmUnsub=null; }
+  const pid=activePred;
+  const desde=new Date(todayIso+'T12:00:00'); desde.setDate(desde.getDate()-90);
+  lmUnsub = colLabMod(pid).where('inicio','>=',desde.toISOString().slice(0,10)).onSnapshot(snap=>{
+    if(pid!==activePred) return;
+    lmCache = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderLmLista();
+  }, err=>{ console.warn('labMod', err && err.code); lmCache=[]; renderLmLista(); });
+  lmEdit=null;
+  renderLmForm();
+}
+function renderLmForm(x){
+  x = x || {};
+  const subs=lmSubjefes();
+  const sub = x.subjefe || (subs.length===1 ? subs[0] : (document.getElementById('lmSub')||{}).value || '');
+  const now=new Date(); const hh=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  const ini = x.inicio || (todayIso+'T'+jornadaCfg.entrada);
+  const fin = x.fin || '';
+  document.getElementById('lmForm').innerHTML = `
+    ${lmEdit?`<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:6px 9px;font-size:11.5px;margin-bottom:8px">✏️ Corrigiendo un registro · <a href="javascript:void(0)" onclick="lmCancelar()">cancelar</a></div>`:''}
+    <div class="form-row"><label>Subjefe / Encargado</label>
+      <select id="lmSub" onchange="lmOnSub()" ${subs.length===1?'disabled':''}>
+        ${subs.length>1?'<option value="">— Seleccionar —</option>':''}
+        ${subs.map(s=>`<option value="${escH(s)}" ${s===sub?'selected':''}>${contratistaDe(s)?'🧑‍🌾 ':''}${escH(s)}</option>`).join('')}
+      </select></div>
+    <div class="form-row"><label>Ciclo</label><select id="lmCiclo" onchange="lmOnCiclo()"></select></div>
+    <div class="form-row"><label>Labor</label>
+      <select id="lmLabor">
+        <option value="">— Seleccionar labor —</option>
+        ${LABORES.filter(l=>!l.hidden).map(l=>`<option value="${l.id}" ${String(x.laborId)===String(l.id)?'selected':''}>${l.id}. ${escH(l.d)}</option>`).join('')}
+      </select></div>
+    <div class="form-grid">
+      <div><label>Módulo</label><select id="lmModulo" onchange="lmOnModulo()"></select></div>
+      <div><label>Mesas del módulo</label><input type="number" id="lmMesas" min="1" step="1" value="${x.mesas||''}" oninput="lmPreview()"></div>
+    </div>
+    <div class="form-row"><label>N° de encargados que trabajaron</label><input type="number" id="lmPersonas" min="1" step="1" value="${x.personas||''}" oninput="lmPreview()" placeholder="Ej: 6"></div>
+    <div class="form-grid">
+      <div><label>Inicio · día</label><input type="date" id="lmIniF" value="${ini.slice(0,10)}" onchange="lmPreview()"></div>
+      <div><label>Inicio · hora</label><input type="time" id="lmIniH" value="${ini.slice(11,16)}" onchange="lmPreview()"></div>
+      <div><label>Término · día</label><input type="date" id="lmFinF" value="${fin.slice(0,10)}" onchange="lmPreview()"></div>
+      <div><label>Término · hora</label><input type="time" id="lmFinH" value="${fin.slice(11,16)}" onchange="lmPreview()"></div>
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin:-4px 0 6px">Si todavía no termina, deja el término vacío y complétalo después con <b>🏁 Terminar</b>.</div>
+    <label style="display:flex;gap:6px;align-items:center;text-transform:none;font-weight:400;margin:2px 0 8px"><input type="checkbox" id="lmFds" ${x.finDeSemana||(x.finDeSemana===undefined&&contratistaDe(sub))?'checked':''} onchange="lmPreview()"> Se trabajó sábado y domingo</label>
+    <div class="form-row"><label>Observación</label><input type="text" id="lmObs" value="${escH(x.obs||'')}" placeholder="Opcional"></div>
+    <div id="lmPrev" style="background:#F0F7EE;border:1px solid #CFE3C8;border-radius:9px;padding:8px 10px;font-size:11.5px;line-height:1.5;margin-bottom:8px"></div>
+    <button class="btn btn-primary" onclick="lmGuardar()">${lmEdit?'💾 Guardar corrección':'＋ Guardar labor por módulo'}</button>`;
+  lmOnSub(x.cicloId, x.modulo, x.mesas);
+}
+function lmOnSub(cicloSel, modSel, mesasSel){
+  const sub=document.getElementById('lmSub').value;
+  const sel=document.getElementById('lmCiclo');
+  const cs=(ciclosCache[sub]||[]).slice().sort((a,b)=> (a.fin?1:0)-(b.fin?1:0) || String(b.inicio||'').localeCompare(String(a.inicio||'')));
+  sel.innerHTML = !sub ? '<option value="">— Primero el subjefe —</option>'
+    : (cs.length ? cs.map(c=>`<option value="${c.id}" ${c.id===cicloSel?'selected':''}>${escH(cicloLabel(c))}${c.fin?' (cerrado)':''}${c.modulos&&c.modulos.length?' · M: '+escH(c.modulos.join(',')):''}</option>`).join('')
+                 : '<option value="">Sin ciclos: ábrelos en CICLOS</option>');
+  if(cicloSel && ![...sel.options].some(o=>o.value===cicloSel)) sel.insertAdjacentHTML('beforeend',`<option value="${escH(cicloSel)}" selected>Ciclo guardado</option>`);
+  const fds=document.getElementById('lmFds'); if(fds && !lmEdit) fds.checked=!!contratistaDe(sub);
+  lmOnCiclo(modSel, mesasSel);
+}
+function lmOnCiclo(modSel, mesasSel){
+  const sub=document.getElementById('lmSub').value;
+  const c=(ciclosCache[sub]||[]).find(x=>x.id===document.getElementById('lmCiclo').value);
+  let mods = (c && c.modulos && c.modulos.length) ? c.modulos.map(String) : modulosFinca(activePred).map(String);
+  if(modSel && !mods.includes(String(modSel))) mods = mods.concat([String(modSel)]);
+  const sel=document.getElementById('lmModulo');
+  sel.innerHTML = '<option value="">—</option>' + mods.map(m=>`<option value="${escH(m)}" ${String(m)===String(modSel)?'selected':''}>${escH(m)}</option>`).join('');
+  if(mesasSel) document.getElementById('lmMesas').value = mesasSel; else lmOnModulo();
+  lmPreview();
+}
+function lmOnModulo(){
+  const m=document.getElementById('lmModulo').value;
+  const v=m ? lmMesasModulo(activePred, m) : null;
+  if(v) document.getElementById('lmMesas').value = v;
+  lmPreview();
+}
+function lmLeer(){
+  const g=id=>document.getElementById(id).value;
+  const fF=g('lmFinF'), fH=g('lmFinH');
+  return { subjefe:g('lmSub'), cicloId:g('lmCiclo'), laborId:parseInt(g('lmLabor'))||0, modulo:g('lmModulo'),
+    mesas:parseInt(g('lmMesas'))||0, personas:parseInt(g('lmPersonas'))||0,
+    inicio: g('lmIniF') && g('lmIniH') ? g('lmIniF')+'T'+g('lmIniH') : '',
+    fin: fF && fH ? fF+'T'+fH : (fF||fH ? 'incompleto' : null),
+    finDeSemana: document.getElementById('lmFds').checked, obs: g('lmObs').trim() };
+}
+function lmPreview(){
+  const el=document.getElementById('lmPrev'); if(!el) return;
+  const x=lmLeer();
+  if(!x.fin || x.fin==='incompleto'){ el.innerHTML = x.fin==='incompleto' ? '⚠️ Completa día y hora de término, o deja ambos vacíos.' : '⏳ Sin término: queda <b>en curso</b>.'; return; }
+  if(x.fin<=x.inicio){ el.innerHTML='⚠️ El término debe ser después del inicio.'; return; }
+  const r=lmCalc(x), f1=n=>(Math.round(n*10)/10).toLocaleString('es-CL');
+  el.innerHTML = `<b>${f1(r.horas)} h</b> de jornada (${f1(horasJornadaDia())} h por día) × ${x.personas||0} encargados = <b>${f1(r.horasPersona)} horas-persona</b> = <b>${f1(r.diasPersona)} días-persona</b>`
+    + (x.mesas && r.mesasDP ? `<br>${x.mesas} mesas ÷ ${f1(r.diasPersona)} días-persona = <b>${f1(r.mesasDP)} mesas por día persona</b>` : '');
+}
+async function lmGuardar(){
+  if(!canEditPredio(activePred)){ toast('Sin permiso en este predio'); return; }
+  const x=lmLeer();
+  if(!x.subjefe){ toast('⚠️ Elige el subjefe'); return; }
+  if(!x.cicloId){ toast('⚠️ Elige el ciclo'); return; }
+  if(!x.laborId){ toast('⚠️ Elige la labor'); return; }
+  if(!x.modulo){ toast('⚠️ Elige el módulo'); return; }
+  if(!(x.mesas>0)){ toast('⚠️ Anota las mesas del módulo'); return; }
+  if(!(x.personas>0)){ toast('⚠️ Anota cuántos encargados trabajaron'); return; }
+  if(!x.inicio){ toast('⚠️ Anota día y hora de inicio'); return; }
+  if(x.fin==='incompleto'){ toast('⚠️ Completa día y hora de término, o deja ambos vacíos'); return; }
+  if(x.fin && x.fin<=x.inicio){ toast('⚠️ El término debe ser después del inicio'); return; }
+  if(x.inicio.slice(0,10)>todayIso || (x.fin && x.fin.slice(0,10)>todayIso)){ toast('⚠️ No se pueden registrar fechas futuras'); return; }
+  if(x.personas>60 && !confirm(`${x.personas} encargados en un módulo es inusual. ¿Guardar igual?`)) return;
+  if(x.fin){
+    const r=lmCalc(x);
+    if(r.horas===0 && !confirm('Entre el inicio y el término no hay horas de jornada (¿fin de semana o fuera de horario?). ¿Guardar igual?')) return;
+    if(r.mesasDP && (r.mesasDP>LIMITES.mesasPorLabor) && !confirm(`Da ${Math.round(r.mesasDP)} mesas por día persona, sobre ${LIMITES.mesasPorLabor}. ¿Están bien las mesas, los encargados y las horas?`)) return;
+  }
+  const c=(ciclosCache[x.subjefe]||[]).find(k=>k.id===x.cicloId);
+  const dup=lmCache.find(k=>k.id!==(lmEdit&&lmEdit.id) && k.subjefe===x.subjefe && k.laborId===x.laborId && String(k.modulo)===String(x.modulo) && k.cicloId===x.cicloId);
+  if(dup && !confirm(`Ya hay un registro de la labor ${x.laborId} en el módulo ${x.modulo} para este ciclo (inicio ${fD(dup.inicio.slice(0,10))}). ¿Es otra pasada y quieres guardar igual?`)) return;
+  const data={ ...x, cicloLbl: c?cicloLabel(c):'', cultivo: c?(c.cultivo||''):'',
+    contratista: !!contratistaDe(x.subjefe) };
+  loading(true,'Guardando…');
+  try{
+    if(lmEdit){
+      data.editadoPor=currentUser.uid; data.editadoAt=Date.now();
+      data.editadoPorNombre=(currentProfile&&currentProfile.nombre)||currentUser.email;
+      await enCola(colLabMod(activePred).doc(lmEdit.id).update(data), 'Labor por módulo');
+    }else{
+      data.ts=Date.now(); data.creadoPor=currentUser.uid;
+      data.creadoPorNombre=(currentProfile&&currentProfile.nombre)||currentUser.email;
+      await enCola(colLabMod(activePred).doc().set(data), 'Labor por módulo');
+    }
+    const eraEd=!!lmEdit; lmEdit=null;
+    renderLmForm({subjefe:x.subjefe, cicloId:x.cicloId});
+    toast(eraEd?'✅ Corregido':(x.fin?'✅ Labor por módulo guardada':'✅ Guardada en curso'));
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+function lmEditar(id){
+  const x=lmCache.find(k=>k.id===id); if(!x) return;
+  lmEdit={id};
+  renderLmForm(x);
+  document.getElementById('lmForm').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function lmCancelar(){ lmEdit=null; renderLmForm(); }
+async function lmTerminar(id){
+  const x=lmCache.find(k=>k.id===id); if(!x) return;
+  lmEditar(id);
+  document.getElementById('lmFinF').value=todayIso;
+  const now=new Date(); document.getElementById('lmFinH').value=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  lmPreview();
+  toast('Revisa día y hora de término y guarda');
+}
+async function lmEliminar(id){
+  if(!confirm('¿Eliminar este registro de labor por módulo?')) return;
+  try{ await colLabMod(activePred).doc(id).delete(); toast('🗑 Eliminado'); }catch(e){ toast('Error: '+e.message); }
+}
+function renderLmLista(){
+  const el=document.getElementById('lmLista'); if(!el) return;
+  let L=lmCache.slice();
+  if(!verTodosSubjefes()) L=L.filter(x=>esMiSub(x.subjefe));
+  L.sort((a,b)=> (a.fin?1:0)-(b.fin?1:0) || String(b.inicio).localeCompare(String(a.inicio)));
+  const f1=n=>(Math.round(n*10)/10).toLocaleString('es-CL');
+  const fdt=t=> t ? `${fD(t.slice(0,10))} ${t.slice(11,16)}` : '';
+  el.innerHTML = L.length ? L.map(x=>{
+    const l=LABORES.find(k=>k.id===x.laborId), r=lmCalc(x);
+    return `<div class="ecard" style="border-left-color:${x.fin?'var(--green)':'#F59E0B'}">
+      <div style="display:flex;justify-content:space-between;gap:6px;align-items:flex-start">
+        <div style="font-weight:700;font-size:12.5px">${x.laborId}. ${escH(l?l.d:'')} · Módulo ${escH(x.modulo)}</div>
+        <div style="display:flex;gap:4px">
+          ${x.fin?'':`<button class="btn btn-primary btn-sm" style="width:auto;padding:3px 8px" onclick="lmTerminar('${x.id}')">🏁 Terminar</button>`}
+          <button class="del-btn" style="color:var(--dark)" title="Corregir" onclick="lmEditar('${x.id}')">✏️</button>
+          <button class="del-btn" onclick="lmEliminar('${x.id}')">✕</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--muted)">${contratistaDe(x.subjefe)?'🧑‍🌾 ':''}${escH(x.subjefe)} · ${escH(x.cicloLbl||'')} · ${x.mesas} mesas · ${x.personas} encargados</div>
+      <div style="font-size:11px;margin-top:2px">${fdt(x.inicio)} → ${x.fin?fdt(x.fin):'<b style="color:#B45309">en curso</b>'}${x.fin?` · ${f1(r.horas)} h · ${f1(r.diasPersona)} días-persona${r.mesasDP?` · <b>${f1(r.mesasDP)} mesas/día persona</b>`:''}`:''}</div>
+      ${x.obs?`<div style="font-size:11px;color:var(--muted);margin-top:2px">💬 ${escH(x.obs)}</div>`:''}
+    </div>`;
+  }).join('') : `<div class="empty"><div style="padding:8px 0;font-size:12px">Sin registros en los últimos 90 días</div></div>`;
+}
+
+// ── Config: jornada y mesas por módulo ──
+function renderJornadaConfig(){
+  const set=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v||''; };
+  set('jorEntrada', jornadaCfg.entrada); set('jorSalida', jornadaCfg.salida);
+  set('jorColIni', jornadaCfg.colIni); set('jorColFin', jornadaCfg.colFin);
+  const t=document.getElementById('jorTxt');
+  if(t) t.textContent=`Jornada efectiva: ${(Math.round(horasJornadaDia()*100)/100).toLocaleString('es-CL')} h por día.`;
+}
+async function guardarJornada(){
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const v={ entrada:document.getElementById('jorEntrada').value, salida:document.getElementById('jorSalida').value,
+    colIni:document.getElementById('jorColIni').value, colFin:document.getElementById('jorColFin').value };
+  if(!(hm2min(v.salida)>hm2min(v.entrada))){ toast('⚠️ La salida debe ser después de la entrada'); return; }
+  if((v.colIni||v.colFin) && !(hm2min(v.colFin)>hm2min(v.colIni))){ toast('⚠️ Revisa el horario de colación'); return; }
+  try{
+    await db.collection('config').doc('jornada').set({...v, updatedAt:Date.now(), updatedBy:currentUser.uid});
+    jornadaCfg=Object.assign({}, JORNADA_DEF, v);
+    renderJornadaConfig(); toast('✅ Jornada guardada');
+  }catch(e){ toast('Error: '+e.message); }
+}
+function renderMesasModulo(){
+  const selP=document.getElementById('mmPredio'), box=document.getElementById('mmBody');
+  if(!selP||!box) return;
+  if(!selP.options.length) selP.innerHTML=PRED_ORDER.map(k=>`<option value="${k}">${escH(PREDIOS[k].nombre)}</option>`).join('');
+  const pid=selP.value||PRED_ORDER[0];
+  const t=terrenoCache[pid]||{}, mm=t.mesasModulo||{};
+  const mods=[...new Set([...modulosFinca(pid).map(String), ...Object.keys(t.modulos||{}), ...Object.keys(mm)])]
+    .sort((a,b)=>{ const na=parseFloat(a), nb=parseFloat(b); return (!isNaN(na)&&!isNaN(nb)&&na!==nb) ? na-nb : a.localeCompare(b); });
+  box.innerHTML = (mods.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:6px">
+      ${mods.map(m=>`<div><label style="margin:0">Mód. ${escH(m)}</label><input type="number" class="mmIn" data-m="${escH(m)}" min="0" value="${mm[m]!=null?mm[m]:''}" style="padding:5px"></div>`).join('')}
+    </div>` : `<div style="font-size:11px;color:var(--muted)">Este predio no tiene módulos cargados.</div>`)
+    + `<div style="display:flex;gap:6px;margin-top:6px"><input type="text" id="mmNuevo" placeholder="Otro módulo (ej: 15)" style="flex:1"><button class="btn btn-secondary btn-sm" style="width:auto" onclick="mmAgregar()">＋</button></div>
+    <button class="btn btn-primary" style="margin-top:8px" onclick="guardarMesasModulo()">💾 Guardar mesas de ${escH(PREDIOS[pid].nombre)}</button>`;
+}
+function mmAgregar(){
+  const n=(document.getElementById('mmNuevo').value||'').trim();
+  if(!n||/[.\/\[\]*~]/.test(n)){ toast('⚠️ Nombre de módulo no válido'); return; }
+  const pid=document.getElementById('mmPredio').value;
+  terrenoCache[pid]=terrenoCache[pid]||{}; terrenoCache[pid].mesasModulo=Object.assign({}, terrenoCache[pid].mesasModulo||{}, {[n]:null});
+  renderMesasModulo();
+}
+async function guardarMesasModulo(){
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const pid=document.getElementById('mmPredio').value;
+  const mesasModulo={};
+  document.querySelectorAll('.mmIn').forEach(i=>{ const v=parseInt(i.value); if(v>0) mesasModulo[i.dataset.m]=v; });
+  loading(true,'Guardando…');
+  try{
+    await db.collection('terreno').doc(pid).set({mesasModuloAt:Date.now()}, {merge:true});
+    await db.collection('terreno').doc(pid).update({mesasModulo});
+    terrenoCache[pid]=Object.assign({}, terrenoCache[pid]||{}, {mesasModulo});
+    renderMesasModulo(); toast('✅ Mesas por módulo guardadas');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
 }
 
 // ══════════════════════════════════════════════
@@ -6649,6 +6985,7 @@ function applyRoleUI(){
   show('btnRegistro', isCampo());
   show('btnProg',     isCampo());
   show('btnAvance',   isCampo());
+  show('btnModulo',   isCampo());   // v68
   show('btnCiclos',   isCampo());
   show('btnControl',  canVerControl());   // v52
   show('btnInformes', canViewInformes());
@@ -6666,6 +7003,8 @@ function applyRoleUI(){
   if(kc){ kc.style.display=canConfigCostos()?'block':'none'; if(canConfigCostos()) renderContratistasConfig(); }
   const sc=document.getElementById('sectoresConfigSection');   // v47
   if(sc){ sc.style.display=canConfigCostos()?'block':'none'; if(canConfigCostos()) renderSectoresConfig(); }
+  const jc=document.getElementById('jornadaConfigSection');   // v68
+  if(jc){ jc.style.display=canConfigCostos()?'block':'none'; if(canConfigCostos()){ renderJornadaConfig(); renderMesasModulo(); } }
   document.getElementById('addWBtn').style.display=canManageWorkers()?'block':'none';
   // La tarjeta de trabajadores no aporta nada a bodeguero/riego
   const wc=document.getElementById('wListCard');
@@ -6729,6 +7068,7 @@ async function loadPredioData(pid){
     populateSels();
     renderCtx();
     buildSem();
+    if(document.getElementById('screen-modulo').classList.contains('active')) initModulo();   // v68
   }catch(e){
     loading(false);
     toast('Error cargando datos: '+e.message);
@@ -8921,6 +9261,19 @@ async function cargarYRenderInformes(){
         }catch(e){ ciclosInf[pid][sub] = []; }
       }
     }
+    // 5. v68 · Labor por módulo: terminados o en curso que se cruzan con el período
+    var labMod = [];
+    for(const pid of preds){
+      try{
+        const snap = await db.collection('labMod').doc(pid).collection('items').where('inicio','<=',hasta+'T23:59').get();
+        snap.forEach(d=>{
+          const x = d.data();
+          if(x.fin && x.fin.slice(0,10) < desde) return;
+          if(subjefeSel && x.subjefe !== subjefeSel) return;
+          labMod.push({ ...x, _id:d.id, _predio:pid });
+        });
+      }catch(e){ /* sin acceso o sin datos */ }
+    }
     loading(false);
   }catch(e){
     loading(false);
@@ -8928,12 +9281,12 @@ async function cargarYRenderInformes(){
     return;
   }
 
-  if(!registros.length && !programaciones.length){
+  if(!registros.length && !programaciones.length && !labMod.length){
     toast('⚠️ No hay datos en el período seleccionado');
     return;
   }
 
-  infState.data = { registros, programaciones, workers, preds, desde, hasta, predioSel, subjefeSel, ciclos: ciclosInf };
+  infState.data = { registros, programaciones, workers, preds, desde, hasta, predioSel, subjefeSel, ciclos: ciclosInf, labMod };
   infState.dashCache = null;
   document.getElementById('infTabsWrap').style.display = 'block';
   switchInfTab(infState.tab);
@@ -8956,6 +9309,89 @@ function switchInfTab(tab){
   else if(tab==='eficiencia')   renderInfEficiencia();
   else if(tab==='inconsist')    renderInfInconsistencias();
   else if(tab==='contratistas') renderInfContratistas();
+  else if(tab==='modulos')      renderInfModulos();   // v68
+}
+
+// ─────────────────────────────────────────────
+// v68 · POR MÓDULO: eficiencia según el registro de control por módulo y
+// comparación con el registro diario de los mismos días.
+// ─────────────────────────────────────────────
+function calcModulos(){
+  const { registros, labMod } = infState.data;
+  const cph = costoPorHora();
+  const lab = infState.modLabor || '';
+  const fin = (labMod||[]).filter(x=>x.fin && (!lab || String(x.laborId)===String(lab)));
+  const enCurso = (labMod||[]).filter(x=>!x.fin && (!lab || String(x.laborId)===String(lab)));
+  const rows = fin.map(x=>{
+    const r = lmCalc(x), l = LABORES.find(k=>k.id===x.laborId);
+    return { ...x, ...r, predio: PREDIOS[x._predio]?PREDIOS[x._predio].nombre:x._predio, labor: l?l.d:'—',
+      costo: x.contratista ? null : r.horasPersona*cph,
+      costoMesa: (!x.contratista && x.mesas) ? r.horasPersona*cph/x.mesas : null };
+  }).sort((a,b)=> String(b.fin).localeCompare(String(a.fin)));
+  // Comparación por encargado × labor
+  const cmp = {};
+  rows.forEach(x=>{
+    const k = x._predio+'|'+x.subjefe+'|'+x.laborId;
+    if(!cmp[k]) cmp[k] = { predioId:x._predio, predio:x.predio, subjefe:x.subjefe, laborId:x.laborId, labor:x.labor,
+      modulos:0, mesasM:0, dpM:0, fechas:new Set() };
+    const c = cmp[k];
+    c.modulos++; c.mesasM += Number(x.mesas)||0; c.dpM += x.diasPersona;
+    let d = new Date(x.inicio.slice(0,10)+'T12:00:00');
+    for(let g=0; g<400; g++){ const iso=d.toISOString().slice(0,10); if(iso>x.fin.slice(0,10)) break; c.fechas.add(iso); d.setDate(d.getDate()+1); }
+  });
+  Object.values(cmp).forEach(c=>{
+    let mesas=0; const dp=new Set();
+    registros.forEach(r=>{
+      if(r._predio!==c.predioId || r.ausente || r.licencia || r.vacaciones) return;
+      if(((r._worker||{}).subjefe||'')!==c.subjefe || !c.fechas.has(r.fecha)) return;
+      (r.labores||[]).forEach(l=>{
+        if(l.laborId!==c.laborId || !(Number(l.mesas)>0)) return;
+        mesas += Number(l.mesas); dp.add(wKeyReg(r)+'|'+r.fecha);
+      });
+    });
+    c.mesasD = mesas; c.dpD = dp.size;
+    c.mdpM = c.dpM>0 ? c.mesasM/c.dpM : null;
+    c.mdpD = c.dpD>0 ? c.mesasD/c.dpD : null;
+    c.difMesas = c.mesasM ? Math.round((c.mesasD - c.mesasM)/c.mesasM*100) : null;
+  });
+  const comp = Object.values(cmp).sort((a,b)=> a.subjefe.localeCompare(b.subjefe,'es') || a.laborId-b.laborId);
+  const labs = [...new Map((labMod||[]).map(x=>[x.laborId, (LABORES.find(k=>k.id===x.laborId)||{}).d||'—'])).entries()].sort((a,b)=>a[0]-b[0]);
+  return { rows, comp, enCurso, labs, lab, cph };
+}
+function renderInfModulos(){
+  const d = calcModulos();
+  const f1 = n => n===null||n===undefined ? '—' : (Math.round(n*10)/10).toLocaleString('es-CL');
+  const fdt = t => t ? `${fDMY(t.slice(0,10)).slice(0,5)} ${t.slice(11,16)}` : '';
+  let html = `<div class="inf-card">
+    <div class="inf-hdr"><div class="inf-card-title">📦 Labor por módulo</div>${infDlBtnsHTML('modulos')}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Según el registro de control por módulo: encargados × horas de jornada entre inicio y término (${(Math.round(horasJornadaDia()*10)/10).toLocaleString('es-CL')} h por día, sin colación). Abajo se compara con lo que dice el registro diario por trabajador en esos mismos días.</div>
+    <div class="form-row"><label>Labor</label><select onchange="infState.modLabor=this.value;switchInfTab('modulos')">
+      <option value="">Todas</option>${d.labs.map(([id,nom])=>`<option value="${id}" ${String(id)===String(d.lab)?'selected':''}>${id}. ${escH(nom)}</option>`).join('')}
+    </select></div>`;
+  if(!d.rows.length && !d.enCurso.length){
+    html += `<div class="inf-empty">No hay labores por módulo en el período.</div></div>`;
+    document.getElementById('infContent').innerHTML = html; return;
+  }
+  if(d.comp.length){
+    html += `<div style="font-size:11px;font-weight:600;margin:4px 0">Módulos vs. registro diario (mismo encargado, labor y días)</div>
+    <div style="overflow-x:auto"><table class="inf-table"><thead><tr><th>Encargado · labor</th><th class="num">Mód.</th><th class="num">Mesas<br>módulos</th><th class="num">Mesas<br>diario</th><th class="num">Dif.</th><th class="num">Mesas/día pers.<br>módulos</th><th class="num">Mesas/día pers.<br>diario</th></tr></thead>
+    <tbody>${d.comp.map(c=>{
+      const col = c.difMesas===null ? '' : (Math.abs(c.difMesas)>15 ? 'color:#D62828;font-weight:700' : 'color:var(--green)');
+      return `<tr><td>${escH(c.subjefe)}<div style="font-size:9px;color:var(--muted)">${c.laborId}. ${escH(c.labor)}</div></td>
+        <td class="num">${c.modulos}</td><td class="num">${c.mesasM.toLocaleString('es-CL')}</td><td class="num">${c.mesasD.toLocaleString('es-CL')}</td>
+        <td class="num" style="${col}">${c.difMesas===null?'—':(c.difMesas>0?'+':'')+c.difMesas+'%'}</td>
+        <td class="num"><b>${f1(c.mdpM)}</b></td><td class="num">${f1(c.mdpD)}</td></tr>`;}).join('')}</tbody></table></div>
+    <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:12px"><b>Dif.</b>: mesas del registro diario respecto de las mesas de los módulos terminados (rojo si difiere más de 15 %). Más mesas en el diario puede ser doble registro o trabajo en otros módulos que no se anotó por módulo; menos, mesas que faltó anotar. En 🔎 ⚡ Eficiencia puedes ir a cada entrada.</div>`;
+  }
+  html += `<div style="font-size:11px;font-weight:600;margin:4px 0">Terminados</div>
+  <div style="overflow-x:auto"><table class="inf-table"><thead><tr><th>Módulo · labor</th><th>Inicio → término</th><th class="num">Mesas</th><th class="num">Enc.</th><th class="num">Horas</th><th class="num">Días<br>pers.</th><th class="num">Mesas/día<br>persona</th><th class="num">$/mesa</th></tr></thead>
+  <tbody>${d.rows.map(x=>`<tr><td><b>M ${escH(x.modulo)}</b> · ${x.laborId}. ${escH(x.labor)}<div style="font-size:9px;color:var(--muted)">${escH(x.subjefe)} · ${escH(x.cicloLbl||'')}</div></td>
+    <td style="font-size:10.5px;white-space:nowrap">${fdt(x.inicio)}<br>${fdt(x.fin)}</td>
+    <td class="num">${x.mesas}</td><td class="num">${x.personas}</td><td class="num">${f1(x.horas)}</td><td class="num">${f1(x.diasPersona)}</td>
+    <td class="num"><b>${f1(x.mesasDP)}</b></td><td class="num">${x.costoMesa===null?'—':fmtCLP(x.costoMesa)}</td></tr>`).join('') || '<tr><td colspan="8" class="inf-empty">Ninguno terminado en el período</td></tr>'}</tbody></table></div>`;
+  if(d.enCurso.length) html += `<div style="font-size:11px;margin-top:8px"><b>⏳ En curso:</b> ${d.enCurso.map(x=>`M ${escH(x.modulo)} · labor ${x.laborId} (${escH(x.subjefe)}, desde ${fDMY(x.inicio.slice(0,10)).slice(0,5)})`).join(' · ')}</div>`;
+  html += `<div style="font-size:10px;color:var(--muted);margin-top:6px">$/mesa: encargados × horas × costo por hora (${fmtCLP(d.cph)}) ÷ mesas; para contratistas ver la pestaña 🧑‍🌾.</div></div>`;
+  document.getElementById('infContent').innerHTML = html;
 }
 
 // ─────────────────────────────────────────────
@@ -10460,6 +10896,18 @@ function infTablaExport(tab){
       chartId: 'chartCiclos'
     };
   }
+  if(tab==='modulos'){   // v68
+    const d = calcModulos();
+    const r1 = n => n===null||n===undefined ? '' : Math.round(n*10)/10;
+    return {
+      titulo: 'Labor por módulo',
+      nota: `Horas = jornada entre inicio y término (${r1(horasJornadaDia())} h/día, sin colación). Días-persona = encargados × horas ÷ horas de jornada. Costo por hora: ${fmtCLP(d.cph)}.`,
+      headers: ['Predio','Encargado','Ciclo','Labor','Módulo','Inicio','Término','Mesas','Encargados','Horas','Horas-persona','Días-persona','Mesas/día persona','Costo CLP','$/mesa'],
+      body: d.rows.map(x=>[x.predio, x.subjefe, x.cicloLbl||'', `${x.laborId}. ${x.labor}`, x.modulo, x.inicio.replace('T',' '), x.fin.replace('T',' '),
+        x.mesas, x.personas, r1(x.horas), r1(x.horasPersona), r1(x.diasPersona), r1(x.mesasDP), x.costo===null?'':Math.round(x.costo), x.costoMesa===null?'':Math.round(x.costoMesa)]),
+      landscape: true
+    };
+  }
   if(tab==='contratistasSem'){   // v65
     const { semanas } = calcPagoSemanal();
     const body=[]; let tot=0;
@@ -10611,7 +11059,7 @@ function exportInfExcel(tab){
     const wb = XLSX.utils.book_new();
     const ws = infHojaExcel(tab);
     // Nombre de hoja: máx 31 caracteres permitidos por Excel
-    const sheetNames = { dashboard:'Dashboard', progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', eficiencia:'Eficiencia', inconsist:'Inconsistencias', contratistas:'Contratistas', contratistasSem:'Pago semanal' };
+    const sheetNames = { dashboard:'Dashboard', progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', eficiencia:'Eficiencia', inconsist:'Inconsistencias', contratistas:'Contratistas', contratistasSem:'Pago semanal', modulos:'Por módulo' };
     XLSX.utils.book_append_sheet(wb, ws, sheetNames[tab] || 'Informe');
     if(tab==='contratistas'){ const w2=infHojaExcel('contratistasSem'); if(w2) XLSX.utils.book_append_sheet(wb, w2, 'Pago semanal'); }   // v65
     XLSX.writeFile(wb, `fieldlog_${tab}_${m.suf}.xlsx`);
@@ -10637,14 +11085,15 @@ function exportInfExcelTodo(){
       ['eficiencia','Eficiencia'],
       ['inconsist','Inconsistencias'],
       ['contratistas','Contratistas'],
-      ['contratistasSem','Pago semanal']   // v65
+      ['contratistasSem','Pago semanal'],   // v65
+      ['modulos','Por módulo']              // v68
     ];
     tabs.forEach(([tab, nombre])=>{
       const ws = infHojaExcel(tab);
       if(ws) XLSX.utils.book_append_sheet(wb, ws, nombre);
     });
     XLSX.writeFile(wb, `fieldlog_informes_${m.suf}.xlsx`);
-    toast('✅ Excel completo descargado (9 hojas)');
+    toast('✅ Excel completo descargado (10 hojas)');
   }catch(e){
     toast('Error al generar Excel: '+e.message);
   }
@@ -11813,10 +12262,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v67';
-const MANUAL_FECHA='2026-10-12';
+const MANUAL_VERSION='v68';
+const MANUAL_FECHA='2026-10-13';
 
 const MANUAL_CAMBIOS=[
+  {v:'v68', f:'13-10-2026', ver:()=>isCampo(), txt:'<b>Nuevo: Labor × módulo.</b> Un registro de control, aparte del diario: por cada labor hecha en un módulo se anota el subjefe, el ciclo, la labor, el módulo y sus mesas, <b>cuántos encargados trabajaron</b> y el <b>día y hora de inicio y de término</b>. La app calcula las horas de jornada (sin colación), los días-persona y las <b>mesas por día persona</b>. En Informes, la pestaña <b>📦 Por módulo</b> lo compara con lo anotado en el registro diario en esos mismos días, para detectar errores. Gerencia fija la jornada y las mesas de cada módulo en Config.'},
   {v:'v67', f:'12-10-2026', ver:()=>canViewInformes(), txt:'<b>Revisar y corregir datos dudosos desde Informes.</b> En <b>⚡ Eficiencia</b>, el botón <b>🔎</b> de cada encargado y labor (o tocar el Mín. o el Máx.) muestra todos los días con fecha, trabajador, mesas y horas, ordenados de más a menos, y marca los dudosos: <b>posible duplicado</b> (la misma labor anotada dos veces el mismo día), <b>sobre 70 mesas</b>, <b>muy alto</b> (más del doble de la mediana) y <b>muy bajo</b> (menos de un cuarto). Con <b>✏️</b> se abre esa entrada en Registro para corregirla y, al guardar, se vuelve al informe; con <b>🗑️</b> se borra un registro repetido. Lo mismo aparece en <b>⚠️ Inconsistencias</b>, que ahora se filtra por tipo.'},
   {v:'v66', f:'12-10-2026', ver:()=>canViewInformes(), txt:'<b>Informes › ⚡ Eficiencia:</b> ahora se filtra por <b>ciclo</b> (un cultivo y época para todos los encargados, o el ciclo de un encargado) y, por encargado y labor, muestra las mesas por día persona: <b>mínimo, promedio, máximo</b> y el <b>promedio del 80 % más rápido</b> (deja fuera el 20 % de días más lentos; sirve como meta), además del <b>costo por mesa</b>. Al elegir una labor aparece la fila <b>Todos los encargados</b>. Ahora también entran las labores con mesas y 0 horas (contratistas); el $/mesa usa solo lo que tiene costo conocido.'},
   {v:'v65', f:'12-10-2026', ver:()=>isCampo()||canViewInformes(), txt:'<b>Contratistas: valor por mesa o por techo, con vigencia, y pago semanal.</b> En <b>Config › Contratistas</b> cada labor lleva su valor fijo <b>por mesa o por techo</b> (1 techo = 3 mesas) y la fecha <b>desde la que rige</b>; al cambiar un precio se pone la fecha nueva y lo registrado antes conserva el valor anterior (o se puede recalcular). En el registro se siguen anotando mesas: si la labor se paga por techo, la app divide por 3. Los predios con contratistas muestran la semana completa, <b>de lunes a domingo</b>, para registrar a diario también sábado y domingo. En Informes › 🧑‍🌾 Contratistas aparece el <b>📅 Pago semanal</b>: lo que se paga a cada trabajador cada día y el total de la semana, con botones para la semana pasada y la actual.'},
@@ -11874,6 +12324,23 @@ const MANUAL_SECCIONES=[
     'Instálala en el celular: en Chrome, menú ⋮ › "Agregar a pantalla de inicio". Queda como una app más, sin barra del navegador.',
     'Si te quedas sin señal con la app abierta, puedes seguir registrando aplicaciones: quedan guardadas y se envían solas al volver la conexión (arriba sale una barra naranja avisando). Lo que sí necesita señal en el momento son las compras y despachos de bodega.',
     'Cuando publicamos una versión nueva, cierra la app por completo y vuelve a abrirla para que se actualice.'
+  ]
+},
+{
+  id:'modulo', ico:'📦', tit:'Labor × módulo', ver:()=>isCampo(),
+  intro:'Registro de control por módulo, aparte del diario por trabajador. Con pocos datos (cuántos encargados, cuándo empezaron y terminaron) da una segunda medida de rendimiento para contrastar el registro diario.',
+  pasos:[
+    'Elige arriba el <b>predio</b> y aprieta <b>Labor × módulo</b>.',
+    'Elige <b>Subjefe</b>, <b>Ciclo</b>, <b>Labor</b> y <b>Módulo</b>. Las <b>mesas del módulo</b> aparecen solas si gerencia las cargó en Config; si no, anótalas.',
+    'Anota el <b>N° de encargados</b> que trabajaron en esa labor en el módulo.',
+    'Anota el <b>día y la hora de inicio</b>. Si ya terminó, el <b>día y la hora de término</b>; si no, déjalo vacío: queda <b>en curso</b> y después aprietas <b>🏁 Terminar</b>.',
+    'Marca <b>Se trabajó sábado y domingo</b> solo si hubo trabajo el fin de semana (viene marcado para contratistas).',
+    'Abajo del formulario ves el cálculo: horas de jornada, días-persona y mesas por día persona. Aprieta <b>Guardar</b>.'
+  ],
+  tips:[
+    'Las horas solo cuentan el horario de trabajo (Config › Jornada) y descuentan la colación: si empezó el lunes 14:00 y terminó el martes 11:00, cuentan la tarde del lunes y la mañana del martes.',
+    'Si los encargados no estuvieron todo el tiempo en esa labor (por ejemplo, hicieron otra entremedio), el resultado sale más bajo de lo real: anota el inicio y término de lo que de verdad dedicaron.',
+    'Se corrige con ✏️ y se borra con ✕. En Informes › 📦 Por módulo se compara con el registro diario.'
   ]
 },
 {
@@ -11989,6 +12456,7 @@ const MANUAL_SECCIONES=[
     'Cambia entre las pestañas: <b>Prog vs Real</b>, <b>Por ciclo</b>, <b>Trabajadores</b>, <b>Labores</b>, <b>Eficiencia</b> e <b>Inconsistencias</b>.',
     'En <b>⚡ Eficiencia</b> eliges el <b>Ciclo</b> (un cultivo y época para comparar a todos los encargados, o el ciclo de uno) y la <b>Labor</b>. Por encargado ves las mesas por día de un trabajador: <b>mínimo, promedio, máximo</b> y el <b>promedio del 80 % más rápido</b>, y el <b>costo por mesa</b>. Con una labor elegida, la última fila es el total de todos los encargados.',
     'El <b>promedio del 80 % más rápido</b> ordena los días-persona de más a menos mesas y promedia el 80 % de arriba: deja fuera los días más lentos (gente nueva, días cortos, interrupciones). Es una buena referencia para la meta de mesas por día.',
+    'En <b>📦 Por módulo</b> ves cada labor terminada por módulo (mesas, encargados, horas, días-persona, mesas por día persona y $/mesa) y una tabla que la compara con el <b>registro diario</b> del mismo encargado, labor y días: si las mesas difieren más de 15 % salen en rojo.',
     'En <b>🧑‍🌾 Contratistas</b> está lo que se paga a cada trabajador de contratista y, abajo, el <b>📅 Pago semanal</b> de lunes a domingo: el monto de cada trabajador cada día y el total de la semana por contratista. Los botones <b>Semana pasada</b> y <b>Esta semana</b> ajustan las fechas solos. Si la semana sale “incompleta”, las fechas elegidas no cubren de lunes a domingo.',
     'Con <b>📥 Excel completo</b> bajas todas las hojas en un solo archivo (incluido el pago semanal).',
     'Con <b>📷 Anexo de observaciones (PDF)</b> bajas todas las observaciones escritas en el período, con la foto de respaldo de cada una. Sirve para respaldar una conversación sobre trabajo mal hecho, o para dejarlo por escrito.'
@@ -12269,6 +12737,7 @@ function showScr(name,btn){
   if(name==='config')  renderConfig();
   if(name==='prog')    {populateProgSubjefe();renderProg();}
   if(name==='informes')initInformes();
+  if(name==='modulo')  initModulo();   // v68
   if(name==='experiencia')initExperiencia();   // v55
   if(name==='bodega')  renderBodega();
   if(name==='planilla') initPlanilla();
