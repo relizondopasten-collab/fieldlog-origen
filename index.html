@@ -6687,7 +6687,7 @@ function selPredio(id){
     t.className='ptab'+(preds.includes(t.dataset.id)?'':' disabled');
     if(t.dataset.id===id)t.classList.add('ptab-'+{transito:'t',constancia:'c',paradero:'p'}[id]);
   });
-  loadPredioData(id);
+  return loadPredioData(id);   // v67 · se puede esperar (corrección desde Informes)
 }
 
 async function loadPredioData(pid){
@@ -7487,6 +7487,7 @@ async function guardar(){
     const eraEdicion=!!regEdit;
     regSalirEdicion();
     avisoGuardado(eraEdicion?'✅ Entrada corregida':'✅ Entrada guardada');
+    if(eraEdicion && infVolverCtx) setTimeout(()=>infVolver(), 600);   // v67 · de vuelta al informe
   }catch(e){toast('Error: '+e.message)}
   loading(false);
 }
@@ -7498,8 +7499,10 @@ async function guardar(){
 // ══════════════════════════════════════════════
 let regEdit=null;   // {id, data}
 
-function regEditar(id){
-  const e=rCache.find(r=>r.id===id);
+function regEditar(id, eObj){
+  // v67 · Desde Informes la entrada puede ser antigua y no estar en rCache
+  // (que trae las últimas 500): llega ya leída en eObj.
+  const e=eObj||rCache.find(r=>r.id===id);
   if(!e){ toast('No se encontró la entrada'); return; }
   const w=wDe(e);
   if(!(verTodosSubjefes()||(w&&esMiSub(w.subjefe)))){ toast('Sin permiso para corregir esta entrada'); return; }
@@ -7559,11 +7562,21 @@ function regEditar(id){
   if(typeof fotoSugerir==='function') fotoSugerir();
   const b=document.getElementById('regBtnGuardar'); if(b) b.textContent='💾 Guardar corrección';
   const c=document.getElementById('regBtnCancelar'); if(c) c.style.display='';
-  const card=b&&b.closest('.card'); if(card){ card.scrollIntoView({behavior:'smooth',block:'start'}); }
+  const card=b&&b.closest('.card');
+  // v67 · Aviso con vuelta al informe
+  if(card){
+    let ban=document.getElementById('regVolverInf');
+    if(!ban){ ban=document.createElement('div'); ban.id='regVolverInf'; card.insertBefore(ban, card.firstChild); }
+    ban.style.display=infVolverCtx?'flex':'none';
+    ban.style.cssText+=';align-items:center;justify-content:space-between;gap:8px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:9px;padding:7px 10px;margin-bottom:10px;font-size:11.5px';
+    ban.innerHTML=infVolverCtx?`<span>✏️ Corrigiendo desde <b>Informes</b>: ${escH(fD(e.fecha))} · ${escH((w&&w.nombre)||e.workerNombre||'')}</span><button class="btn btn-secondary btn-sm" style="width:auto;padding:4px 9px" onclick="infVolver()">↩ Volver</button>`:'';
+  }
+  if(card){ card.scrollIntoView({behavior:'smooth',block:'start'}); }
   toast('✏️ Corrigiendo la entrada del '+fD(e.fecha));
 }
 function regSalirEdicion(){
   regEdit=null;
+  const ban=document.getElementById('regVolverInf'); if(ban) ban.style.display='none';   // v67
   const b=document.getElementById('regBtnGuardar'); if(b) b.textContent='＋ Guardar Entrada';
   const c=document.getElementById('regBtnCancelar'); if(c) c.style.display='none';
 }
@@ -9312,6 +9325,156 @@ function eficCicloTxt(sel){
   return (c ? cicloLabel(c).replace(/🍅|🫑|🌶️|🌶|🥬|❄️|☀️|🌱|🍂|🌞|🔄/g,'').trim() : 'Ciclo') + ' · ' + sub;
 }
 
+// ─────────────────────────────────────────────
+// v67 · VALORES ATÍPICOS Y CORRECCIÓN DESDE INFORMES
+// ─────────────────────────────────────────────
+// Un día-persona (trabajador × labor × día) se marca para revisar si:
+//   - la labor aparece en 2 o más entradas del mismo trabajador ese día (posible doble registro);
+//   - supera LIMITES.mesasPorLabor (nadie tiene más mesas que eso);
+//   - es más de ATIP_ALTO veces la mediana de ese encargado y labor (con al menos ATIP_MIN_N días);
+//   - es menos de ATIP_BAJO de la mediana (ej. 1 mesa donde lo normal son 20).
+const ATIP_ALTO=2, ATIP_BAJO=0.25, ATIP_MIN_N=5;
+// Junta los días-persona por predio|encargado|labor (y ciclo, si porCiclo).
+function obsDiasPersona(selCic, porCiclo){
+  const { registros } = infState.data;
+  const grupos = {};
+  registros.forEach(r=>{
+    if(r.ausente || r.licencia || r.vacaciones) return;
+    if(selCic!==undefined && !eficPasaCiclo(r, selCic)) return;
+    const w = r._worker || {};
+    const sub = w.subjefe || 'Sin encargado';
+    const c = porCiclo ? cicloDeRegistro(r) : null;
+    const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
+    labs.forEach(l=>{
+      const m = Number(l.mesas)||0, h = Number(l.horas)||0;
+      if(!l.laborId || m<=0) return;
+      const gk = r._predio+'|'+sub+'|'+l.laborId+(porCiclo?'|'+(c?c.id:'sin'):'');
+      if(!grupos[gk]) grupos[gk] = { predioId:r._predio, subjefe:sub, laborId:l.laborId,
+        ciclo: porCiclo ? (c?cicloLabel(c):'Sin ciclo') : '', obs:{} };
+      const ok = r._predio+'|'+wKeyReg(r)+'|'+r.fecha;
+      const g = grupos[gk];
+      if(!g.obs[ok]) g.obs[ok] = { fecha:r.fecha, nombre: w.nombre || r.workerNombre || r.workerId, mesas:0, horas:0, ents:[] };
+      const o = g.obs[ok];
+      o.mesas += m; o.horas += h;
+      const otras = (r.labores||[]).filter(x=>x!==l && x.laborId).map(x=>`${x.laborId} (${Number(x.mesas)||0} m, ${Number(x.horas)||0} h)`);
+      o.ents.push({ pid:r._predio, id:r._id, mesas:m, horas:h, otras, obs:r.obs||'' });
+    });
+  });
+  Object.values(grupos).forEach(g=>{ g.lista = Object.values(g.obs); delete g.obs; marcarAtipicos(g.lista); });
+  return grupos;
+}
+function marcarAtipicos(lista){
+  const vals = lista.map(o=>o.mesas).sort((a,b)=>a-b);
+  const n = vals.length;
+  const med = !n ? 0 : (n%2 ? vals[(n-1)/2] : (vals[n/2-1]+vals[n/2])/2);
+  lista.forEach(o=>{
+    const f = [];
+    if(o.ents.length>1) f.push('Posible duplicado');
+    if(o.mesas > LIMITES.mesasPorLabor) f.push(`Sobre ${LIMITES.mesasPorLabor} mesas`);
+    else if(n>=ATIP_MIN_N && med>0 && o.mesas > ATIP_ALTO*med) f.push('Muy alto');
+    if(n>=ATIP_MIN_N && med>=4 && o.mesas < ATIP_BAJO*med) f.push('Muy bajo');
+    o.flags = f; o.med = med;
+  });
+  lista.sort((a,b)=> b.mesas-a.mesas || a.fecha.localeCompare(b.fecha));
+}
+function puedeCorregirInf(pid){ return isCampo() && userPredios().includes(pid); }
+let infVolverCtx=null;
+function infGuardarCtx(extra){
+  infVolverCtx = { tab: infState.tab, effLabor: infState.effLabor, effCiclo: infState.effCiclo, incTipo: infState.incTipo,
+    desde: document.getElementById('infDesde').value, hasta: document.getElementById('infHasta').value,
+    predio: document.getElementById('infPredio').value, subjefe: document.getElementById('infSubjefe').value, ...(extra||{}) };
+}
+// Abre la entrada en el formulario de Registro para corregirla
+async function infCorregir(pid, id, extra){
+  if(!puedeCorregirInf(pid)){ toast('Sin permiso para corregir registros de ese predio'); return; }
+  loading(true,'Abriendo la entrada…');
+  let e=null;
+  try{
+    const snap = await colRegistros(pid).doc(id).get();
+    if(snap.exists) e = { id, ...snap.data() };
+  }catch(err){ loading(false); toast('Error: '+err.message); return; }
+  loading(false);
+  if(!e){ toast('La entrada ya no existe (¿se eliminó?)'); return; }
+  infGuardarCtx(extra);
+  closeModal();
+  if(pid!==activePred){ await selPredio(pid); await new Promise(r=>setTimeout(r,350)); }
+  showScr('registro');
+  regEditar(id, e);
+}
+// Elimina una entrada (sobre todo, un doble registro) sin salir del informe
+async function infEliminar(pid, id, extra){
+  if(!puedeCorregirInf(pid)){ toast('Sin permiso para eliminar registros de ese predio'); return; }
+  if(!confirm('¿Eliminar esta entrada? Úsalo solo si es un registro repetido o equivocado.')) return;
+  loading(true,'Eliminando…');
+  try{
+    const ref = colRegistros(pid).doc(id);
+    try{ const fs = await ref.collection('fotos').get(); await Promise.all(fs.docs.map(d=>d.ref.delete().catch(()=>{}))); }catch(e){}
+    await ref.delete();
+    toast('🗑 Entrada eliminada');
+  }catch(e){ loading(false); toast('Error: '+e.message); return; }
+  loading(false);
+  infGuardarCtx(extra);
+  closeModal();
+  await infVolver(true);
+}
+// Vuelve a Informes con los mismos filtros y regenera
+async function infVolver(sinPantalla){
+  const ctx = infVolverCtx; infVolverCtx = null;
+  if(!ctx){ showScr('informes'); return; }
+  if(regEdit) regSalirEdicion();
+  if(!sinPantalla || !document.getElementById('screen-informes').classList.contains('active')) showScr('informes');
+  document.getElementById('infDesde').value = ctx.desde;
+  document.getElementById('infHasta').value = ctx.hasta;
+  const sp = document.getElementById('infPredio');
+  if([...sp.options].some(o=>o.value===ctx.predio)) sp.value = ctx.predio;
+  onInfPredioChange();
+  const ss = document.getElementById('infSubjefe');
+  if(!ss.disabled && [...ss.options].some(o=>o.value===ctx.subjefe)) ss.value = ctx.subjefe;
+  infState.tab = ctx.tab || 'eficiencia';
+  infState.effLabor = ctx.effLabor; infState.effCiclo = ctx.effCiclo; infState.incTipo = ctx.incTipo;
+  await cargarYRenderInformes();
+  if(ctx.dias) eficVerDias(ctx.dias.pid, ctx.dias.sub, ctx.dias.lab);
+}
+// Botones ✏️ / 🗑️ de las entradas de una observación
+function infBtnsEnt(ents, extra){
+  const ex = extra ? escH(JSON.stringify(extra)) : 'null';
+  return ents.map((x,i)=> puedeCorregirInf(x.pid)
+    ? `<span style="white-space:nowrap"><button class="inf-dl" title="Corregir esta entrada" onclick='infCorregir("${x.pid}","${x.id}",${ex})'>✏️${ents.length>1?' '+(i+1):''}</button>${ents.length>1?`<button class="inf-dl" title="Eliminar esta entrada" style="margin-left:2px" onclick='infEliminar("${x.pid}","${x.id}",${ex})'>🗑️</button>`:''}</span>`
+    : '').join(' ');
+}
+const ATIP_COLOR={'Posible duplicado':'#7C3AED','Muy alto':'#B45309','Muy bajo':'#2563EB'};
+function atipChips(flags){
+  return (flags||[]).map(f=>`<span style="display:inline-block;font-size:9.5px;font-weight:700;color:#fff;background:${ATIP_COLOR[f]||'#D62828'};border-radius:5px;padding:1px 5px;margin:1px 2px 0 0">${escH(f)}</span>`).join('');
+}
+// Lista de días-persona de un encargado × labor (con el ciclo elegido)
+function eficVerDias(pid, sub, lab){
+  const g = obsDiasPersona(infState.effCiclo||'', false)[pid+'|'+sub+'|'+lab];
+  if(!g){ toast('Sin datos'); return; }
+  const l = LABORES.find(x=>String(x.id)===String(lab));
+  const nAt = g.lista.filter(o=>o.flags.length).length;
+  const extra = { dias:{ pid, sub, lab } };
+  const sel = infState.effDiasSolo ? g.lista.filter(o=>o.flags.length) : g.lista;
+  document.getElementById('modalContent').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+      <div><div style="font-family:'Syne',sans-serif;font-weight:800;font-size:15px">🔎 ${escH(sub)} · ${lab}. ${escH(l?l.d:'')}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">${escH(eficCicloTxt(infState.effCiclo||''))} · ${g.lista.length} días-persona · mediana ${(Math.round(g.lista[0].med*10)/10).toLocaleString('es-CL')} mesas · <b style="color:${nAt?'#B45309':'var(--green)'}">${nAt} para revisar</b></div></div>
+      <button class="btn btn-secondary btn-sm" style="width:auto" onclick="closeModal()">✕</button>
+    </div>
+    <label style="display:flex;gap:6px;align-items:center;text-transform:none;font-weight:400;margin:8px 0 6px;font-size:12px"><input type="checkbox" ${infState.effDiasSolo?'checked':''} onchange="infState.effDiasSolo=this.checked;eficVerDias('${pid}','${escH(sub)}','${lab}')"> Mostrar solo los que hay que revisar</label>
+    <div style="max-height:62vh;overflow-y:auto"><table class="inf-table">
+      <thead><tr><th>Fecha</th><th>Trabajador</th><th class="num">Mesas</th><th class="num">Horas</th><th></th></tr></thead>
+      <tbody>${sel.map(o=>`<tr${o.flags.length?' style="background:#FFF7ED"':''}>
+        <td style="white-space:nowrap">${fDMY(o.fecha).slice(0,5)}<div style="font-size:9px;color:var(--muted)">${['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][new Date(o.fecha+'T12:00:00').getDay()]}</div></td>
+        <td>${escH(o.nombre)}<div>${atipChips(o.flags)}</div>${o.ents.length>1?`<div style="font-size:9.5px;color:var(--muted)">${o.ents.map((x,i)=>`${i+1}: ${x.mesas} m, ${x.horas} h`).join(' · ')}</div>`:''}${o.ents.some(x=>x.otras.length)?`<div style="font-size:9.5px;color:var(--muted)">Otras labores ese día: ${escH([...new Set(o.ents.flatMap(x=>x.otras))].join(', '))}</div>`:''}</td>
+        <td class="num"><b>${o.mesas}</b></td>
+        <td class="num">${(Math.round(o.horas*10)/10).toLocaleString('es-CL')}</td>
+        <td style="text-align:right">${infBtnsEnt(o.ents, extra)}</td>
+      </tr>`).join('') || `<tr><td colspan="5" class="inf-empty">✅ Nada que revisar</td></tr>`}</tbody>
+    </table></div>
+    <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-top:6px">Se marca para revisar: <b>posible duplicado</b> (la misma labor en 2 o más entradas del trabajador ese día; la cifra es la suma), <b>sobre ${LIMITES.mesasPorLabor} mesas</b>, <b>muy alto</b> (más del doble de la mediana) y <b>muy bajo</b> (menos de un cuarto de la mediana). ✏️ abre la entrada en Registro para corregirla; al guardar vuelves aquí.</div>`;
+  document.getElementById('overlay').classList.add('open');
+}
+
 function calcEficiencia(){
   const { registros } = infState.data;
   const cph = costoPorHora();
@@ -9399,6 +9562,10 @@ function calcEficiencia(){
   });
 
   rows.sort((a,b)=> a.subjefe.localeCompare(b.subjefe,'es') || b.mesas - a.mesas);
+
+  // v67 · Cuántos días-persona hay que revisar en cada fila
+  const grpAt = obsDiasPersona(selCic, false);
+  rows.forEach(r=>{ const g = grpAt[r.predioId+'|'+r.subjefe+'|'+r.laborId]; r.nAtip = g ? g.lista.filter(o=>o.flags.length).length : 0; });
 
   // Resumen por encargado
   const porEnc = {};
@@ -9567,6 +9734,24 @@ function calcDashboard(){
 function calcInconsistencias(){
   const { registros } = infState.data;
   const issues = [];
+  // v67 · Mesas atípicas y posibles duplicados, comparando cada día-persona con
+  // los demás del mismo encargado, labor y ciclo.
+  Object.values(obsDiasPersona(undefined, true)).forEach(g=>{
+    const l = LABORES.find(x=>x.id===g.laborId);
+    const labNom = l ? `${g.laborId}. ${l.d}` : `Labor ${g.laborId}`;
+    g.lista.forEach(o=>{
+      if(!o.flags.length) return;
+      o.flags.forEach(f=>{
+        issues.push({ fecha:o.fecha, trabajador:o.nombre, subjefe:g.subjefe,
+          predio: PREDIOS[g.predioId] ? PREDIOS[g.predioId].nombre : g.predioId,
+          tipo: f==='Posible duplicado' ? 'Posible duplicado' : (f==='Muy bajo' ? 'Mesas muy bajas' : 'Mesas muy altas'),
+          detalle: f==='Posible duplicado'
+            ? `${labNom}: ${o.ents.length} entradas el mismo día (${o.ents.map(x=>x.mesas+' m').join(' + ')} = ${o.mesas} mesas)`
+            : `${labNom}: ${o.mesas} mesas en el día${f.startsWith('Sobre')?` (máximo razonable ${LIMITES.mesasPorLabor})`:''}; la mediana del encargado en ${g.ciclo} es ${(Math.round(o.med*10)/10).toLocaleString('es-CL')}`,
+          ents: o.ents.map(x=>({pid:x.pid, id:x.id})) });
+      });
+    });
+  });
   const porDiaTrab = {};
   registros.forEach(r=>{
     const w = r._worker || {};
@@ -9580,7 +9765,8 @@ function calcInconsistencias(){
       fecha: r.fecha,
       trabajador: w.nombre || r.workerId,
       subjefe: w.subjefe || '—',
-      predio: PREDIOS[r._predio] ? PREDIOS[r._predio].nombre : r._predio
+      predio: PREDIOS[r._predio] ? PREDIOS[r._predio].nombre : r._predio,
+      ents: [{pid:r._predio, id:r._id}]   // v67
     };
     if((r.ausente || r.licencia || r.vacaciones)){
       const labs = r.labores || [];
@@ -9613,7 +9799,8 @@ function calcInconsistencias(){
       issues.push({
         fecha:g.fecha, trabajador: g.w.nombre || g.items[0].workerId, subjefe: g.w.subjefe || '—',
         predio: PREDIOS[g.predio] ? PREDIOS[g.predio].nombre : g.predio,
-        tipo:'Jornada >12h', detalle:`Total del día: ${totalH.toFixed(1)} horas`
+        tipo:'Jornada >12h', detalle:`Total del día: ${totalH.toFixed(1)} horas`,
+        ents: g.items.map(r=>({pid:r._predio, id:r._id}))   // v67
       });
     }
   });
@@ -10024,11 +10211,12 @@ function renderInfEficiencia(){
     return;
   }
 
+  const lnk = (r,v)=> r.predioId ? `<a href="javascript:void(0)" style="color:inherit;text-decoration:underline dotted" title="Ver los días" onclick="eficVerDias('${r.predioId}','${escH(r.subjefe)}','${r.laborId}')">${v}</a>` : v;
   const celdas = r=>`
         <td class="num">${r.diasPersona}</td>
-        <td class="num">${fmt1(r.minDia)}</td>
+        <td class="num">${lnk(r,fmt1(r.minDia))}</td>
         <td class="num"><b>${fmt1(r.mesasDiaPersona)}</b></td>
-        <td class="num">${fmt1(r.maxDia)}</td>
+        <td class="num">${lnk(r,fmt1(r.maxDia))}</td>
         <td class="num" style="background:#F0F7EE"><b>${fmt1(r.p80)}</b></td>
         <td class="num">${r.costoPorMesa===null||r.costoPorMesa===undefined?'—':fmtCLP(r.costoPorMesa)}</td>`;
   const cab = `<thead><tr><th>${sel?'Encargado':'Labor'}</th><th class="num">Días<br>pers.</th><th class="num">Mín.</th><th class="num">Prom.</th><th class="num">Máx.</th><th class="num" style="background:#E3F0DE">Prom.<br>80% ráp.</th><th class="num">$/mesa</th></tr></thead>`;
@@ -10043,7 +10231,8 @@ function renderInfEficiencia(){
     }
     const pct = r.pctVsProm===null ? '' : ` · <span style="color:${r.pctVsProm>=100?'var(--green)':(r.pctVsProm<85?'#B45309':'inherit')}">${r.pctVsProm}% del prom. de la labor</span>`;
     const titulo = sel ? `${escH(r.subjefe)}<div style="font-size:9px;color:var(--muted)">${r.predio}</div>` : `${r.laborId}. ${escH(r.labor)}`;
-    const det = `${r.trabajadores} trab. · mediana ${fmt1(r.medDia)} · cuadrilla ${fmt1(r.mesasDiaCuadrilla)}/día${r.horas?` · ${fmt1(r.mesasHora)} mesas/h`:''}${pct}${r.pocaMuestra?' · <b style="color:#B45309">poca muestra</b>':''}`;
+    const det = `${r.trabajadores} trab. · mediana ${fmt1(r.medDia)} · cuadrilla ${fmt1(r.mesasDiaCuadrilla)}/día${r.horas?` · ${fmt1(r.mesasHora)} mesas/h`:''}${pct}${r.pocaMuestra?' · <b style="color:#B45309">poca muestra</b>':''}`
+      + `<div style="margin-top:2px"><button class="inf-dl" style="padding:2px 7px;${r.nAtip?'border-color:#F59E0B;background:#FEF3C7':''}" onclick="eficVerDias('${r.predioId}','${escH(r.subjefe)}','${r.laborId}')">🔎 ${r.nAtip?`${r.nAtip} para revisar`:'Ver días'}</button></div>`;
     return c + `<tr${r.pocaMuestra?' style="opacity:.65"':''}>
         <td>${titulo}<div style="font-size:9px;color:var(--muted)">${det}</div></td>${celdas(r)}
       </tr>`;
@@ -10055,7 +10244,7 @@ function renderInfEficiencia(){
   html += `<div style="font-size:11px;font-weight:600;margin:4px 0 4px">Mesas por día persona · ${escH(eficCicloTxt(selC))}${sel?` · ${sel}. ${escH((laboresPresentes.find(l=>String(l.id)===String(sel))||{}).nom||'')}`:''}</div>
   <div style="overflow-x:auto"><table class="inf-table">${cab}<tbody>${cuerpo}</tbody></table></div>
   <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:12px">
-    <b>Día persona</b>: un trabajador que hizo esa labor ese día; es la unidad de todas las cifras. <b>Mín. / Prom. / Máx.</b>: el día-persona con menos mesas, el promedio y el con más. <b>Prom. 80 % ráp.</b>: se ordenan los días-persona de más a menos mesas y se promedia el 80 % de arriba (se deja fuera el 20 % más lento); sirve como meta alcanzable. <b>$/mesa</b>: costo ÷ mesas (personal propio: horas × costo por hora; contratistas: lo pagado). Con menos de ${EFIC_MIN_DIAS} días-persona la cifra es poco confiable.
+    <b>🔎 / tocar Mín. o Máx.</b>: lista cada día-persona con fecha y trabajador; los dudosos salen marcados y con ✏️ se abre la entrada para corregirla. Mientras haya datos dudosos, el mín., el máx. y el promedio no son confiables. <b>Día persona</b>: un trabajador que hizo esa labor ese día; es la unidad de todas las cifras. <b>Mín. / Prom. / Máx.</b>: el día-persona con menos mesas, el promedio y el con más. <b>Prom. 80 % ráp.</b>: se ordenan los días-persona de más a menos mesas y se promedia el 80 % de arriba (se deja fuera el 20 % más lento); sirve como meta alcanzable. <b>$/mesa</b>: costo ÷ mesas (personal propio: horas × costo por hora; contratistas: lo pagado). Con menos de ${EFIC_MIN_DIAS} días-persona la cifra es poco confiable.
     ${d.excluidas?`<br>Quedaron fuera ${d.excluidas} labores registradas con horas pero sin mesas (ver Inconsistencias).`:''}
   </div>`;
 
@@ -10201,26 +10390,37 @@ function renderInfDashboard(){
 // INFORME 4: Inconsistencias detectadas
 // ─────────────────────────────────────────────
 function renderInfInconsistencias(){
-  const { issues } = calcInconsistencias();
+  const { issues:todas } = calcInconsistencias();
+  // v67 · Filtro por tipo
+  const tipos = [...new Set(todas.map(i=>i.tipo))].sort((a,b)=>a.localeCompare(b,'es'));
+  let tSel = infState.incTipo || '';
+  if(tSel && !tipos.includes(tSel)) tSel = '';
+  const issues = tSel ? todas.filter(i=>i.tipo===tSel) : todas;
 
   let html = `<div class="inf-card">
     <div class="inf-hdr"><div class="inf-card-title">⚠️ Inconsistencias detectadas</div>${infDlBtnsHTML('inconsist')}</div>
     <p style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">Casos que conviene revisar con los subjefes. No son errores en los datos, solo señales que ameritan verificación.</p>
     <div class="inf-summary">
-      <div class="inf-pill"><div class="inf-pill-label">Casos</div><div class="inf-pill-value">${issues.length}</div></div>
-    </div>`;
+      <div class="inf-pill"><div class="inf-pill-label">Casos</div><div class="inf-pill-value">${issues.length}${tSel?` de ${todas.length}`:''}</div></div>
+    </div>
+    ${tipos.length?`<div class="form-row"><label>Tipo</label><select onchange="infState.incTipo=this.value;switchInfTab('inconsist')">
+      <option value="">Todos (${todas.length})</option>
+      ${tipos.map(t=>`<option value="${escH(t)}" ${t===tSel?'selected':''}>${escH(t)} (${todas.filter(i=>i.tipo===t).length})</option>`).join('')}
+    </select></div>`:''}
+    <p style="font-size:10.5px;color:var(--muted);line-height:1.5;margin:-2px 0 8px">✏️ abre la entrada en Registro para corregirla y al guardar vuelves aquí. 🗑️ aparece cuando hay más de una entrada: sirve para borrar un registro repetido.</p>`;
   if(!issues.length){
     html += `<div class="inf-empty">✅ No se detectaron inconsistencias en el período.</div></div>`;
     document.getElementById('infContent').innerHTML = html;
     return;
   }
   html += `<table class="inf-table">
-    <thead><tr><th>Fecha</th><th>Trabajador</th><th>Tipo</th><th>Detalle</th></tr></thead>
+    <thead><tr><th>Fecha</th><th>Trabajador</th><th>Tipo</th><th>Detalle</th><th></th></tr></thead>
     <tbody>${issues.map(i=>`<tr class="inc-row">
       <td>${fDMY(i.fecha)}</td>
-      <td>${i.trabajador}<div style="font-size:9px;color:var(--muted)">${i.subjefe} · ${i.predio}</div></td>
+      <td>${escH(i.trabajador)}<div style="font-size:9px;color:var(--muted)">${escH(i.subjefe)} · ${i.predio}</div></td>
       <td><b>${i.tipo}</b></td>
       <td>${i.detalle}</td>
+      <td style="text-align:right">${infBtnsEnt(i.ents||[])}</td>
     </tr>`).join('')}</tbody>
   </table></div>`;
   document.getElementById('infContent').innerHTML = html;
@@ -11613,10 +11813,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v66';
+const MANUAL_VERSION='v67';
 const MANUAL_FECHA='2026-10-12';
 
 const MANUAL_CAMBIOS=[
+  {v:'v67', f:'12-10-2026', ver:()=>canViewInformes(), txt:'<b>Revisar y corregir datos dudosos desde Informes.</b> En <b>⚡ Eficiencia</b>, el botón <b>🔎</b> de cada encargado y labor (o tocar el Mín. o el Máx.) muestra todos los días con fecha, trabajador, mesas y horas, ordenados de más a menos, y marca los dudosos: <b>posible duplicado</b> (la misma labor anotada dos veces el mismo día), <b>sobre 70 mesas</b>, <b>muy alto</b> (más del doble de la mediana) y <b>muy bajo</b> (menos de un cuarto). Con <b>✏️</b> se abre esa entrada en Registro para corregirla y, al guardar, se vuelve al informe; con <b>🗑️</b> se borra un registro repetido. Lo mismo aparece en <b>⚠️ Inconsistencias</b>, que ahora se filtra por tipo.'},
   {v:'v66', f:'12-10-2026', ver:()=>canViewInformes(), txt:'<b>Informes › ⚡ Eficiencia:</b> ahora se filtra por <b>ciclo</b> (un cultivo y época para todos los encargados, o el ciclo de un encargado) y, por encargado y labor, muestra las mesas por día persona: <b>mínimo, promedio, máximo</b> y el <b>promedio del 80 % más rápido</b> (deja fuera el 20 % de días más lentos; sirve como meta), además del <b>costo por mesa</b>. Al elegir una labor aparece la fila <b>Todos los encargados</b>. Ahora también entran las labores con mesas y 0 horas (contratistas); el $/mesa usa solo lo que tiene costo conocido.'},
   {v:'v65', f:'12-10-2026', ver:()=>isCampo()||canViewInformes(), txt:'<b>Contratistas: valor por mesa o por techo, con vigencia, y pago semanal.</b> En <b>Config › Contratistas</b> cada labor lleva su valor fijo <b>por mesa o por techo</b> (1 techo = 3 mesas) y la fecha <b>desde la que rige</b>; al cambiar un precio se pone la fecha nueva y lo registrado antes conserva el valor anterior (o se puede recalcular). En el registro se siguen anotando mesas: si la labor se paga por techo, la app divide por 3. Los predios con contratistas muestran la semana completa, <b>de lunes a domingo</b>, para registrar a diario también sábado y domingo. En Informes › 🧑‍🌾 Contratistas aparece el <b>📅 Pago semanal</b>: lo que se paga a cada trabajador cada día y el total de la semana, con botones para la semana pasada y la actual.'},
   {v:'v64', f:'07-10-2026', txt:'<b>Ácidos:</b> ya no se anotan los días que dura el estanque. Al cargarlo se anotan los kg de nítrico y fosfórico y los <b>litros gastados ese día</b>; los días siguientes, con <b>➕ Seguir</b>, solo los litros gastados. Los litros de cada día se reparten entre los sectores marcados según su superficie.'},
@@ -11793,7 +11994,8 @@ const MANUAL_SECCIONES=[
     'Con <b>📷 Anexo de observaciones (PDF)</b> bajas todas las observaciones escritas en el período, con la foto de respaldo de cada una. Sirve para respaldar una conversación sobre trabajo mal hecho, o para dejarlo por escrito.'
   ],
   tips:[
-    'Parte siempre por <b>Inconsistencias</b>: ahí salen los datos que no cuadran (días sin registro, horas fuera de rango, labores sin ciclo). Corregir eso primero hace que el resto de los informes sirva.',
+    'Parte siempre por <b>Inconsistencias</b>: ahí salen los datos que no cuadran (mesas muy altas o muy bajas, posibles duplicados, horas fuera de rango). Corregir eso primero hace que el resto de los informes sirva.',
+    'Para corregir un dato dudoso: en <b>⚡ Eficiencia</b> toca <b>🔎</b> (o el Mín. / Máx.) del encargado y labor, o búscalo en <b>⚠️ Inconsistencias</b>. Toca <b>✏️</b>: se abre la entrada en Registro con todo cargado; corrige las mesas u horas y guarda. La app vuelve sola al informe con los mismos filtros. Si la misma labor está anotada dos veces el mismo día, borra la repetida con <b>🗑️</b>.',
     'Los costos por hora salen de lo que esté cargado en Config › Costos del personal. Si el sueldo mínimo cambió y no se actualizó ahí, los pesos van a estar malos.',
     'En Eficiencia, un día en que el trabajador hizo dos labores cuenta en las dos: en esas labores la cifra sale más baja que si hubiera hecho solo una. Las filas en gris tienen menos de 3 días-persona y todavía no sirven para comparar.',
     'El anexo de observaciones sale del mismo período y predio que tengas arriba: si quieres solo una semana, acota las fechas antes de generarlo. Trae hasta 40 observaciones por archivo.'
