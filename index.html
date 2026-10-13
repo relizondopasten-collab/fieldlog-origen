@@ -9245,39 +9245,117 @@ function calcLabores(){
 // las dos se cuentan aparte (ya salen en Inconsistencias).
 const EFIC_MIN_DIAS = 3;   // bajo esto, la cifra se marca como "poca muestra"
 
+// v66 · Estadística por encargado × labor, filtrable por ciclo:
+//   - Observación = día-persona (mesas de un trabajador en esa labor ese día).
+//   - Mín., promedio, máx. y mediana de esas observaciones.
+//   - "Prom. 80 % más rápido": se ordenan los días-persona de mayor a menor y se
+//     promedia el 80 % superior (se descarta el 20 % más lento). Con menos de 5
+//     días-persona el 20 % es menos de un día y se toma la cantidad redondeada
+//     hacia arriba (ej. 3 días → 3; 6 días → 5).
+//   - Entran todas las labores con mesas, aunque tengan 0 horas (contratistas y
+//     días con varias labores donde las horas quedaron en la primera). Las
+//     mesas/hora usan solo los días con horas.
+//   - $/mesa: costo ÷ mesas, solo con las labores de costo conocido (pago al
+//     contratista, o personal propio con horas). Una labor con mesas y 0 horas
+//     del personal propio no tiene costo y no baja el $/mesa.
+function eficStats(vals){
+  const v = vals.slice().sort((a,b)=>b-a);   // de mayor a menor
+  const n = v.length;
+  if(!n) return { n:0, prom:0, min:0, max:0, med:0, p80:0, n80:0 };
+  const suma = v.reduce((s,x)=>s+x,0);
+  const n80 = Math.max(1, Math.ceil(n*0.8));
+  const p80 = v.slice(0,n80).reduce((s,x)=>s+x,0)/n80;
+  const med = n%2 ? v[(n-1)/2] : (v[n/2-1]+v[n/2])/2;
+  return { n, prom:suma/n, min:v[n-1], max:v[0], med, p80, n80 };
+}
+// Opciones del filtro de ciclo a partir de los registros cargados.
+// 'L:<etiqueta>' junta los ciclos de todos los encargados con el mismo cultivo y
+// época (para comparar encargados); 'C:<predio>|<encargado>|<id>' es un ciclo puntual.
+function eficOpcionesCiclo(){
+  const { registros } = infState.data;
+  const porLbl = {}, porCic = {};
+  let sinCiclo = 0;
+  registros.forEach(r=>{
+    if(r.ausente || r.licencia || r.vacaciones) return;
+    const c = cicloDeRegistro(r);
+    if(!c){ sinCiclo++; return; }
+    const lbl = cicloLabel(c);
+    porLbl[lbl] = (porLbl[lbl]||0) + 1;
+    const sub = (r._worker||{}).subjefe || '';
+    const k = r._predio+'|'+sub+'|'+c.id;
+    if(!porCic[k]) porCic[k] = { k, lbl, sub, predio: PREDIOS[r._predio]?PREDIOS[r._predio].nombre:r._predio,
+      inicio: c.inicio||'', fin: c.fin||'', n:0 };
+    porCic[k].n++;
+  });
+  return {
+    grupos: Object.keys(porLbl).sort((a,b)=>a.localeCompare(b,'es')),
+    ciclos: Object.values(porCic).sort((a,b)=> a.lbl.localeCompare(b.lbl,'es') || a.sub.localeCompare(b.sub,'es')),
+    sinCiclo
+  };
+}
+function eficPasaCiclo(r, sel){
+  if(!sel) return true;
+  const c = cicloDeRegistro(r);
+  if(sel==='S:') return !c;
+  if(!c) return false;
+  if(sel.startsWith('L:')) return cicloLabel(c) === sel.slice(2);
+  if(sel.startsWith('C:')) return sel.slice(2) === r._predio+'|'+((r._worker||{}).subjefe||'')+'|'+c.id;
+  return true;
+}
+function eficCicloTxt(sel){
+  if(!sel) return 'Todos los ciclos';
+  if(sel==='S:') return 'Sin ciclo';
+  if(sel.startsWith('L:')) return sel.slice(2).replace(/🍅|🫑|🌶️|🌶|🥬|❄️|☀️|🌱|🍂|🌞|🔄/g,'').trim() + ' (todos los encargados)';
+  const [pid, sub, id] = sel.slice(2).split('|');
+  const lista = (((infState.data.ciclos||{})[pid]||{})[sub])||[];
+  const c = lista.find(x=>x.id===id);
+  return (c ? cicloLabel(c).replace(/🍅|🫑|🌶️|🌶|🥬|❄️|☀️|🌱|🍂|🌞|🔄/g,'').trim() : 'Ciclo') + ' · ' + sub;
+}
+
 function calcEficiencia(){
   const { registros } = infState.data;
   const cph = costoPorHora();
+  const selCic = infState.effCiclo || '';
   const map = {};
   let excluidas = 0;
   registros.forEach(r=>{
     if(r.ausente || r.licencia || r.vacaciones) return;
+    if(!eficPasaCiclo(r, selCic)) return;
     const w = r._worker || {};
     const sub = w.subjefe || 'Sin encargado';
     const labs = r.labores || [{ laborId: r.laborId, mesas: r.mesas || 0, horas: r.horas || 0 }];
     labs.forEach((l,i)=>{
       if(!l.laborId) return;
       const m = Number(l.mesas) || 0, h = Number(l.horas) || 0;
-      if(m<=0 || h<=0){ if(m>0 || h>0) excluidas++; return; }
+      if(m<=0){
+        const lab = LABORES.find(x=>x.id===l.laborId);
+        if(h>0 && !(lab && lab.sinMesas)) excluidas++;
+        return;
+      }
       const k = r._predio + '|' + sub + '|' + l.laborId;
       if(!map[k]) map[k] = { predioId:r._predio, subjefe:sub, laborId:l.laborId,
-        mesas:0, horas:0, costo:0, fechas:new Set(), diasPersona:new Set(), porTrab:{} };
+        mesas:0, horas:0, mesasConH:0, costo:0, mesasCosto:0, fechas:new Set(), dias:{}, porTrab:{} };
       const b = map[k];
       const wk = r._predio + '|' + wKeyReg(r);
-      b.mesas += m; b.horas += h; b.costo += costoLabor(r, l, i, cph);   // v59
+      b.mesas += m; b.horas += h;
+      if(h>0) b.mesasConH += m;
+      if(r.pago || h>0){ b.costo += costoLabor(r, l, i, cph); b.mesasCosto += m; }   // v59 · contratista = lo pagado
       b.fechas.add(r.fecha);
-      b.diasPersona.add(wk + '|' + r.fecha);
+      const dk = wk + '|' + r.fecha;
+      b.dias[dk] = (b.dias[dk]||0) + m;
       if(!b.porTrab[wk]) b.porTrab[wk] = { mesas:0, dias:new Set() };
       b.porTrab[wk].mesas += m;
       b.porTrab[wk].dias.add(r.fecha);
     });
   });
 
+  const valsLabor = {};   // laborId → todas las observaciones (para la fila "Todos")
   let rows = Object.values(map).map(b=>{
     const l = LABORES.find(x=>x.id===b.laborId);
-    const dp = b.diasPersona.size;
+    const vals = Object.values(b.dias);
+    (valsLabor[b.laborId] = valsLabor[b.laborId] || []).push(...vals);
+    const st = eficStats(vals);
     const tasas = Object.values(b.porTrab).map(t=> t.mesas / t.dias.size);
-    const costoTotal = b.costo;
     return {
       predioId: b.predioId,
       predio: PREDIOS[b.predioId] ? PREDIOS[b.predioId].nombre : b.predioId,
@@ -9286,30 +9364,34 @@ function calcEficiencia(){
       labor: l ? l.d : '—',
       trabajadores: tasas.length,
       diasLabor: b.fechas.size,
-      diasPersona: dp,
+      diasPersona: st.n,
       mesas: b.mesas,
       horas: b.horas,
-      mesasDiaPersona: dp ? b.mesas / dp : 0,
+      mesasDiaPersona: st.prom,
+      minDia: st.min, maxDia: st.max, medDia: st.med, p80: st.p80, n80: st.n80,
       mesasDiaCuadrilla: b.fechas.size ? b.mesas / b.fechas.size : 0,
-      mesasHora: b.horas ? b.mesas / b.horas : 0,
+      mesasHora: b.horas ? b.mesasConH / b.horas : 0,
       minTrab: tasas.length ? Math.min(...tasas) : 0,
       maxTrab: tasas.length ? Math.max(...tasas) : 0,
-      costoTotal,
-      costoPorMesa: b.mesas ? costoTotal / b.mesas : null,
-      pocaMuestra: dp < EFIC_MIN_DIAS
+      costoTotal: b.costo,
+      mesasCosto: b.mesasCosto,
+      costoPorMesa: b.mesasCosto ? b.costo / b.mesasCosto : null,
+      pocaMuestra: st.n < EFIC_MIN_DIAS
     };
   });
 
-  // Promedio de cada labor entre todos los encargados del filtro (ponderado por días-persona)
+  // Por labor, entre todos los encargados del filtro
   const promLabor = {};
   rows.forEach(r=>{
-    if(!promLabor[r.laborId]) promLabor[r.laborId] = { mesas:0, dp:0, horas:0, costo:0 };
+    if(!promLabor[r.laborId]) promLabor[r.laborId] = { mesas:0, dp:0, horas:0, costo:0, mesasCosto:0 };
     const p = promLabor[r.laborId];
-    p.mesas += r.mesas; p.dp += r.diasPersona; p.horas += r.horas; p.costo += r.costoTotal;
+    p.mesas += r.mesas; p.dp += r.diasPersona; p.horas += r.horas; p.costo += r.costoTotal; p.mesasCosto += r.mesasCosto;
   });
-  Object.values(promLabor).forEach(p=>{
-    p.mesasDiaPersona = p.dp ? p.mesas / p.dp : 0;
-    p.costoPorMesa = p.mesas ? p.costo / p.mesas : null;
+  Object.entries(promLabor).forEach(([id,p])=>{
+    const st = eficStats(valsLabor[id]||[]);
+    p.mesasDiaPersona = st.prom;
+    p.minDia = st.min; p.maxDia = st.max; p.medDia = st.med; p.p80 = st.p80; p.n80 = st.n80;
+    p.costoPorMesa = p.mesasCosto ? p.costo / p.mesasCosto : null;
   });
   rows.forEach(r=>{
     const p = promLabor[r.laborId];
@@ -9322,18 +9404,19 @@ function calcEficiencia(){
   const porEnc = {};
   rows.forEach(r=>{
     const k = r.predioId + '|' + r.subjefe;
-    if(!porEnc[k]) porEnc[k] = { subjefe:r.subjefe, predio:r.predio, mesas:0, horas:0, costo:0, labores:0 };
+    if(!porEnc[k]) porEnc[k] = { subjefe:r.subjefe, predio:r.predio, mesas:0, horas:0, costo:0, mesasCosto:0, labores:0 };
     const e = porEnc[k];
-    e.mesas += r.mesas; e.horas += r.horas; e.costo += r.costoTotal; e.labores++;
+    e.mesas += r.mesas; e.horas += r.horas; e.costo += r.costoTotal; e.mesasCosto += r.mesasCosto; e.labores++;
   });
-  const encargados = Object.values(porEnc).map(e=>({ ...e, costoPorMesa: e.mesas ? e.costo / e.mesas : null }))
+  const encargados = Object.values(porEnc).map(e=>({ ...e, costoPorMesa: e.mesasCosto ? e.costo / e.mesasCosto : null }))
     .sort((a,b)=> a.subjefe.localeCompare(b.subjefe,'es'));
 
   const totalMesas = rows.reduce((s,r)=>s+r.mesas, 0);
   const totalHoras = rows.reduce((s,r)=>s+r.horas, 0);
   const totalCosto = rows.reduce((s,r)=>s+r.costoTotal, 0);
+  const totalMesasCosto = rows.reduce((s,r)=>s+r.mesasCosto, 0);
   const totalDP    = rows.reduce((s,r)=>s+r.diasPersona, 0);
-  return { rows, encargados, promLabor, totalMesas, totalHoras, totalCosto, totalDP, excluidas, cph };
+  return { rows, encargados, promLabor, totalMesas, totalHoras, totalCosto, totalMesasCosto, totalDP, excluidas, cph, selCic };
 }
 
 // ─────────────────────────────────────────────
@@ -9889,8 +9972,17 @@ function onEficLaborChange(v){
   infState.effLabor = v;
   switchInfTab('eficiencia');
 }
+function onEficCicloChange(v){   // v66
+  infState.effCiclo = v;
+  switchInfTab('eficiencia');
+}
 
 function renderInfEficiencia(){
+  // v66 · El ciclo elegido puede no existir en los datos recién cargados
+  const opc = eficOpcionesCiclo();
+  const cs = infState.effCiclo || '';
+  if(cs && !(cs==='S:' ? opc.sinCiclo : cs.startsWith('L:') ? opc.grupos.includes(cs.slice(2)) : opc.ciclos.some(c=>'C:'+c.k===cs)))
+    infState.effCiclo = '';
   const d = calcEficiencia();
   const fmt1 = n => (Math.round(n*10)/10).toLocaleString('es-CL');
   const laboresPresentes = [...new Map(d.rows.map(r=>[r.laborId, r.labor])).entries()]
@@ -9898,28 +9990,81 @@ function renderInfEficiencia(){
     .sort((a,b)=> b.mesas - a.mesas);
   let sel = infState.effLabor || '';
   if(sel && !laboresPresentes.some(l=>String(l.id)===String(sel))) sel = '';
-  const filas = sel ? d.rows.filter(r=>String(r.laborId)===String(sel)) : d.rows;
+  const filas = sel ? d.rows.filter(r=>String(r.laborId)===String(sel)).sort((a,b)=>b.mesasDiaPersona-a.mesasDiaPersona) : d.rows;
+  const selC = infState.effCiclo || '';
+  const optC = (v,t)=>`<option value="${escH(v)}" ${v===selC?'selected':''}>${escH(t)}</option>`;
+  const fechaC = x=> x ? fDMY(x).slice(0,5) : '…';
 
   let html = `<div class="inf-card">
-    <div class="inf-hdr"><div class="inf-card-title">⚡ Eficiencia por encargado</div>${infDlBtnsHTML('eficiencia')}</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Mesas que hace <b>un trabajador en un día</b> en cada labor, según las horas reales registradas, y lo que cuesta cada mesa. Costo por hora vigente: <b>${fmtCLP(d.cph)}</b>.</div>
+    <div class="inf-hdr"><div class="inf-card-title">⚡ Eficiencia por labor y encargado</div>${infDlBtnsHTML('eficiencia')}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Mesas que hace <b>un trabajador en un día</b> en cada labor (mínimo, promedio, máximo y promedio del <b>80 % más rápido</b>) y lo que cuesta cada mesa. Costo por hora vigente del personal propio: <b>${fmtCLP(d.cph)}</b>; para contratistas, lo pagado.</div>
+    <div class="form-grid" style="margin-bottom:8px">
+      <div><label>Ciclo</label>
+        <select id="effCiclo" onchange="onEficCicloChange(this.value)">
+          ${optC('','Todos los ciclos')}
+          ${opc.grupos.length?`<optgroup label="Cultivo y época (todos los encargados)">${opc.grupos.map(g=>optC('L:'+g, g)).join('')}</optgroup>`:''}
+          ${opc.ciclos.length?`<optgroup label="Ciclo de un encargado">${opc.ciclos.map(c=>optC('C:'+c.k, `${c.lbl} · ${c.sub} (${fechaC(c.inicio)}–${c.fin?fechaC(c.fin):'abierto'})`)).join('')}</optgroup>`:''}
+          ${opc.sinCiclo?optC('S:','Sin ciclo'):''}
+        </select></div>
+      <div><label>Labor</label>
+        <select id="effLabor" onchange="onEficLaborChange(this.value)">
+          <option value="">Todas las labores</option>
+          ${laboresPresentes.map(l=>`<option value="${l.id}" ${String(l.id)===String(sel)?'selected':''}>${l.id}. ${escH(l.nom)}</option>`).join('')}
+        </select></div>
+    </div>
     <div class="inf-summary">
       <div class="inf-pill"><div class="inf-pill-label">Encargados</div><div class="inf-pill-value">${d.encargados.length}</div></div>
       <div class="inf-pill"><div class="inf-pill-label">Días-persona</div><div class="inf-pill-value">${d.totalDP.toLocaleString('es-CL')}</div></div>
       <div class="inf-pill"><div class="inf-pill-label">Mesas</div><div class="inf-pill-value">${d.totalMesas.toLocaleString('es-CL')}</div></div>
-      <div class="inf-pill"><div class="inf-pill-label">$/mesa prom.</div><div class="inf-pill-value">${d.totalMesas?fmtCLP(d.totalCosto/d.totalMesas):'—'}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">$/mesa prom.</div><div class="inf-pill-value">${d.totalMesasCosto?fmtCLP(d.totalCosto/d.totalMesasCosto):'—'}</div></div>
     </div>`;
   if(!d.rows.length){
-    html += `<div class="inf-empty">No hay labores con mesas y horas en el período.</div></div>`;
+    html += `<div class="inf-empty">No hay labores con mesas en el período${selC?' y ciclo elegidos':''}.</div></div>`;
     document.getElementById('infContent').innerHTML = html;
     return;
   }
 
+  const celdas = r=>`
+        <td class="num">${r.diasPersona}</td>
+        <td class="num">${fmt1(r.minDia)}</td>
+        <td class="num"><b>${fmt1(r.mesasDiaPersona)}</b></td>
+        <td class="num">${fmt1(r.maxDia)}</td>
+        <td class="num" style="background:#F0F7EE"><b>${fmt1(r.p80)}</b></td>
+        <td class="num">${r.costoPorMesa===null||r.costoPorMesa===undefined?'—':fmtCLP(r.costoPorMesa)}</td>`;
+  const cab = `<thead><tr><th>${sel?'Encargado':'Labor'}</th><th class="num">Días<br>pers.</th><th class="num">Mín.</th><th class="num">Prom.</th><th class="num">Máx.</th><th class="num" style="background:#E3F0DE">Prom.<br>80% ráp.</th><th class="num">$/mesa</th></tr></thead>`;
+
+  // Tabla principal encargado × labor
+  let encPrev = null;
+  let cuerpo = filas.map(r=>{
+    let c = '';
+    if(!sel && r.subjefe !== encPrev){
+      encPrev = r.subjefe;
+      c = `<tr><td colspan="7" style="background:var(--cream);font-weight:700;font-size:11px">${escH(r.subjefe)} <span style="font-weight:400;color:var(--muted)">· ${r.predio}</span></td></tr>`;
+    }
+    const pct = r.pctVsProm===null ? '' : ` · <span style="color:${r.pctVsProm>=100?'var(--green)':(r.pctVsProm<85?'#B45309':'inherit')}">${r.pctVsProm}% del prom. de la labor</span>`;
+    const titulo = sel ? `${escH(r.subjefe)}<div style="font-size:9px;color:var(--muted)">${r.predio}</div>` : `${r.laborId}. ${escH(r.labor)}`;
+    const det = `${r.trabajadores} trab. · mediana ${fmt1(r.medDia)} · cuadrilla ${fmt1(r.mesasDiaCuadrilla)}/día${r.horas?` · ${fmt1(r.mesasHora)} mesas/h`:''}${pct}${r.pocaMuestra?' · <b style="color:#B45309">poca muestra</b>':''}`;
+    return c + `<tr${r.pocaMuestra?' style="opacity:.65"':''}>
+        <td>${titulo}<div style="font-size:9px;color:var(--muted)">${det}</div></td>${celdas(r)}
+      </tr>`;
+  }).join('');
+  if(sel && d.promLabor[sel]){
+    const p = d.promLabor[sel];
+    cuerpo += `<tr style="font-weight:700;background:#F4F1EA"><td>Todos los encargados</td>${celdas({diasPersona:p.dp, minDia:p.minDia, mesasDiaPersona:p.mesasDiaPersona, maxDia:p.maxDia, p80:p.p80, costoPorMesa:p.costoPorMesa})}</tr>`;
+  }
+  html += `<div style="font-size:11px;font-weight:600;margin:4px 0 4px">Mesas por día persona · ${escH(eficCicloTxt(selC))}${sel?` · ${sel}. ${escH((laboresPresentes.find(l=>String(l.id)===String(sel))||{}).nom||'')}`:''}</div>
+  <div style="overflow-x:auto"><table class="inf-table">${cab}<tbody>${cuerpo}</tbody></table></div>
+  <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:12px">
+    <b>Día persona</b>: un trabajador que hizo esa labor ese día; es la unidad de todas las cifras. <b>Mín. / Prom. / Máx.</b>: el día-persona con menos mesas, el promedio y el con más. <b>Prom. 80 % ráp.</b>: se ordenan los días-persona de más a menos mesas y se promedia el 80 % de arriba (se deja fuera el 20 % más lento); sirve como meta alcanzable. <b>$/mesa</b>: costo ÷ mesas (personal propio: horas × costo por hora; contratistas: lo pagado). Con menos de ${EFIC_MIN_DIAS} días-persona la cifra es poco confiable.
+    ${d.excluidas?`<br>Quedaron fuera ${d.excluidas} labores registradas con horas pero sin mesas (ver Inconsistencias).`:''}
+  </div>`;
+
   // Resumen por encargado
-  html += `<table class="inf-table">
+  html += `<div style="font-size:11px;font-weight:600;margin:4px 0">Resumen por encargado</div>
+  <table class="inf-table">
     <thead><tr><th>Encargado</th><th class="num">Labores</th><th class="num">Mesas</th><th class="num">Horas</th><th class="num">Costo</th><th class="num">$/mesa</th></tr></thead>
     <tbody>${d.encargados.map(e=>`<tr>
-      <td>${e.subjefe}<div style="font-size:9px;color:var(--muted)">${e.predio}</div></td>
+      <td>${escH(e.subjefe)}<div style="font-size:9px;color:var(--muted)">${e.predio}</div></td>
       <td class="num">${e.labores}</td>
       <td class="num">${e.mesas.toLocaleString('es-CL')}</td>
       <td class="num">${fmt1(e.horas)}</td>
@@ -9927,62 +10072,32 @@ function renderInfEficiencia(){
       <td class="num">${e.costoPorMesa===null?'—':fmtCLP(e.costoPorMesa)}</td>
     </tr>`).join('')}</tbody>
   </table>
-  <div style="font-size:10px;color:var(--muted);margin:-4px 0 12px">El $/mesa del resumen mezcla labores distintas: sirve para ver el gasto, no para comparar encargados. Para comparar, mira el detalle por labor.</div>`;
+  <div style="font-size:10px;color:var(--muted);margin:-4px 0 12px">El $/mesa del resumen mezcla labores distintas: sirve para ver el gasto, no para comparar encargados. Para comparar, elige una labor.</div>`;
 
-  // Detalle encargado × labor
-  html += `<div class="form-row" style="margin-bottom:8px"><label>Labor</label>
-    <select id="effLabor" onchange="onEficLaborChange(this.value)">
-      <option value="">Todas las labores</option>
-      ${laboresPresentes.map(l=>`<option value="${l.id}" ${String(l.id)===String(sel)?'selected':''}>${l.id}. ${l.nom}</option>`).join('')}
-    </select></div>`;
-  let encPrev = null;
-  html += `<div style="overflow-x:auto"><table class="inf-table">
-    <thead><tr><th>${sel?'Encargado':'Labor'}</th><th class="num">Días<br>pers.</th><th class="num">Mesas/día<br>persona</th><th class="num">Cuadr.<br>/día</th><th class="num">vs<br>prom.</th><th class="num">$/mesa</th></tr></thead>
-    <tbody>${filas.map(r=>{
-      let cab = '';
-      if(!sel && r.subjefe !== encPrev){
-        encPrev = r.subjefe;
-        cab = `<tr><td colspan="6" style="background:var(--cream);font-weight:700;font-size:11px">${r.subjefe} <span style="font-weight:400;color:var(--muted)">· ${r.predio}</span></td></tr>`;
-      }
-      const pct = r.pctVsProm===null ? '—'
-        : `<span style="color:${r.pctVsProm>=100?'var(--green)':(r.pctVsProm<85?'#B45309':'inherit')}">${r.pctVsProm}%</span>`;
-      const titulo = sel ? `${r.subjefe}<div style="font-size:9px;color:var(--muted)">${r.predio}</div>` : `${r.laborId}. ${r.labor}`;
-      const det = `${r.trabajadores} trab. · ${fmt1(r.mesasHora)} mesas/h · rango ${fmt1(r.minTrab)}–${fmt1(r.maxTrab)}${r.pocaMuestra?' · <b style="color:#B45309">poca muestra</b>':''}`;
-      return cab + `<tr${r.pocaMuestra?' style="opacity:.65"':''}>
-        <td>${titulo}<div style="font-size:9px;color:var(--muted)">${det}</div></td>
-        <td class="num">${r.diasPersona}</td>
-        <td class="num"><b>${fmt1(r.mesasDiaPersona)}</b></td>
-        <td class="num">${fmt1(r.mesasDiaCuadrilla)}</td>
-        <td class="num">${pct}</td>
-        <td class="num">${r.costoPorMesa===null?'—':fmtCLP(r.costoPorMesa)}</td>
-      </tr>`;
-    }).join('')}</tbody>
-  </table></div>
-  <div style="font-size:10px;color:var(--muted);line-height:1.5">
-    <b>Mesas/día persona</b>: mesas ÷ días-persona (un trabajador que hizo esa labor ese día). <b>Cuadrilla/día</b>: mesas ÷ días en que el encargado tuvo gente en esa labor. <b>vs prom.</b>: comparado con el promedio de esa labor entre los encargados del filtro. <b>Rango</b>: el trabajador más lento y el más rápido. Con menos de ${EFIC_MIN_DIAS} días-persona la cifra es poco confiable.
-    ${d.excluidas?`<br>Quedaron fuera ${d.excluidas} labores registradas con horas sin mesas o mesas sin horas (ver Inconsistencias).`:''}
-  </div>`;
-
-  // Gráfico: mesas/día-persona por encargado para la labor elegida (o la de más mesas)
+  // Gráfico: por encargado para la labor elegida (o la de más mesas)
   const labGraf = sel || (laboresPresentes[0] && laboresPresentes[0].id);
   const graf = d.rows.filter(r=>String(r.laborId)===String(labGraf)).sort((a,b)=> b.mesasDiaPersona - a.mesasDiaPersona);
   const labGrafNom = (laboresPresentes.find(l=>String(l.id)===String(labGraf))||{}).nom || '';
-  html += `<div style="font-size:11px;font-weight:600;margin-top:12px">Mesas/día persona · ${labGraf}. ${labGrafNom}</div>
+  html += `<div style="font-size:11px;font-weight:600;margin-top:12px">Mesas/día persona por encargado · ${labGraf}. ${escH(labGrafNom)}</div>
   <div class="inf-chartwrap"><canvas id="chartEfic"></canvas></div>
   </div>`;
   document.getElementById('infContent').innerHTML = html;
 
-  const prom = d.promLabor[labGraf] ? d.promLabor[labGraf].mesasDiaPersona : 0;
+  const r1 = n=>Math.round(n*10)/10;
   const ctx = document.getElementById('chartEfic').getContext('2d');
   infState.charts.eficiencia = new Chart(ctx, {
     type: 'bar',
     data: {
       labels: graf.map(r=>r.subjefe),
       datasets: [
-        { label:'Mesas/día persona', data: graf.map(r=>Math.round(r.mesasDiaPersona*10)/10),
-          backgroundColor: graf.map(r=> r.pocaMuestra ? '#cbd5e1' : '#4ade80') },
-        { label:'Promedio labor', type:'line', data: graf.map(()=>Math.round(prom*10)/10),
-          borderColor:'#94a3b8', borderDash:[5,4], pointRadius:0, borderWidth:1.5 }
+        { label:'Promedio', data: graf.map(r=>r1(r.mesasDiaPersona)),
+          backgroundColor: graf.map(r=> r.pocaMuestra ? '#cbd5e1' : '#86efac') },
+        { label:'Prom. 80 % más rápido', data: graf.map(r=>r1(r.p80)),
+          backgroundColor: graf.map(r=> r.pocaMuestra ? '#94a3b8' : '#16a34a') },
+        { label:'Máximo', type:'line', data: graf.map(r=>r1(r.maxDia)), showLine:false,
+          borderColor:'#1e3a8a', backgroundColor:'#1e3a8a', pointStyle:'line', pointRadius:9, borderWidth:2 },
+        { label:'Mínimo', type:'line', data: graf.map(r=>r1(r.minDia)), showLine:false,
+          borderColor:'#B45309', backgroundColor:'#B45309', pointStyle:'line', pointRadius:9, borderWidth:2 }
       ]
     },
     options: {
@@ -10227,16 +10342,23 @@ function infTablaExport(tab){
   if(tab==='eficiencia'){
     const d = calcEficiencia();
     const r1 = n => Math.round(n*10)/10;
+    const body = d.rows.map(r=>[r.subjefe, r.predio, `${r.laborId}. ${r.labor}`, r.trabajadores, r.diasLabor, r.diasPersona,
+        r.mesas, r1(r.horas), r1(r.minDia), r1(r.mesasDiaPersona), r1(r.medDia), r1(r.maxDia), r1(r.p80), r.n80,
+        r1(r.mesasDiaCuadrilla), r1(r.mesasHora), r.pctVsProm===null?'':r.pctVsProm,
+        Math.round(r.costoTotal), r.costoPorMesa===null?'':Math.round(r.costoPorMesa), r.pocaMuestra?'Poca muestra':'']);
+    // v66 · Una fila "Todos los encargados" por labor
+    Object.entries(d.promLabor).forEach(([id,p])=>{
+      const l = LABORES.find(x=>String(x.id)===String(id));
+      body.push(['Todos los encargados','',`${id}. ${l?l.d:'—'}`,'','',p.dp,p.mesas,r1(p.horas),r1(p.minDia),r1(p.mesasDiaPersona),r1(p.medDia),
+        r1(p.maxDia),r1(p.p80),p.n80,'','','',Math.round(p.costo),p.costoPorMesa===null?'':Math.round(p.costoPorMesa),'']);
+    });
     return {
-      titulo: 'Eficiencia por encargado y labor',
-      nota: `Mesas/día persona con horas reales registradas. Costo por hora usado: ${fmtCLP(d.cph)}.${d.excluidas?` Excluidas ${d.excluidas} labores con horas sin mesas o mesas sin horas.`:''}`,
-      headers: ['Encargado','Predio','Labor','Trabajadores','Días con labor','Días-persona','Mesas','Horas','Mesas/día persona','Mín. trabajador','Máx. trabajador','Mesas/día cuadrilla','Mesas/hora','% vs promedio labor','Costo total CLP','Costo por mesa CLP','Muestra'],
-      body: d.rows.map(r=>[r.subjefe, r.predio, `${r.laborId}. ${r.labor}`, r.trabajadores, r.diasLabor, r.diasPersona,
-        r.mesas, r1(r.horas), r1(r.mesasDiaPersona), r1(r.minTrab), r1(r.maxTrab), r1(r.mesasDiaCuadrilla), r1(r.mesasHora),
-        r.pctVsProm===null?'':r.pctVsProm, Math.round(r.costoTotal), r.costoPorMesa===null?'':Math.round(r.costoPorMesa),
-        r.pocaMuestra?'Poca muestra':'']),
-      totales: ['TOTAL','','','','', d.totalDP, d.totalMesas, r1(d.totalHoras), '', '', '', '', '', '', Math.round(d.totalCosto),
-        d.totalMesas?Math.round(d.totalCosto/d.totalMesas):'', ''],
+      titulo: 'Eficiencia por labor y encargado',
+      nota: `Ciclo: ${eficCicloTxt(d.selCic)}. Unidad: día-persona (mesas de un trabajador en la labor ese día). Prom. 80 % más rápido = promedio del 80 % de días-persona con más mesas. Costo por hora personal propio: ${fmtCLP(d.cph)}; contratistas: lo pagado.${d.excluidas?` Excluidas ${d.excluidas} labores con horas sin mesas.`:''}`,
+      headers: ['Encargado','Predio','Labor','Trabajadores','Días con labor','Días-persona','Mesas','Horas','Mín. mesas/día','Prom. mesas/día','Mediana','Máx. mesas/día','Prom. 80% más rápido','Días en el 80%','Mesas/día cuadrilla','Mesas/hora','% vs promedio labor','Costo total CLP','Costo por mesa CLP','Muestra'],
+      body,
+      totales: ['TOTAL','','','','', d.totalDP, d.totalMesas, r1(d.totalHoras), '', '', '', '', '', '', '', '', '', Math.round(d.totalCosto),
+        d.totalMesasCosto?Math.round(d.totalCosto/d.totalMesasCosto):'', ''],
       chartId: 'chartEfic',
       landscape: true
     };
@@ -11491,10 +11613,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v65';
+const MANUAL_VERSION='v66';
 const MANUAL_FECHA='2026-10-12';
 
 const MANUAL_CAMBIOS=[
+  {v:'v66', f:'12-10-2026', ver:()=>canViewInformes(), txt:'<b>Informes › ⚡ Eficiencia:</b> ahora se filtra por <b>ciclo</b> (un cultivo y época para todos los encargados, o el ciclo de un encargado) y, por encargado y labor, muestra las mesas por día persona: <b>mínimo, promedio, máximo</b> y el <b>promedio del 80 % más rápido</b> (deja fuera el 20 % de días más lentos; sirve como meta), además del <b>costo por mesa</b>. Al elegir una labor aparece la fila <b>Todos los encargados</b>. Ahora también entran las labores con mesas y 0 horas (contratistas); el $/mesa usa solo lo que tiene costo conocido.'},
   {v:'v65', f:'12-10-2026', ver:()=>isCampo()||canViewInformes(), txt:'<b>Contratistas: valor por mesa o por techo, con vigencia, y pago semanal.</b> En <b>Config › Contratistas</b> cada labor lleva su valor fijo <b>por mesa o por techo</b> (1 techo = 3 mesas) y la fecha <b>desde la que rige</b>; al cambiar un precio se pone la fecha nueva y lo registrado antes conserva el valor anterior (o se puede recalcular). En el registro se siguen anotando mesas: si la labor se paga por techo, la app divide por 3. Los predios con contratistas muestran la semana completa, <b>de lunes a domingo</b>, para registrar a diario también sábado y domingo. En Informes › 🧑‍🌾 Contratistas aparece el <b>📅 Pago semanal</b>: lo que se paga a cada trabajador cada día y el total de la semana, con botones para la semana pasada y la actual.'},
   {v:'v64', f:'07-10-2026', txt:'<b>Ácidos:</b> ya no se anotan los días que dura el estanque. Al cargarlo se anotan los kg de nítrico y fosfórico y los <b>litros gastados ese día</b>; los días siguientes, con <b>➕ Seguir</b>, solo los litros gastados. Los litros de cada día se reparten entre los sectores marcados según su superficie.'},
   {v:'v63', f:'07-10-2026', txt:'<b>Caseta de Riego de La Constancia:</b> se quita el saldo de control (recibido menos aplicado). Queda solo el aviso de envío desde Bodega Principal y la confirmación de la caseta; el conteo en la caseta se hace en terreno.'},
@@ -11663,7 +11786,8 @@ const MANUAL_SECCIONES=[
     'Aprieta <b>🔄 Generar informes</b>.',
     'Parte en <b>🧭 Dashboard</b>: con los selectores eliges encargado, labor, métrica y si agrupar por día, semana o mes. Tocar una tarjeta de arriba también cambia la métrica de los gráficos. El gráfico por encargado siempre muestra a todos, con el elegido destacado, para comparar.',
     'Cambia entre las pestañas: <b>Prog vs Real</b>, <b>Por ciclo</b>, <b>Trabajadores</b>, <b>Labores</b>, <b>Eficiencia</b> e <b>Inconsistencias</b>.',
-    'En <b>⚡ Eficiencia</b> ves, por encargado y labor, las <b>mesas por día de un trabajador</b>, lo que avanza la cuadrilla por día y el <b>costo por mesa</b>. Elige una labor en el selector para comparar a los encargados entre sí.',
+    'En <b>⚡ Eficiencia</b> eliges el <b>Ciclo</b> (un cultivo y época para comparar a todos los encargados, o el ciclo de uno) y la <b>Labor</b>. Por encargado ves las mesas por día de un trabajador: <b>mínimo, promedio, máximo</b> y el <b>promedio del 80 % más rápido</b>, y el <b>costo por mesa</b>. Con una labor elegida, la última fila es el total de todos los encargados.',
+    'El <b>promedio del 80 % más rápido</b> ordena los días-persona de más a menos mesas y promedia el 80 % de arriba: deja fuera los días más lentos (gente nueva, días cortos, interrupciones). Es una buena referencia para la meta de mesas por día.',
     'En <b>🧑‍🌾 Contratistas</b> está lo que se paga a cada trabajador de contratista y, abajo, el <b>📅 Pago semanal</b> de lunes a domingo: el monto de cada trabajador cada día y el total de la semana por contratista. Los botones <b>Semana pasada</b> y <b>Esta semana</b> ajustan las fechas solos. Si la semana sale “incompleta”, las fechas elegidas no cubren de lunes a domingo.',
     'Con <b>📥 Excel completo</b> bajas todas las hojas en un solo archivo (incluido el pago semanal).',
     'Con <b>📷 Anexo de observaciones (PDF)</b> bajas todas las observaciones escritas en el período, con la foto de respaldo de cada una. Sirve para respaldar una conversación sobre trabajo mal hecho, o para dejarlo por escrito.'
