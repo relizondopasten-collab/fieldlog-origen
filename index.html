@@ -8592,55 +8592,69 @@ async function renderProg(){
   });
 }
 
-function openModalNuevaProg(subjefe,mondayIso){
+// v70 · Normaliza un día guardado (cualquier formato histórico) a {labores:[...]} con id por tarea.
+function ptId(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8);}
+function normProgDia(dato){
+  if(!dato) return {labores:[]};
+  if(Array.isArray(dato)){
+    return {labores:dato.map(t=>({
+      id:t.id||ptId(), _sinId:!t.id, laborId:t.laborId??null, cicloId:null,
+      modulos: t.modulo ? [String(t.modulo).replace(/^MOD\s*/i,'').trim()] : [],
+      metaMesas:t.metaMesas||0, notas:t.notas||''
+    }))};
+  }
+  const cicloDelDia = dato.cicloId || null;
+  return {labores:(dato.labores||[]).map(t=>({
+    id:t.id||ptId(), _sinId:!t.id, laborId:t.laborId??null,
+    cicloId: t.cicloId || cicloDelDia,
+    modulos: Array.isArray(t.modulos)?t.modulos:(t.modulo?[t.modulo]:[]),
+    metaMesas:t.metaMesas||0, notas:t.notas||''
+  }))};
+}
+function limpiarTareaProg(t){
+  return {id:t.id, laborId:t.laborId??null, cicloId:t.cicloId||null,
+    modulos:Array.isArray(t.modulos)?t.modulos:[], metaMesas:t.metaMesas||0, notas:t.notas||''};
+}
+
+async function openModalNuevaProg(subjefe,mondayIso){
   const progDays=getProgDays(mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
-  // Estado interno: {predioId, subjefe, mondayIso, dias: { iso: {labores:[]} }}
-  // Cada labor tiene su propio cicloId (puede haber tareas con ciclos distintos en el mismo día).
-  window._progEdit={predioId:activePred,subjefe,mondayIso,dias:{}};
-  progDays.forEach(iso=>{window._progEdit.dias[iso]={labores:[]};});
+  // Estado interno: {predioId, subjefe, mondayIso, dias:{iso:{labores:[]}}, cargado, borrados:{iso:Set}}
+  // v70 · No se puede editar nada hasta que termine de cargar lo ya programado:
+  //       antes, un cambio hecho durante la carga guardaba la semana vacía encima de lo existente.
+  const pe={predioId:activePred,subjefe,mondayIso,dias:{},cargado:false,borrados:{}};
+  window._progEdit=pe;
+  progDays.forEach(iso=>{pe.dias[iso]={labores:[]};});
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">📋 Programación — ${subjefe}</div>
     <div class="modal-sub">Semana del ${fDMY(mondayIso)}</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">✅ Los cambios se guardan automáticamente</div>
-    <div id="progModalDias"></div>
+    <div id="progEstado" style="font-size:11px;color:var(--muted);margin-bottom:8px">⏳ Cargando lo ya programado…</div>
+    <div id="progModalDias"><div class="empty" style="padding:20px 0"><div>Cargando…</div></div></div>
     <button class="btn btn-primary" onclick="saveProgModal()">Cerrar</button>`;
-  renderProgModalDias(progDays,dayNames);
-  // Cargar programación existente si la hay
-  colProg(activePred,subjefe).doc(mondayIso).get().then(snap=>{
+  document.getElementById('overlay').classList.add('open');
+  try{
+    const snap=await colProg(pe.predioId,subjefe).doc(mondayIso).get();
+    if(window._progEdit!==pe) return; // se abrió otra programación mientras cargaba
     if(snap.exists){
       const data=snap.data();
-      progDays.forEach(iso=>{
-        const dato=(data.dias||{})[iso];
-        if(!dato){ window._progEdit.dias[iso]={labores:[]}; return; }
-        // Compatibilidad 1: si es array (formato más viejo)
-        if(Array.isArray(dato)){
-          const labores=dato.map(t=>({
-            laborId:t.laborId,
-            cicloId: null,
-            modulos: t.modulo ? [String(t.modulo).replace(/^MOD\s*/i,'').trim()] : [],
-            metaMesas:t.metaMesas||0,
-            notas:t.notas||''
-          }));
-          window._progEdit.dias[iso]={labores};
-        } else {
-          // Compatibilidad 2: si tiene cicloId a nivel de día, propagarlo a cada labor sin cicloId
-          const cicloDelDia = dato.cicloId || null;
-          window._progEdit.dias[iso]={
-            labores: (dato.labores||[]).map(t=>({
-              laborId:t.laborId,
-              cicloId: t.cicloId || cicloDelDia,
-              modulos: Array.isArray(t.modulos)?t.modulos:(t.modulo?[t.modulo]:[]),
-              metaMesas:t.metaMesas||0,
-              notas:t.notas||''
-            }))
-          };
-        }
-      });
-      renderProgModalDias(progDays,dayNames);
+      progDays.forEach(iso=>{ pe.dias[iso]=normProgDia((data.dias||{})[iso]); });
     }
-  });
-  document.getElementById('overlay').classList.add('open');
+    pe.cargado=true;
+    setProgEstado('ok');
+    renderProgModalDias(progDays,dayNames);
+  }catch(e){
+    console.error('Error cargando programación:',e);
+    const est=document.getElementById('progEstado');
+    if(est){est.style.color='var(--red)';est.textContent='⚠️ No se pudo cargar la programación ('+e.message+'). Cierra y vuelve a abrir; no se guardará nada mientras tanto.';}
+    const cont=document.getElementById('progModalDias'); if(cont) cont.innerHTML='';
+  }
+}
+
+function setProgEstado(st,msg){
+  const el=document.getElementById('progEstado'); if(!el) return;
+  if(st==='guardando'){el.style.color='var(--muted)';el.textContent='💾 Guardando…';}
+  else if(st==='error'){el.style.color='var(--red)';el.textContent='⚠️ '+(msg||'No se pudo guardar');}
+  else {el.style.color='var(--muted)';el.textContent='✅ Los cambios se guardan automáticamente (día por día)';}
 }
 
 // Devuelve los ciclos disponibles para programar: solo los abiertos hoy con cultivo asignado.
@@ -8652,6 +8666,7 @@ function getCiclosParaProg(predioId,subjefe,dayIso){
 
 function renderProgModalDias(progDays,dayNames){
   const cont=document.getElementById('progModalDias');if(!cont)return;
+  if(!window._progEdit||!window._progEdit.cargado) return;
   const subjefe=window._progEdit.subjefe, predioId=window._progEdit.predioId;
   const ciclosDisp = getCiclosParaProg(predioId,subjefe,null);
   const sinCiclos = ciclosDisp.length===0;
@@ -8694,23 +8709,54 @@ function progTaskFormHTML(dayIso,ti,t={},ciclosDisp=[]){
   </div>`;
 }
 
-// ✅ Auto-Persistencia: Guarda la programación a Firestore sin bloquear la UI
-async function saveProgToFirestore(){
-  if(!window._progEdit) return;
-  const {predioId,subjefe,mondayIso,dias}=window._progEdit;
+// ✅ Auto-Persistencia (v70): guarda SOLO el día modificado, dentro de una transacción.
+//   · set(..., {merge:true}) con dias.{iso}: los demás días del documento no se tocan.
+//   · Las tareas llevan id: si otro equipo agregó tareas a ese día mientras se editaba,
+//     se conservan (y se traen a la pantalla) en vez de pisarlas.
+//   · Las tareas borradas aquí se recuerdan para no revivirlas.
+//   · Los guardados van en cola, uno tras otro.
+let _progSaveChain=Promise.resolve();
+function saveProgToFirestore(dayIso){
+  const pe=window._progEdit;
+  if(!pe||!pe.cargado||!dayIso) return; // nunca guardar antes de haber cargado lo existente
+  setProgEstado('guardando');
+  _progSaveChain=_progSaveChain.then(()=>guardarDiaProg(pe,dayIso));
+}
+async function guardarDiaProg(pe,dayIso){
+  const ref=colProg(pe.predioId,pe.subjefe).doc(pe.mondayIso);
   try{
-    await colProg(predioId,subjefe).doc(mondayIso).set({semana:mondayIso,dias,ts:Date.now(),creadoPor:currentUser.uid});
-    console.log('✅ Programación auto-guardada a Firestore');
+    const ajenas=await db.runTransaction(async tx=>{
+      const snap=await tx.get(ref);
+      const srv=normProgDia(snap.exists?((snap.data().dias||{})[dayIso]):null);
+      const loc=pe.dias[dayIso]||{labores:[]};
+      const idsLoc=new Set(loc.labores.map(t=>t.id));
+      const borr=pe.borrados[dayIso]||new Set();
+      // Tareas guardadas desde otro equipo (tienen id propio y no están aquí ni fueron borradas aquí)
+      const nuevasRemotas=srv.labores.filter(t=>!t._sinId && !idsLoc.has(t.id) && !borr.has(t.id));
+      const labores=[...loc.labores, ...nuevasRemotas].map(limpiarTareaProg);
+      tx.set(ref,{semana:pe.mondayIso, ts:Date.now(), creadoPor:currentUser.uid,
+                  dias:{[dayIso]:{labores}}},{merge:true});
+      return nuevasRemotas;
+    });
+    if(ajenas.length && window._progEdit===pe){
+      const loc=pe.dias[dayIso];
+      ajenas.forEach(t=>{ if(!loc.labores.some(x=>x.id===t.id)) loc.labores.push(t); });
+      renderProgModalDias(getProgDays(pe.mondayIso),['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)']);
+      toast(`ℹ️ ${ajenas.length} tarea${ajenas.length>1?'s':''} de ${fDMY(dayIso)} programada${ajenas.length>1?'s':''} desde otro equipo se mantuvo`);
+    }
+    if(window._progEdit===pe) setProgEstado('ok');
+    console.log('✅ Programación guardada',dayIso);
   }catch(e){
-    console.error('Error auto-guardando programación:',e);
-    // No mostrar toast aquí para no interrumpir al usuario, solo log
+    console.error('Error guardando programación:',e);
+    if(window._progEdit===pe) setProgEstado('error','No se guardó el '+fDMY(dayIso)+': '+e.message);
+    toast('⚠️ No se guardó la programación del '+fDMY(dayIso));
   }
 }
 
 // Cambia el ciclo de UNA tarea específica y limpia los módulos que ya no apliquen.
 function setTaskCycle(dayIso,ti,cicloId){
   const dia = window._progEdit.dias[dayIso];
-  if(!dia || !dia.labores[ti]) return;
+  if(!window._progEdit.cargado || !dia || !dia.labores[ti]) return;
   dia.labores[ti].cicloId = cicloId || null;
   const subjefe = window._progEdit.subjefe;
   const ciclo = cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===cicloId) : null;
@@ -8719,53 +8765,56 @@ function setTaskCycle(dayIso,ti,cicloId){
   const progDays=getProgDays(window._progEdit.mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
   renderProgModalDias(progDays,dayNames);
-  saveProgToFirestore(); // ✅ Auto-guardar
+  saveProgToFirestore(dayIso);
 }
 
 function addProgTask(dayIso){
   const dia = window._progEdit.dias[dayIso];
-  if(!dia) return;
+  if(!window._progEdit.cargado || !dia) return;
   // Nueva tarea hereda el ciclo de la tarea anterior (si hay), para no repetir tanto
   const ultima = dia.labores[dia.labores.length-1];
   const cicloHerencia = ultima ? (ultima.cicloId||null) : null;
-  dia.labores.push({laborId:null, cicloId:cicloHerencia, modulos:[], metaMesas:0, notas:''});
+  dia.labores.push({id:ptId(), laborId:null, cicloId:cicloHerencia, modulos:[], metaMesas:0, notas:''});
   const progDays=getProgDays(window._progEdit.mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
   renderProgModalDias(progDays,dayNames);
-  saveProgToFirestore(); // ✅ Auto-guardar
+  saveProgToFirestore(dayIso);
 }
 function rmProgTask(dayIso,ti){
-  const dia = window._progEdit.dias[dayIso];
-  if(!dia) return;
+  const pe=window._progEdit, dia = pe.dias[dayIso];
+  if(!pe.cargado || !dia || !dia.labores[ti]) return;
+  const t=dia.labores[ti];
+  if(t.id){ (pe.borrados[dayIso] ||= new Set()).add(t.id); }
   dia.labores.splice(ti,1);
-  const progDays=getProgDays(window._progEdit.mondayIso);
+  const progDays=getProgDays(pe.mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
   renderProgModalDias(progDays,dayNames);
-  saveProgToFirestore(); // ✅ Auto-guardar
+  saveProgToFirestore(dayIso);
 }
 function updPT(dayIso,ti,field,value){
   const dia = window._progEdit.dias[dayIso];
-  if(!dia || !dia.labores[ti]) return;
+  if(!window._progEdit.cargado || !dia || !dia.labores[ti]) return;
   dia.labores[ti][field]=value;
-  saveProgToFirestore(); // ✅ Auto-guardar
+  saveProgToFirestore(dayIso);
 }
 function togglePTMod(dayIso,ti,modulo,checked){
   const dia = window._progEdit.dias[dayIso];
-  if(!dia || !dia.labores[ti]) return;
+  if(!window._progEdit.cargado || !dia || !dia.labores[ti]) return;
   if(!Array.isArray(dia.labores[ti].modulos)) dia.labores[ti].modulos=[];
   const arr = dia.labores[ti].modulos;
   const idx = arr.indexOf(modulo);
   if(checked && idx===-1) arr.push(modulo);
   if(!checked && idx>=0) arr.splice(idx,1);
-  saveProgToFirestore(); // ✅ Auto-guardar
+  saveProgToFirestore(dayIso);
 }
 
-function saveProgModal(){
-  // ✅ Los datos ya están auto-guardados en Firestore
-  // Solo cierra el modal y recarga la vista
+async function saveProgModal(){
+  // ✅ Los datos se auto-guardan; antes de cerrar se espera que terminen los guardados en cola
+  const pe=window._progEdit;
+  await _progSaveChain;
   closeModal();
   renderProg();
-  toast('✅ Programación guardada');
+  if(pe&&pe.cargado) toast('✅ Programación guardada');
 }
 
 // ══════════════════════════════════════════════
@@ -12400,10 +12449,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v69';
-const MANUAL_FECHA='2026-10-13';
+const MANUAL_VERSION='v70';
+const MANUAL_FECHA='2026-10-20';
 
 const MANUAL_CAMBIOS=[
+  {v:'v70', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación: ya no se borra lo programado.</b> Al programar varios ciclos del mismo subjefe en la misma semana, lo de un ciclo se perdía al programar el siguiente. Ahora la ventana <b>espera a cargar lo ya programado</b> antes de dejar editar, cada cambio guarda <b>solo el día modificado</b>, y si alguien programó ese mismo día desde otro teléfono sus tareas se mantienen. Arriba de la ventana se ve si está <b>guardando</b> o si hubo un error.'},
   {v:'v69', f:'14-10-2026', ver:()=>isCampo(), txt:'<b>Labores de contratista.</b> Las labores que se pagan a contratistas (listado de Paradero 12) quedan aparte, con <b>códigos 101 a 139</b>. Al registrar a un trabajador de un contratista aparecen primero, en el grupo 🧑‍🌾 <b>Labores de contratista</b>; al personal de planta no se le muestran. La cosecha de contratista va separada: <b>132 Cosecha toro</b> y <b>139 Cosecha gamela</b>, pagadas por caja con el $ por caja toro / gamela del contratista. En Config › Contratistas, gerencia puede <b>completar los valores con el listado</b> y guardarlos con su fecha de vigencia.'},
   {v:'v68', f:'13-10-2026', ver:()=>isCampo(), txt:'<b>Nuevo: Labor × módulo.</b> Un registro de control, aparte del diario: por cada labor hecha en un módulo se anota el subjefe, el ciclo, la labor, el módulo y sus mesas, <b>cuántos encargados trabajaron</b> y el <b>día y hora de inicio y de término</b>. La app calcula las horas de jornada (sin colación), los días-persona y las <b>mesas por día persona</b>. En Informes, la pestaña <b>📦 Por módulo</b> lo compara con lo anotado en el registro diario en esos mismos días, para detectar errores. Gerencia fija la jornada y las mesas de cada módulo en Config.'},
   {v:'v67', f:'12-10-2026', ver:()=>canViewInformes(), txt:'<b>Revisar y corregir datos dudosos desde Informes.</b> En <b>⚡ Eficiencia</b>, el botón <b>🔎</b> de cada encargado y labor (o tocar el Mín. o el Máx.) muestra todos los días con fecha, trabajador, mesas y horas, ordenados de más a menos, y marca los dudosos: <b>posible duplicado</b> (la misma labor anotada dos veces el mismo día), <b>sobre 70 mesas</b>, <b>muy alto</b> (más del doble de la mediana) y <b>muy bajo</b> (menos de un cuarto). Con <b>✏️</b> se abre esa entrada en Registro para corregirla y, al guardar, se vuelve al informe; con <b>🗑️</b> se borra un registro repetido. Lo mismo aparece en <b>⚠️ Inconsistencias</b>, que ahora se filtra por tipo.'},
@@ -12515,7 +12565,8 @@ const MANUAL_SECCIONES=[
     'Con las flechas <b>‹ ›</b> te mueves de semana. Arriba se ve la semana y su rango de fechas.',
     'Elige el <b>Subjefe</b>. Cada subjefe tiene su propia programación.',
     'Abre el día que quieras programar y agrega las <b>tareas</b>: labor, módulos y meta.',
-    'Cierra la ventana cuando termines. <b>No hay que apretar Guardar</b>: desde la v31 cada cambio se guarda solo en el servidor.'
+    'Cierra la ventana cuando termines. <b>No hay que apretar Guardar</b>: cada cambio se guarda solo en el servidor, día por día. Espera a que desaparezca el aviso <b>⏳ Cargando</b> antes de editar.',
+    'Puedes programar <b>varios ciclos</b> el mismo día: elige el ciclo en cada tarea. Lo de un ciclo no se borra al agregar tareas de otro.'
   ],
   tips:[
     'Programa la semana antes que empiece; así la comparación "Programado vs Real" sirve de algo.',
