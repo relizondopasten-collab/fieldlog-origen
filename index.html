@@ -8715,6 +8715,9 @@ function progTaskFormHTML(dayIso,ti,t={},ciclosDisp=[]){
 //     se conservan (y se traen a la pantalla) en vez de pisarlas.
 //   · Las tareas borradas aquí se recuerdan para no revivirlas.
 //   · Los guardados van en cola, uno tras otro.
+// v71 · Las reglas de Firestore rechazan guardados de programación sin appV >= 71,
+//       para que un teléfono con una versión vieja no pueda reescribir la semana completa.
+const PROG_APPV=71;
 let _progSaveChain=Promise.resolve();
 function saveProgToFirestore(dayIso){
   const pe=window._progEdit;
@@ -8735,7 +8738,7 @@ async function guardarDiaProg(pe,dayIso){
       const nuevasRemotas=srv.labores.filter(t=>!t._sinId && !idsLoc.has(t.id) && !borr.has(t.id));
       const labores=[...loc.labores, ...nuevasRemotas].map(limpiarTareaProg);
       tx.set(ref,{semana:pe.mondayIso, ts:Date.now(), creadoPor:currentUser.uid,
-                  dias:{[dayIso]:{labores}}},{merge:true});
+                  appV:PROG_APPV, dias:{[dayIso]:{labores}}},{merge:true});
       return nuevasRemotas;
     });
     if(ajenas.length && window._progEdit===pe){
@@ -8748,8 +8751,10 @@ async function guardarDiaProg(pe,dayIso){
     console.log('✅ Programación guardada',dayIso);
   }catch(e){
     console.error('Error guardando programación:',e);
-    if(window._progEdit===pe) setProgEstado('error','No se guardó el '+fDMY(dayIso)+': '+e.message);
-    toast('⚠️ No se guardó la programación del '+fDMY(dayIso));
+    const perm = e && e.code==='permission-denied';
+    const msg = perm ? 'No se guardó el '+fDMY(dayIso)+': cierra y vuelve a abrir la app para actualizarla.' : 'No se guardó el '+fDMY(dayIso)+': '+e.message;
+    if(window._progEdit===pe) setProgEstado('error',msg);
+    toast('⚠️ '+msg);
   }
 }
 
@@ -12449,10 +12454,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v70';
+const MANUAL_VERSION='v71';
 const MANUAL_FECHA='2026-10-20';
 
 const MANUAL_CAMBIOS=[
+  {v:'v71', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación protegida.</b> Solo se puede guardar programación desde la versión actual de la app, para que un teléfono con una versión antigua no borre lo que programaron otros. Si al programar aparece <b>“No se guardó… cierra y vuelve a abrir la app”</b>, ciérrala por completo y ábrela de nuevo.'},
   {v:'v70', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación: ya no se borra lo programado.</b> Al programar varios ciclos del mismo subjefe en la misma semana, lo de un ciclo se perdía al programar el siguiente. Ahora la ventana <b>espera a cargar lo ya programado</b> antes de dejar editar, cada cambio guarda <b>solo el día modificado</b>, y si alguien programó ese mismo día desde otro teléfono sus tareas se mantienen. Arriba de la ventana se ve si está <b>guardando</b> o si hubo un error.'},
   {v:'v69', f:'14-10-2026', ver:()=>isCampo(), txt:'<b>Labores de contratista.</b> Las labores que se pagan a contratistas (listado de Paradero 12) quedan aparte, con <b>códigos 101 a 139</b>. Al registrar a un trabajador de un contratista aparecen primero, en el grupo 🧑‍🌾 <b>Labores de contratista</b>; al personal de planta no se le muestran. La cosecha de contratista va separada: <b>132 Cosecha toro</b> y <b>139 Cosecha gamela</b>, pagadas por caja con el $ por caja toro / gamela del contratista. En Config › Contratistas, gerencia puede <b>completar los valores con el listado</b> y guardarlos con su fecha de vigencia.'},
   {v:'v68', f:'13-10-2026', ver:()=>isCampo(), txt:'<b>Nuevo: Labor × módulo.</b> Un registro de control, aparte del diario: por cada labor hecha en un módulo se anota el subjefe, el ciclo, la labor, el módulo y sus mesas, <b>cuántos encargados trabajaron</b> y el <b>día y hora de inicio y de término</b>. La app calcula las horas de jornada (sin colación), los días-persona y las <b>mesas por día persona</b>. En Informes, la pestaña <b>📦 Por módulo</b> lo compara con lo anotado en el registro diario en esos mismos días, para detectar errores. Gerencia fija la jornada y las mesas de cada módulo en Config.'},
