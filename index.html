@@ -683,12 +683,13 @@ body.vista-escritorio .modal-content{max-width:700px}
         <button class="inftab" data-tab="trabajadores" onclick="switchInfTab('trabajadores')">👤 Trabajadores</button>
         <button class="inftab" data-tab="labores" onclick="switchInfTab('labores')">🔧 Labores</button>
         <button class="inftab" data-tab="eficiencia" onclick="switchInfTab('eficiencia')">⚡ Eficiencia</button>
+        <button class="inftab" data-tab="capacidad" onclick="switchInfTab('capacidad')">🎯 Capacidad</button>
         <button class="inftab" data-tab="inconsist" onclick="switchInfTab('inconsist')">⚠️ Inconsistencias</button>
         <button class="inftab" data-tab="contratistas" onclick="switchInfTab('contratistas')">🧑‍🌾 Contratistas</button>
         <button class="inftab" data-tab="modulos" onclick="switchInfTab('modulos')">📦 Por módulo</button>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
-        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (10 hojas)</button>
+        <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportInfExcelTodo()">📥 Excel completo (11 hojas)</button>
         <button class="btn btn-secondary" style="flex:1;min-width:170px;padding:8px;font-size:11px" onclick="exportAnexoFotos()">📷 Anexo de observaciones (PDF)</button>
       </div>
       <div id="infContent"></div>
@@ -883,7 +884,10 @@ body.vista-escritorio .modal-content{max-width:700px}
         <div><label>Código rango</label><input type="text" id="nC" placeholder="9001-9500"></div>
         <div><label>Subjefe</label><select id="nS"></select></div>
       </div>
-      <div class="form-row"><label>N° plantas</label><input type="number" id="nP" placeholder="1500" min="0"></div>
+      <div class="form-grid">
+        <div><label>N° plantas</label><input type="number" id="nP" placeholder="1500" min="0"></div>
+        <div><label>Mesas asignadas</label><input type="number" id="nMes" placeholder="58" min="0"></div>
+      </div>
       <button class="btn btn-primary" id="addWBtn" onclick="addW()">Agregar trabajador</button>
     </div>
     <!-- configuración de costos (solo admin) -->
@@ -8889,8 +8893,8 @@ async function renderConfig(){
   // workers
   document.getElementById('wList').innerHTML=(wMap[activePred]||[]).length
     ?(wMap[activePred]).map(w=>`<div class="wrow">
-        <div><div class="wn">${w.nombre}</div><div class="wm">${w.codigo||'—'} · ${w.subjefe}${w.cultivo?` · ${CICONS[w.cultivo]||''} ${CNAMES[w.cultivo]||w.cultivo}`:''}${w.plantas?` · ${w.plantas}pl`:''}</div></div>
-        ${canManageWorkers()?`<button class="btn btn-danger btn-sm" onclick="delW('${w.id}')">✕</button>`:''}
+        <div><div class="wn">${w.nombre}</div><div class="wm">${w.codigo||'—'} · ${w.subjefe}${w.cultivo?` · ${CICONS[w.cultivo]||''} ${CNAMES[w.cultivo]||w.cultivo}`:''}${w.plantas?` · ${w.plantas}pl`:''}${w.mesas?` · ${w.mesas} mesas`:''}</div></div>
+        ${canManageWorkers()?`<div style="display:flex;gap:4px"><button class="btn btn-secondary btn-sm" title="Mesas asignadas" onclick="editMesasW('${w.id}')">✏️</button><button class="btn btn-danger btn-sm" onclick="delW('${w.id}')">✕</button></div>`:''}
       </div>`).join('')
     :`<div class="empty"><div style="padding:8px 0;font-size:12px">Sin trabajadores</div></div>`;
   // v58 · Personal genérico: fijo, en todos los predios y subjefes, no se borra
@@ -9107,14 +9111,31 @@ async function contRecalcular(cont, desde, hasta){
 
 async function addW(){
   if(!canManageWorkers()){toast('Solo el administrador puede agregar trabajadores');return}
-  const n=document.getElementById('nN').value.trim(),c=document.getElementById('nC').value.trim(),s=document.getElementById('nS').value,p=parseInt(document.getElementById('nP').value)||0;
+  const n=document.getElementById('nN').value.trim(),c=document.getElementById('nC').value.trim(),s=document.getElementById('nS').value,p=parseInt(document.getElementById('nP').value)||0,mes=parseInt(document.getElementById('nMes').value)||0;
   if(!n){toast('⚠️ Ingresa un nombre');return}
   loading(true,'Guardando…');
   try{
-    const ref=await colWorkers(activePred).add({nombre:n,codigo:c,subjefe:s,plantas:p});
-    wMap[activePred].push({id:ref.id,nombre:n,codigo:c,subjefe:s,plantas:p});
-    ['nN','nC','nP'].forEach(id=>document.getElementById(id).value='');
+    const nuevo={nombre:n,codigo:c,subjefe:s,plantas:p,...(mes>0?{mesas:mes}:{})};   // v73 · mesas asignadas
+    const ref=await colWorkers(activePred).add(nuevo);
+    wMap[activePred].push({id:ref.id,...nuevo});
+    ['nN','nC','nP','nMes'].forEach(id=>document.getElementById(id).value='');
     populateSels();renderConfig();toast('✅ Trabajador agregado');
+  }catch(e){toast('Error: '+e.message)}
+  loading(false);
+}
+// v73 · Mesas asignadas del trabajador (base de Informes › 🎯 Capacidad)
+async function editMesasW(id){
+  if(!canManageWorkers()){toast('Solo admin');return}
+  const w=(wMap[activePred]||[]).find(x=>x.id===id); if(!w) return;
+  const v=prompt(`Mesas asignadas a ${w.nombre} (vacío = sin dato)`, w.mesas||'');
+  if(v===null) return;
+  const m=v.trim()===''?0:Math.round(Number(v.replace(',','.')));
+  if(!(m>=0)||m>200){toast('⚠️ Número no válido');return}
+  loading(true,'Guardando…');
+  try{
+    await colWorkers(activePred).doc(id).update({mesas: m>0?m:firebase.firestore.FieldValue.delete()});
+    if(m>0) w.mesas=m; else delete w.mesas;
+    renderConfig();toast('✅ Mesas guardadas');
   }catch(e){toast('Error: '+e.message)}
   loading(false);
 }
@@ -9534,6 +9555,7 @@ function switchInfTab(tab){
   else if(tab==='trabajadores') renderInfTrabajadores();
   else if(tab==='labores')      renderInfLabores();
   else if(tab==='eficiencia')   renderInfEficiencia();
+  else if(tab==='capacidad')    renderInfCapacidad();   // v73
   else if(tab==='inconsist')    renderInfInconsistencias();
   else if(tab==='contratistas') renderInfContratistas();
   else if(tab==='modulos')      renderInfModulos();   // v68
@@ -10965,6 +10987,314 @@ function renderInfEficiencia(){
 }
 
 // ─────────────────────────────────────────────
+// v73 · CAPACIDAD POR TRABAJADOR
+// Pedido de jefatura (20-10-2026): ver qué tanto avanza cada trabajador para
+// decidir a quién bajarle mesas y a quién subírselas.
+//
+// Método (todo con los datos cargados en Informes):
+//   1. Estándar de cada labor = mediana de mesas en los "días puros": días de
+//      jornada completa en que el trabajador hizo SOLO esa labor. Se calcula por
+//      predio + cultivo + labor, con al menos CAP_STD_MIN_N días de
+//      CAP_STD_MIN_TRAB trabajadores distintos; si no, la labor no se usa.
+//   2. Índice del día = Σ (mesas de la labor ÷ estándar de la labor). Así un día
+//      con dos labores se suma bien (media jornada en cada una ≈ 0,5 + 0,5) y no
+//      depende de cómo se repartieron las horas entre labores.
+//   3. Índice del trabajador = mediana de sus índices diarios (1,00 = avanza
+//      como el trabajador típico del grupo). Rango típico = P25–P75.
+//   4. Mesas sugeridas = mesas asignadas × índice, redondeado a techos (3 mesas).
+// Quedan fuera del cálculo: ausencias, Tractorista genérico, días con jornada
+// parcial, días con datos dudosos (v67), días sobre el límite de mesas y días
+// con una labor que todavía no tiene estándar. Se informa cuántos.
+// ─────────────────────────────────────────────
+const CAP_MESAS_REF = 58;      // referencial si el trabajador no tiene mesas cargadas (55–62 según Rafael)
+const CAP_ALTO = 1.15, CAP_BAJO = 0.85;   // ±15 % respecto del trabajador típico
+const CAP_STD_MIN_N = 5, CAP_STD_MIN_TRAB = 3;
+const CAP_CONF_ALTA = 15, CAP_CONF_MEDIA = 8;   // días evaluados
+const CAP_PARCIAL = 0.75;      // jornada < 75 % de la jornada = parcial
+function capMediana(v){
+  const a = v.slice().sort((x,y)=>x-y), n = a.length;
+  if(!n) return 0;
+  return n%2 ? a[(n-1)/2] : (a[n/2-1]+a[n/2])/2;
+}
+function capPct(v, p){
+  const a = v.slice().sort((x,y)=>x-y), n = a.length;
+  if(!n) return 0;
+  const i = (n-1)*p, lo = Math.floor(i), hi = Math.ceil(i);
+  return a[lo] + (a[hi]-a[lo])*(i-lo);
+}
+const capLaborMide = id => { const l = LABORES.find(x=>x.id===Number(id)); return !(l && (l.sinMesas || l.hidden)) && Number(id)!==62; };
+function calcCapacidad(){
+  const { registros, workers } = infState.data;
+  const selCic = infState.capCiclo || '';
+  const jornada = horasJornadaDia() || 8;
+  const umbralParcial = jornada * CAP_PARCIAL;
+
+  // Días dudosos según v67 (mismo criterio que ⚡ Eficiencia)
+  const dudosos = new Set();
+  Object.values(obsDiasPersona(selCic, false)).forEach(g=>{
+    g.lista.forEach(o=>{ if(o.flags && o.flags.length) o.ents.forEach(e=>dudosos.add(e.pid+'|'+e.id)); });
+  });
+
+  // 1. Días de cada trabajador
+  const dias = {};
+  registros.forEach(r=>{
+    if(r.ausente || r.licencia || r.vacaciones) return;
+    if(esGenerico(r.workerId)) return;
+    if(!eficPasaCiclo(r, selCic)) return;
+    const w = r._worker || {};
+    const wk = r._predio+'|'+wKeyReg(r);
+    const k = wk+'|'+r.fecha;
+    if(!dias[k]) dias[k] = { wk, predioId:r._predio, workerId:r.workerId, fecha:r.fecha,
+      nombre: w.nombre || r.workerNombre || r.workerId, subjefe: w.subjefe || r.workerSubjefe || '—',
+      labs:{}, horas:0, horasSinMesas:0, dudoso:false, ents:0 };
+    const d = dias[k];
+    d.ents++;
+    if(dudosos.has(r._predio+'|'+r._id)) d.dudoso = true;
+    const labs = r.labores || [{ laborId:r.laborId, mesas:r.mesas||0, horas:r.horas||0 }];
+    labs.forEach(l=>{
+      if(!l.laborId) return;
+      const m = Number(l.mesas)||0, h = Number(l.horas)||0;
+      d.horas += h;
+      if(m>0 && capLaborMide(l.laborId)){
+        const lk = (r.cultivo||'')+'|'+l.laborId;
+        if(!d.labs[lk]) d.labs[lk] = { laborId:Number(l.laborId), cultivo:r.cultivo||'', mesas:0, veces:0 };
+        d.labs[lk].mesas += m; d.labs[lk].veces++;
+      } else if(h>0) d.horasSinMesas += h;
+    });
+  });
+  const lista = Object.values(dias);
+
+  // Estado de cada día antes del estándar
+  lista.forEach(d=>{
+    const labs = Object.values(d.labs);
+    const tot = labs.reduce((s,l)=>s+l.mesas,0);
+    d.totMesas = tot;
+    d.fraccion = d.horas>0 && d.horasSinMesas>0 ? (d.horas-d.horasSinMesas)/d.horas : 1;
+    if(!labs.length) d.excl = 'sinmesas';
+    else if(d.dudoso || labs.some(l=>l.veces>1)) d.excl = 'dudoso';
+    else if(tot > LIMITES.mesasTotalDia) d.excl = 'limite';
+    else if(d.horas>0 && d.horas < umbralParcial) d.excl = 'parcial';
+    else if(d.fraccion < 0.5) d.excl = 'otras';
+    else d.excl = '';
+  });
+
+  // 2. Estándar por predio + cultivo + labor (días puros)
+  const stdObs = {};
+  lista.forEach(d=>{
+    if(d.excl) return;
+    const labs = Object.values(d.labs);
+    if(labs.length!==1 || d.horasSinMesas>0) return;
+    const l = labs[0];
+    const sk = d.predioId+'|'+l.cultivo+'|'+l.laborId;
+    if(!stdObs[sk]) stdObs[sk] = { predioId:d.predioId, cultivo:l.cultivo, laborId:l.laborId, vals:[], trab:new Set() };
+    stdObs[sk].vals.push(l.mesas); stdObs[sk].trab.add(d.wk);
+  });
+  const estandares = {};
+  Object.entries(stdObs).forEach(([sk,s])=>{
+    const ok = s.vals.length>=CAP_STD_MIN_N && s.trab.size>=CAP_STD_MIN_TRAB;
+    const lab = LABORES.find(x=>x.id===s.laborId);
+    estandares[sk] = { ...s, n:s.vals.length, nTrab:s.trab.size, med:capMediana(s.vals),
+      p25:capPct(s.vals,0.25), p75:capPct(s.vals,0.75), ok, labor: lab?lab.d:'—',
+      predio: PREDIOS[s.predioId]?PREDIOS[s.predioId].nombre:s.predioId };
+    delete estandares[sk].vals; delete estandares[sk].trab;
+  });
+
+  // 3. Índice diario
+  lista.forEach(d=>{
+    if(d.excl) return;
+    let idx = 0, sinStd = false;
+    Object.values(d.labs).forEach(l=>{
+      const s = estandares[d.predioId+'|'+l.cultivo+'|'+l.laborId];
+      if(!s || !s.ok || !(s.med>0)){ sinStd = true; return; }
+      idx += l.mesas / s.med;
+    });
+    if(sinStd){ d.excl = 'sinstd'; return; }
+    d.indice = idx / d.fraccion;
+  });
+
+  // 4. Por trabajador
+  const porW = {};
+  lista.forEach(d=>{
+    if(!porW[d.wk]) porW[d.wk] = { wk:d.wk, predioId:d.predioId, workerId:d.workerId, nombre:d.nombre, subjefe:d.subjefe,
+      predio: PREDIOS[d.predioId]?PREDIOS[d.predioId].nombre:d.predioId, idx:[], diasTot:0, excl:{}, porLabor:{} };
+    const t = porW[d.wk];
+    t.diasTot++;
+    if(d.excl){ t.excl[d.excl] = (t.excl[d.excl]||0)+1; return; }
+    t.idx.push(d.indice);
+    const labs = Object.values(d.labs);
+    if(labs.length===1 && d.horasSinMesas===0){
+      const l = labs[0], sk = d.predioId+'|'+l.cultivo+'|'+l.laborId;
+      if(!t.porLabor[sk]) t.porLabor[sk] = { sk, laborId:l.laborId, cultivo:l.cultivo, vals:[] };
+      t.porLabor[sk].vals.push(l.mesas);
+    }
+  });
+  const rows = Object.values(porW).map(t=>{
+    const wdoc = ((workers||{})[t.predioId]||{})[t.workerId] || null;
+    const asig = wdoc && Number(wdoc.mesas)>0 ? Number(wdoc.mesas) : null;
+    const n = t.idx.length;
+    const ind = n ? capMediana(t.idx) : null;
+    const conf = n>=CAP_CONF_ALTA ? 'alta' : n>=CAP_CONF_MEDIA ? 'media' : 'baja';
+    const base = asig || CAP_MESAS_REF;
+    const sug = ind===null ? null : Math.round(base*ind/3)*3;
+    let rec = 'sin datos';
+    if(ind!==null && conf!=='baja') rec = ind>=CAP_ALTO ? 'mas' : ind<=CAP_BAJO ? 'menos' : 'ok';
+    else if(ind!==null) rec = 'pocos';
+    const labs = Object.values(t.porLabor).map(x=>{
+      const s = estandares[x.sk] || {};
+      const med = capMediana(x.vals);
+      const lab = LABORES.find(y=>y.id===x.laborId);
+      return { laborId:x.laborId, labor:lab?lab.d:'—', cultivo:x.cultivo, n:x.vals.length, med,
+        std:s.med||0, pct: s.med ? Math.round(med/s.med*100) : null,
+        diasVuelta: med>0 ? base/med : null, diasVueltaStd: s.med ? base/s.med : null };
+    }).sort((a,b)=> b.n-a.n);
+    return { ...t, asig, base, esRef:!asig, editable: !!wdoc && puedeCorregirInf(t.predioId), n, ind,
+      p25: n?capPct(t.idx,0.25):null, p75: n?capPct(t.idx,0.75):null, conf, sug,
+      dif: sug===null ? null : sug-base, rec, labs };
+  }).sort((a,b)=> (b.ind===null?-1:b.ind) - (a.ind===null?-1:a.ind) || a.nombre.localeCompare(b.nombre,'es'));
+
+  const exclTot = {};
+  lista.forEach(d=>{ if(d.excl) exclTot[d.excl] = (exclTot[d.excl]||0)+1; });
+  return { rows, estandares: Object.values(estandares).sort((a,b)=> a.predio.localeCompare(b.predio,'es') || a.cultivo.localeCompare(b.cultivo,'es') || b.n-a.n),
+    diasTot: lista.length, diasEval: lista.filter(d=>!d.excl).length, exclTot, jornada, selCic };
+}
+const CAP_EXCL_TXT = { sinmesas:'sin labores con mesas', dudoso:'con datos dudosos o labor repetida', limite:`sobre ${LIMITES.mesasTotalDia} mesas`,
+  parcial:'de jornada parcial', otras:'mayormente en labores sin mesas', sinstd:'con una labor sin estándar' };
+const CAP_REC = {
+  mas:   { t:'Puede tomar más mesas', c:'#15803D', bg:'#DCFCE7', ico:'⬆️' },
+  ok:    { t:'Carga adecuada',        c:'#334155', bg:'#F1F5F9', ico:'✔️' },
+  menos: { t:'Revisar: bajar mesas o apoyar', c:'#B45309', bg:'#FEF3C7', ico:'⬇️' },
+  pocos: { t:'Pocos días: no concluir', c:'#64748B', bg:'#F8FAFC', ico:'…' },
+  'sin datos': { t:'Sin días evaluables', c:'#64748B', bg:'#F8FAFC', ico:'—' }
+};
+function onCapCicloChange(v){ infState.capCiclo = v; switchInfTab('capacidad'); }
+function onCapSubChange(v){ infState.capSub = v; switchInfTab('capacidad'); }
+function capToggle(i){ const el = document.getElementById('capDet'+i); if(el) el.style.display = el.style.display==='none' ? '' : 'none'; }
+async function capEditarMesas(pid, wid){
+  const w = ((infState.data.workers||{})[pid]||{})[wid];
+  if(!w || !puedeCorregirInf(pid)){ toast('⚠️ No puedes editar este trabajador'); return; }
+  const v = prompt(`Mesas asignadas a ${w.nombre} (vacío = sin dato)`, w.mesas||'');
+  if(v===null) return;
+  const n = v.trim()==='' ? 0 : Math.round(Number(v.replace(',','.')));
+  if(!(n>=0) || n>200){ toast('⚠️ Número no válido'); return; }
+  loading(true,'Guardando…');
+  try{
+    await colWorkers(pid).doc(wid).update({ mesas: n>0 ? n : firebase.firestore.FieldValue.delete() });
+    if(n>0) w.mesas = n; else delete w.mesas;
+    const wl = (typeof wMap!=='undefined' && wMap[pid]) ? wMap[pid].find(x=>x.id===wid) : null;
+    if(wl){ if(n>0) wl.mesas = n; else delete wl.mesas; }
+    toast('✅ Mesas guardadas');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+  switchInfTab('capacidad');
+}
+function renderInfCapacidad(){
+  const opc = eficOpcionesCiclo();
+  const cs = infState.capCiclo || '';
+  if(cs && !(cs==='S:' ? opc.sinCiclo : cs.startsWith('L:') ? opc.grupos.includes(cs.slice(2)) : opc.ciclos.some(c=>'C:'+c.k===cs)))
+    infState.capCiclo = '';
+  const d = calcCapacidad();
+  const f2 = n => n===null||n===undefined ? '—' : (Math.round(n*100)/100).toLocaleString('es-CL',{minimumFractionDigits:2});
+  const f1 = n => n===null||n===undefined ? '—' : (Math.round(n*10)/10).toLocaleString('es-CL');
+  const subs = [...new Set(d.rows.map(r=>r.subjefe))].sort((a,b)=>a.localeCompare(b,'es'));
+  let selS = infState.capSub || '';
+  if(selS && !subs.includes(selS)) selS = infState.capSub = '';
+  const filas = selS ? d.rows.filter(r=>r.subjefe===selS) : d.rows;
+  const cnt = k => filas.filter(r=>r.rec===k).length;
+  const selC = infState.capCiclo || '';
+  const optC = (v,t)=>`<option value="${escH(v)}" ${v===selC?'selected':''}>${escH(t)}</option>`;
+  const fechaC = x=> x ? fDMY(x).slice(0,5) : '…';
+  const nRef = filas.filter(r=>r.esRef && r.ind!==null).length;
+
+  let html = `<div class="inf-card">
+    <div class="inf-hdr"><div class="inf-card-title">🎯 Capacidad por trabajador</div>${infDlBtnsHTML('capacidad')}</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Compara lo que avanza cada trabajador con el <b>trabajador típico del grupo</b> en las mismas labores. <b>Índice 1,00</b> = avanza como el típico; <b>1,20</b> = 20 % más; <b>0,80</b> = 20 % menos. Con el índice y sus mesas asignadas se calculan las <b>mesas que podría llevar</b>, redondeadas a techos de 3 mesas.</div>
+    <div class="form-grid" style="margin-bottom:8px">
+      <div><label>Ciclo</label>
+        <select onchange="onCapCicloChange(this.value)">
+          ${optC('','Todos los ciclos')}
+          ${opc.grupos.length?`<optgroup label="Cultivo y época (todos los encargados)">${opc.grupos.map(g=>optC('L:'+g, g)).join('')}</optgroup>`:''}
+          ${opc.ciclos.length?`<optgroup label="Ciclo de un encargado">${opc.ciclos.map(c=>optC('C:'+c.k, `${c.lbl} · ${c.sub} (${fechaC(c.inicio)}–${c.fin?fechaC(c.fin):'abierto'})`)).join('')}</optgroup>`:''}
+          ${opc.sinCiclo?optC('S:','Sin ciclo'):''}
+        </select></div>
+      <div><label>Encargado</label>
+        <select onchange="onCapSubChange(this.value)">
+          <option value="">Todos</option>
+          ${subs.map(s=>`<option ${s===selS?'selected':''}>${escH(s)}</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="inf-summary">
+      <div class="inf-pill"><div class="inf-pill-label">⬆️ Pueden más</div><div class="inf-pill-value" style="color:#15803D">${cnt('mas')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">✔️ Adecuados</div><div class="inf-pill-value">${cnt('ok')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">⬇️ Revisar</div><div class="inf-pill-value" style="color:#B45309">${cnt('menos')}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Sin conclusión</div><div class="inf-pill-value">${cnt('pocos')+cnt('sin datos')}</div></div>
+    </div>`;
+  if(!d.rows.length){
+    html += `<div class="inf-empty">No hay registros de trabajadores con mesas en el período${selC?' y ciclo elegidos':''}.</div></div>`;
+    document.getElementById('infContent').innerHTML = html; return;
+  }
+  if(nRef) html += `<div style="font-size:11px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:7px 9px;margin-bottom:8px;line-height:1.45">⚠️ <b>${nRef} trabajador${nRef>1?'es':''} sin mesas asignadas cargadas</b>: sus mesas sugeridas se calculan sobre ${CAP_MESAS_REF} mesas (referencial, marcado <i>ref.</i>). Toca ✏️ en la columna <b>Asig.</b> para anotar las mesas reales.</div>`;
+
+  html += `<div style="overflow-x:auto"><table class="inf-table">
+    <thead><tr><th>Trabajador</th><th class="num">Días<br>eval.</th><th class="num">Índice</th><th class="num">Asig.</th><th class="num">Sugeridas</th><th>Recomendación</th></tr></thead>
+    <tbody>${filas.map((r,i)=>{
+      const rc = CAP_REC[r.rec];
+      const asig = `${r.esRef?`<span style="color:var(--muted)">${CAP_MESAS_REF} <i>ref.</i></span>`:r.asig}${r.editable?` <a href="javascript:void(0)" title="Editar mesas asignadas" onclick="capEditarMesas('${r.predioId}','${escH(r.workerId)}')">✏️</a>`:''}`;
+      const dif = r.dif===null||r.rec==='pocos'||r.rec==='sin datos' ? '' : `<div style="font-size:9px;color:${r.dif>0?'#15803D':r.dif<0?'#B45309':'var(--muted)'}">${r.dif>0?'+':''}${r.dif} (${r.dif>0?'+':''}${r.dif/3} techos)</div>`;
+      const excl = Object.entries(r.excl).map(([k,v])=>`${v} ${CAP_EXCL_TXT[k]||k}`).join(' · ');
+      const det = `<tr id="capDet${i}" style="display:none"><td colspan="6" style="background:#FAFAF7;font-size:10.5px;line-height:1.5">
+          <div>Rango típico del índice (P25–P75): <b>${f2(r.p25)} – ${f2(r.p75)}</b> · confianza <b>${r.conf}</b> · ${r.diasTot} días con registro${excl?`, fuera del cálculo: ${excl}`:''}.</div>
+          ${r.labs.length?`<table class="inf-table" style="margin:4px 0 2px"><thead><tr><th>Labor (días de solo esa labor)</th><th class="num">Días</th><th class="num">Mesas/día</th><th class="num">Típico</th><th class="num">%</th><th class="num">Días por vuelta*</th></tr></thead><tbody>
+            ${r.labs.map(l=>`<tr><td>${l.laborId}. ${escH(l.labor)}${l.cultivo?` <span style="color:var(--muted)">· ${escH(CNAMES[l.cultivo]||l.cultivo)}</span>`:''}</td><td class="num">${l.n}</td><td class="num">${f1(l.med)}</td><td class="num">${f1(l.std)}</td>
+              <td class="num" style="color:${l.pct===null?'inherit':l.pct>=100*CAP_ALTO?'#15803D':l.pct<=100*CAP_BAJO?'#B45309':'inherit'}">${l.pct===null?'—':l.pct+' %'}</td>
+              <td class="num">${f1(l.diasVuelta)} <span style="color:var(--muted)">(típ. ${f1(l.diasVueltaStd)})</span></td></tr>`).join('')}
+          </tbody></table><div style="color:var(--muted)">* Días que le toma pasar la labor por sus ${r.base} mesas${r.esRef?' (ref.)':''}, a su ritmo y al ritmo típico.</div>`:'<div style="color:var(--muted)">Sin días de una sola labor para el detalle.</div>'}
+        </td></tr>`;
+      return `<tr style="cursor:pointer${r.rec==='pocos'||r.rec==='sin datos'?';opacity:.6':''}" onclick="if(event.target.tagName!=='A')capToggle(${i})">
+        <td>${escH(r.nombre)}<div style="font-size:9px;color:var(--muted)">${escH(r.subjefe)} · ${r.predio} · ▸ detalle</div></td>
+        <td class="num">${r.n}</td>
+        <td class="num"><b>${f2(r.ind)}</b></td>
+        <td class="num">${asig}</td>
+        <td class="num">${r.rec==='pocos'||r.rec==='sin datos'||r.sug===null?'—':`<b>${r.sug}</b>`}${dif}</td>
+        <td><span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600;color:${rc.c};background:${rc.bg}">${rc.ico} ${rc.t}</span></td>
+      </tr>${det}`;
+    }).join('')}</tbody></table></div>
+    <div style="font-size:10px;color:var(--muted);line-height:1.5;margin:4px 0 12px">
+      <b>Cómo se calcula.</b> Para cada labor, el <b>típico</b> es la mediana de mesas en los días en que un trabajador hizo solo esa labor la jornada completa (mismo predio y cultivo; mínimo ${CAP_STD_MIN_N} días de ${CAP_STD_MIN_TRAB} trabajadores). Cada día del trabajador vale la suma de sus mesas ÷ el típico de cada labor (un día con dos labores se suma bien). El <b>índice</b> es la mediana de sus días. <b>Recomendación</b>: ≥ ${f2(CAP_ALTO)} puede más; ≤ ${f2(CAP_BAJO)} revisar; con menos de ${CAP_CONF_MEDIA} días evaluados no se concluye. Jornada usada: ${f1(d.jornada)} h; bajo ${Math.round(CAP_PARCIAL*100)} % es jornada parcial.
+      <br>Días evaluados: <b>${d.diasEval.toLocaleString('es-CL')}</b> de ${d.diasTot.toLocaleString('es-CL')}. Fuera: ${Object.entries(d.exclTot).map(([k,v])=>`${v.toLocaleString('es-CL')} ${CAP_EXCL_TXT[k]||k}`).join(' · ')||'ninguno'}.${d.exclTot.dudoso?' Los dudosos se corrigen desde ⚡ Eficiencia › 🔎.':''}
+      <br><b>Antes de mover mesas:</b> el índice mide avance, no calidad: confirma en terreno que el más rápido no deja la labor mal hecha. Y la referencia es el trabajador típico: si todo el equipo va atrasado respecto de la programación (📊 Prog vs Real), subir mesas al típico tampoco alcanza.
+    </div>`;
+
+  const est = d.estandares.filter(s=>s.ok);
+  html += `<div style="font-size:11px;font-weight:600;margin:4px 0">Mesas por día del trabajador típico (base de la comparación)</div>
+  <div style="overflow-x:auto"><table class="inf-table">
+    <thead><tr><th>Labor</th><th>Predio · cultivo</th><th class="num">Días</th><th class="num">Trab.</th><th class="num">P25</th><th class="num">Típico</th><th class="num">P75</th></tr></thead>
+    <tbody>${est.length?est.map(s=>`<tr><td>${s.laborId}. ${escH(s.labor)}</td><td>${s.predio}${s.cultivo?' · '+escH(CNAMES[s.cultivo]||s.cultivo):''}</td><td class="num">${s.n}</td><td class="num">${s.nTrab}</td><td class="num">${f1(s.p25)}</td><td class="num"><b>${f1(s.med)}</b></td><td class="num">${f1(s.p75)}</td></tr>`).join(''):`<tr><td colspan="7" class="inf-empty">Ninguna labor tiene todavía días suficientes de una sola labor.</td></tr>`}</tbody>
+  </table></div>
+  ${d.estandares.length>est.length?`<div style="font-size:10px;color:var(--muted);margin:-4px 0 10px">${d.estandares.length-est.length} labores no tienen días suficientes para un típico y no entran al índice.</div>`:''}`;
+
+  const graf = filas.filter(r=>r.ind!==null && r.rec!=='pocos');
+  html += `<div style="font-size:11px;font-weight:600;margin-top:12px">Índice por trabajador (líneas en ${f2(CAP_BAJO)} y ${f2(CAP_ALTO)})</div>
+  <div class="inf-chartwrap" style="height:${Math.max(220, graf.length*18+60)}px"><canvas id="chartCap"></canvas></div></div>`;
+  document.getElementById('infContent').innerHTML = html;
+  if(!graf.length) return;
+  const col = r => r.rec==='mas' ? '#16a34a' : r.rec==='menos' ? '#f59e0b' : '#94a3b8';
+  const ctx = document.getElementById('chartCap').getContext('2d');
+  infState.charts.capacidad = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: graf.map(r=>r.nombre.split(' ').slice(0,2).join(' ')),
+      datasets: [
+        { label:'Índice', data: graf.map(r=>Math.round(r.ind*100)/100), backgroundColor: graf.map(col) },
+        { label:`${CAP_BAJO}`, type:'line', data: graf.map(()=>CAP_BAJO), borderColor:'#B45309', borderDash:[4,3], pointRadius:0, borderWidth:1.5 },
+        { label:`${CAP_ALTO}`, type:'line', data: graf.map(()=>CAP_ALTO), borderColor:'#15803D', borderDash:[4,3], pointRadius:0, borderWidth:1.5 }
+      ] },
+    options: { indexAxis:'y', responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ title:(it)=>graf[it[0].dataIndex].nombre,
+        afterLabel:(c)=>{ if(c.datasetIndex) return ''; const r=graf[c.dataIndex]; return `${r.n} días · ${r.subjefe}`; } } } },
+      scales:{ x:{ beginAtZero:true, ticks:{ font:{size:10} } }, y:{ ticks:{ font:{size:10} } } } }
+  });
+}
+
+// ─────────────────────────────────────────────
 // INFORME v54: Dashboard
 // ─────────────────────────────────────────────
 function renderInfDashboard(){
@@ -11238,6 +11568,24 @@ function infTablaExport(tab){
       landscape: true
     };
   }
+  if(tab==='capacidad'){   // v73
+    const d = calcCapacidad();
+    const r2 = n => n===null||n===undefined ? '' : Math.round(n*100)/100;
+    const recTxt = { mas:'Puede tomar más mesas', ok:'Carga adecuada', menos:'Revisar: bajar mesas o apoyar', pocos:'Pocos días: no concluir', 'sin datos':'Sin días evaluables' };
+    const filas = infState.capSub ? d.rows.filter(r=>r.subjefe===infState.capSub) : d.rows;
+    return {
+      titulo: 'Capacidad por trabajador',
+      nota: `Ciclo: ${eficCicloTxt(d.selCic)}${infState.capSub?' · Encargado: '+infState.capSub:''}. Índice = mediana de (Σ mesas del día ÷ mesas típicas de cada labor); 1,00 = trabajador típico del grupo (mismo predio, cultivo y labor). Típico = mediana de días de una sola labor y jornada completa (mín. ${CAP_STD_MIN_N} días de ${CAP_STD_MIN_TRAB} trabajadores). Sugeridas = asignadas × índice, redondeado a techos de 3 mesas; sin mesas cargadas se usa ${CAP_MESAS_REF} (ref.). Recomendación: ≥ ${CAP_ALTO} puede más; ≤ ${CAP_BAJO} revisar; < ${CAP_CONF_MEDIA} días no se concluye. Mide avance, no calidad.`,
+      headers: ['Trabajador','Encargado','Predio','Días con registro','Días evaluados','Índice','P25','P75','Confianza','Mesas asignadas','Asignadas es ref.','Mesas sugeridas','Diferencia','Recomendación','Labor principal','Mesas/día labor principal','Típico labor principal','Días por vuelta','Días por vuelta típico'],
+      body: filas.map(r=>{ const l=r.labs[0]||null; const concl = r.rec!=='pocos' && r.rec!=='sin datos';
+        return [r.nombre, r.subjefe, r.predio, r.diasTot, r.n, r2(r.ind), r2(r.p25), r2(r.p75), r.conf, r.base, r.esRef?'sí':'',
+          concl&&r.sug!==null?r.sug:'', concl&&r.dif!==null?r.dif:'', recTxt[r.rec]||r.rec,
+          l?`${l.laborId}. ${l.labor}`:'', l?r2(l.med):'', l?r2(l.std):'', l?r2(l.diasVuelta):'', l?r2(l.diasVueltaStd):'']; }),
+      totales: null,
+      chartId: 'chartCap',
+      landscape: true
+    };
+  }
   if(tab==='inconsist'){
     const { issues } = calcInconsistencias();
     return {
@@ -11286,7 +11634,7 @@ function exportInfExcel(tab){
     const wb = XLSX.utils.book_new();
     const ws = infHojaExcel(tab);
     // Nombre de hoja: máx 31 caracteres permitidos por Excel
-    const sheetNames = { dashboard:'Dashboard', progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', eficiencia:'Eficiencia', inconsist:'Inconsistencias', contratistas:'Contratistas', contratistasSem:'Pago semanal', modulos:'Por módulo' };
+    const sheetNames = { dashboard:'Dashboard', progreal:'Prog vs Real', ciclos:'Por ciclo', trabajadores:'Trabajadores', labores:'Labores', eficiencia:'Eficiencia', capacidad:'Capacidad', inconsist:'Inconsistencias', contratistas:'Contratistas', contratistasSem:'Pago semanal', modulos:'Por módulo' };
     XLSX.utils.book_append_sheet(wb, ws, sheetNames[tab] || 'Informe');
     if(tab==='contratistas'){ const w2=infHojaExcel('contratistasSem'); if(w2) XLSX.utils.book_append_sheet(wb, w2, 'Pago semanal'); }   // v65
     XLSX.writeFile(wb, `fieldlog_${tab}_${m.suf}.xlsx`);
@@ -11310,6 +11658,7 @@ function exportInfExcelTodo(){
       ['trabajadores','Trabajadores'],
       ['labores','Labores'],
       ['eficiencia','Eficiencia'],
+      ['capacidad','Capacidad'],            // v73
       ['inconsist','Inconsistencias'],
       ['contratistas','Contratistas'],
       ['contratistasSem','Pago semanal'],   // v65
@@ -11320,7 +11669,7 @@ function exportInfExcelTodo(){
       if(ws) XLSX.utils.book_append_sheet(wb, ws, nombre);
     });
     XLSX.writeFile(wb, `fieldlog_informes_${m.suf}.xlsx`);
-    toast('✅ Excel completo descargado (10 hojas)');
+    toast('✅ Excel completo descargado (11 hojas)');
   }catch(e){
     toast('Error al generar Excel: '+e.message);
   }
@@ -12489,10 +12838,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v72';
+const MANUAL_VERSION='v73';
 const MANUAL_FECHA='2026-10-20';
 
 const MANUAL_CAMBIOS=[
+  {v:'v73', f:'20-10-2026', ver:()=>canViewInformes(), txt:'<b>Informes › 🎯 Capacidad.</b> Muestra cuánto avanza cada trabajador comparado con el <b>trabajador típico</b> de su predio y cultivo en las mismas labores (índice 1,00 = típico; 1,20 = 20 % más). Con sus <b>mesas asignadas</b> calcula cuántas mesas podría llevar, en techos de 3 mesas, y lo clasifica: <b>⬆️ puede tomar más</b>, <b>✔️ adecuado</b> o <b>⬇️ revisar</b>. Tocar un trabajador abre el detalle por labor y los días que le toma una vuelta por sus mesas. Las mesas asignadas se anotan con ✏️ en la misma tabla o en Config › Trabajadores.'},
   {v:'v72', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación por ciclo.</b> Al editar la programación, arriba se elige el <b>ciclo</b> (por ejemplo Tomate Primor o Especialidades Trastomate) y abajo solo aparecen y se agregan las tareas de ese ciclo. Para programar otro ciclo, toca su pestaña: lo del primero queda guardado. Ya no existe el selector de ciclo dentro de cada tarea, que permitía cambiar por error el ciclo de una tarea ya programada.'},
   {v:'v71', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación protegida.</b> Solo se puede guardar programación desde la versión actual de la app, para que un teléfono con una versión antigua no borre lo que programaron otros. Si al programar aparece <b>“No se guardó… cierra y vuelve a abrir la app”</b>, ciérrala por completo y ábrela de nuevo.'},
   {v:'v70', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación: ya no se borra lo programado.</b> Al programar varios ciclos del mismo subjefe en la misma semana, lo de un ciclo se perdía al programar el siguiente. Ahora la ventana <b>espera a cargar lo ya programado</b> antes de dejar editar, cada cambio guarda <b>solo el día modificado</b>, y si alguien programó ese mismo día desde otro teléfono sus tareas se mantienen. Arriba de la ventana se ve si está <b>guardando</b> o si hubo un error.'},
@@ -12681,7 +13031,7 @@ const MANUAL_SECCIONES=[
 },
 {
   id:'informes', ico:'📈', tit:'Informes', ver:()=>canViewInformes(),
-  intro:'El dashboard y los seis informes de trabajo, con gráficos y descarga a Excel.',
+  intro:'El dashboard y los informes de trabajo, con gráficos y descarga a Excel.',
   pasos:[
     'Elige <b>Desde</b> y <b>Hasta</b>, el <b>Predio</b> y el <b>Subjefe</b> (o "Todos").',
     'Aprieta <b>🔄 Generar informes</b>.',
@@ -12689,6 +13039,7 @@ const MANUAL_SECCIONES=[
     'Cambia entre las pestañas: <b>Prog vs Real</b>, <b>Por ciclo</b>, <b>Trabajadores</b>, <b>Labores</b>, <b>Eficiencia</b> e <b>Inconsistencias</b>.',
     'En <b>⚡ Eficiencia</b> eliges el <b>Ciclo</b> (un cultivo y época para comparar a todos los encargados, o el ciclo de uno) y la <b>Labor</b>. Por encargado ves las mesas por día de un trabajador: <b>mínimo, promedio, máximo</b> y el <b>promedio del 80 % más rápido</b>, y el <b>costo por mesa</b>. Con una labor elegida, la última fila es el total de todos los encargados.',
     'El <b>promedio del 80 % más rápido</b> ordena los días-persona de más a menos mesas y promedia el 80 % de arriba: deja fuera los días más lentos (gente nueva, días cortos, interrupciones). Es una buena referencia para la meta de mesas por día.',
+    'En <b>🎯 Capacidad</b> ves el <b>índice</b> de cada trabajador: 1,00 es lo que avanza el trabajador típico del grupo (mismo predio, cultivo y labores); 1,20 avanza 20 % más y 0,80 un 20 % menos. Al lado, sus <b>mesas asignadas</b> y las <b>sugeridas</b> (asignadas × índice, en techos de 3 mesas). Toca un trabajador para ver el detalle por labor. Si no tiene mesas anotadas, se usa 58 como referencia (sale <i>ref.</i>): anótalas con ✏️.',
     'En <b>📦 Por módulo</b> ves cada labor terminada por módulo (mesas, encargados, horas, días-persona, mesas por día persona y $/mesa) y una tabla que la compara con el <b>registro diario</b> del mismo encargado, labor y días: si las mesas difieren más de 15 % salen en rojo.',
     'En <b>🧑‍🌾 Contratistas</b> está lo que se paga a cada trabajador de contratista y, abajo, el <b>📅 Pago semanal</b> de lunes a domingo: el monto de cada trabajador cada día y el total de la semana por contratista. Los botones <b>Semana pasada</b> y <b>Esta semana</b> ajustan las fechas solos. Si la semana sale “incompleta”, las fechas elegidas no cubren de lunes a domingo.',
     'Con <b>📥 Excel completo</b> bajas todas las hojas en un solo archivo (incluido el pago semanal).',
@@ -12698,6 +13049,7 @@ const MANUAL_SECCIONES=[
     'Parte siempre por <b>Inconsistencias</b>: ahí salen los datos que no cuadran (mesas muy altas o muy bajas, posibles duplicados, horas fuera de rango). Corregir eso primero hace que el resto de los informes sirva.',
     'Para corregir un dato dudoso: en <b>⚡ Eficiencia</b> toca <b>🔎</b> (o el Mín. / Máx.) del encargado y labor, o búscalo en <b>⚠️ Inconsistencias</b>. Toca <b>✏️</b>: se abre la entrada en Registro con todo cargado; corrige las mesas u horas y guarda. La app vuelve sola al informe con los mismos filtros. Si la misma labor está anotada dos veces el mismo día, borra la repetida con <b>🗑️</b>.',
     'Los costos por hora salen de lo que esté cargado en Config › Costos del personal. Si el sueldo mínimo cambió y no se actualizó ahí, los pesos van a estar malos.',
+    'En <b>🎯 Capacidad</b>, antes de mover mesas: el índice mide <b>avance, no calidad</b> (revisa en terreno que el rápido no deje la labor mal hecha), y con menos de 8 días evaluados no se concluye. Corrige primero los datos dudosos de ⚡ Eficiencia: esos días quedan fuera del cálculo.',
     'En Eficiencia, un día en que el trabajador hizo dos labores cuenta en las dos: en esas labores la cifra sale más baja que si hubiera hecho solo una. Las filas en gris tienen menos de 3 días-persona y todavía no sirven para comparar.',
     'El anexo de observaciones sale del mismo período y predio que tengas arriba: si quieres solo una semana, acota las fechas antes de generarlo. Trae hasta 40 observaciones por archivo.'
   ]
