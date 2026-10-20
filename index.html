@@ -8553,6 +8553,9 @@ async function renderProg(){
         modulos: Array.isArray(t.modulos)?t.modulos:(t.modulo?[t.modulo]:[])
       }));
     }
+    // v72 · Agrupar las tareas del día por ciclo
+    { const ord=[]; tasks.forEach(t=>{const k=t.cicloId||''; if(!ord.includes(k)) ord.push(k);});
+      tasks=tasks.slice().sort((a,b)=>ord.indexOf(a.cicloId||'')-ord.indexOf(b.cicloId||'')); }
     const dayName=progDayName(mondayIso,dayIso);
     const isToday=dayIso===todayIso;
     let realEntries=rCache.filter(r=>{const w=wDe(r);return r.fecha===dayIso&&w&&w.subjefe===subjefe});
@@ -8664,33 +8667,66 @@ function getCiclosParaProg(predioId,subjefe,dayIso){
   return cs.filter(c=>c.cultivo && c.fin===null);
 }
 
+// v72 · La programación se edita POR CICLO: arriba se elige el ciclo (pestañas) y abajo
+//       solo se ven y agregan tareas de ese ciclo. Así no se puede cambiar por error el
+//       ciclo de una tarea ya programada (antes había un selector de ciclo en cada tarea).
+function progCiclosTabs(pe,ciclosDisp){
+  const tabs=ciclosDisp.map(c=>({id:c.id,lbl:cicloLabel(c),mods:(c.modulos||[]).join(',')}));
+  // Tareas antiguas con un ciclo ya cerrado o sin ciclo: pestañas aparte para poder verlas/borrarlas
+  const vistos=new Set(tabs.map(t=>t.id));
+  Object.values(pe.dias).forEach(d=>(d.labores||[]).forEach(t=>{
+    const k=t.cicloId||'__sin';
+    if(!vistos.has(k)){ vistos.add(k);
+      const c=t.cicloId?(ciclosCache[pe.subjefe]||[]).find(x=>x.id===t.cicloId):null;
+      tabs.push({id:k,lbl:c?cicloLabel(c)+' (cerrado)':'Sin ciclo',mods:'',cerrado:true});
+    }
+  }));
+  return tabs;
+}
+function selProgCiclo(id){
+  const pe=window._progEdit; if(!pe) return;
+  pe.cicloSel=id;
+  renderProgModalDias(getProgDays(pe.mondayIso),['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)']);
+}
 function renderProgModalDias(progDays,dayNames){
   const cont=document.getElementById('progModalDias');if(!cont)return;
-  if(!window._progEdit||!window._progEdit.cargado) return;
-  const subjefe=window._progEdit.subjefe, predioId=window._progEdit.predioId;
-  const ciclosDisp = getCiclosParaProg(predioId,subjefe,null);
-  const sinCiclos = ciclosDisp.length===0;
-  cont.innerHTML=progDays.map((dayIso,di)=>{
-    const dia=window._progEdit.dias[dayIso]||{labores:[]};
+  const pe=window._progEdit;
+  if(!pe||!pe.cargado) return;
+  const ciclosDisp = getCiclosParaProg(pe.predioId,pe.subjefe,null);
+  const tabs=progCiclosTabs(pe,ciclosDisp);
+  if(!tabs.length){
+    cont.innerHTML=`<div style="font-size:12px;color:var(--red);padding:6px 0">Sin ciclos abiertos. Ábrelo en CICLOS antes de programar.</div>`;
+    return;
+  }
+  if(!pe.cicloSel || !tabs.some(t=>t.id===pe.cicloSel)) pe.cicloSel=tabs[0].id;
+  const sel=tabs.find(t=>t.id===pe.cicloSel);
+  const cuenta=id=>Object.values(pe.dias).reduce((n,d)=>n+(d.labores||[]).filter(t=>(t.cicloId||'__sin')===id).length,0);
+  const tabsHTML=`<div style="font-size:11px;color:var(--muted);margin-bottom:4px">Ciclo que estás programando:</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${tabs.map(t=>{
+      const on=t.id===pe.cicloSel;
+      return `<button type="button" onclick="selProgCiclo('${t.id}')" style="padding:7px 11px;border-radius:8px;font-size:12px;cursor:pointer;border:2px solid ${on?'var(--green)':'var(--sand)'};background:${on?'var(--green)':'#fff'};color:${on?'#fff':'var(--dark)'};font-weight:${on?700:500}">${escH(t.lbl)}${t.mods?` · M:${escH(t.mods)}`:''} <span style="opacity:.75">(${cuenta(t.id)})</span></button>`;
+    }).join('')}</div>`;
+  const diasHTML=progDays.map((dayIso,di)=>{
+    const dia=pe.dias[dayIso]||{labores:[]};
+    const propias=dia.labores.map((t,ti)=>({t,ti})).filter(x=>(x.t.cicloId||'__sin')===pe.cicloSel);
+    const otras=dia.labores.length-propias.length;
     return `<div style="margin-bottom:14px">
       <div style="font-family:'Syne',sans-serif;font-weight:700;font-size:13px;color:var(--dark);margin-bottom:6px;display:flex;align-items:center;gap:6px">
         ${dayNames[di]} <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-weight:400">${fDMY(dayIso)}</span>
+        ${otras?`<span style="font-size:10px;color:var(--muted);font-weight:400">· +${otras} de otro ciclo</span>`:''}
       </div>
-      <div id="ptasks-${dayIso}">${dia.labores.map((t,ti)=>progTaskFormHTML(dayIso,ti,t,ciclosDisp)).join('')}</div>
-      ${sinCiclos
-        ? `<div style="font-size:11px;color:var(--red);padding:6px 0">Sin ciclos abiertos. Ábrelo en CICLOS antes de programar.</div>`
-        : `<button class="btn btn-secondary" style="padding:7px;font-size:11px;margin-top:4px" onclick="addProgTask('${dayIso}')">＋ Tarea</button>`}
+      <div id="ptasks-${dayIso}">${propias.map((x,k)=>progTaskFormHTML(dayIso,x.ti,x.t,k+1)).join('')}</div>
+      ${sel.cerrado?'':`<button class="btn btn-secondary" style="padding:7px;font-size:11px;margin-top:4px" onclick="addProgTask('${dayIso}')">＋ Tarea de ${escH(sel.lbl)}</button>`}
     </div><div style="height:1px;background:var(--sand);margin:4px 0 14px"></div>`;
   }).join('');
+  cont.innerHTML=tabsHTML+(sel.cerrado?`<div style="font-size:11px;color:var(--muted);margin-bottom:8px">Este ciclo ya no está abierto: solo puedes revisar o borrar sus tareas.</div>`:'')+diasHTML;
 }
 
-function progTaskFormHTML(dayIso,ti,t={},ciclosDisp=[]){
+function progTaskFormHTML(dayIso,ti,t={},num){
   const subjefe = window._progEdit.subjefe;
   const ciclo = t.cicloId ? (ciclosCache[subjefe]||[]).find(c=>c.id===t.cicloId) : null;
   const modulosCiclo = ciclo && Array.isArray(ciclo.modulos) ? ciclo.modulos : [];
   const tMods = Array.isArray(t.modulos) ? t.modulos : [];
-  const ciclosOpts = `<option value="">— Seleccionar ciclo —</option>` +
-    ciclosDisp.map(c=>`<option value="${c.id}"${t.cicloId===c.id?' selected':''}>${cicloLabel(c)} · M:${(c.modulos||[]).join(',')||'—'}</option>`).join('');
   const modsHTML = modulosCiclo.length
     ? `<div style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1px solid var(--sand);border-radius:6px;background:var(--cream)">
         ${modulosCiclo.map(m=>{
@@ -8698,14 +8734,13 @@ function progTaskFormHTML(dayIso,ti,t={},ciclosDisp=[]){
           return `<label style="display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:2px 7px;background:#fff;border:1px solid var(--sand);border-radius:5px;cursor:pointer"><input type="checkbox" value="${m}"${checked} onchange="togglePTMod('${dayIso}',${ti},'${m}',this.checked)" style="margin:0">${m}</label>`;
         }).join('')}
        </div>`
-    : `<div style="font-size:11px;color:var(--muted);padding:4px 0">Selecciona un ciclo primero.</div>`;
+    : `<div style="font-size:11px;color:var(--muted);padding:4px 0">${tMods.length?'Módulos: '+escH(tMods.join(',')):'El ciclo no tiene módulos.'}</div>`;
   return `<div class="ptask-form" id="ptf-${dayIso}-${ti}">
-    <div class="ptask-form-hdr"><span class="ptask-form-num">Tarea ${ti+1}</span><button class="del-btn" onclick="rmProgTask('${dayIso}',${ti})">✕</button></div>
-    <div class="form-row"><label>Ciclo</label><select onchange="setTaskCycle('${dayIso}',${ti},this.value)">${ciclosOpts}</select></div>
+    <div class="ptask-form-hdr"><span class="ptask-form-num">Tarea ${num||ti+1}</span><button class="del-btn" onclick="rmProgTask('${dayIso}',${ti})">✕</button></div>
     <div class="form-row"><label>Labor</label><select onchange="updPT('${dayIso}',${ti},'laborId',parseInt(this.value))">${laborSelectHTML(contratistaDe(window._progEdit&&window._progEdit.subjefe)?'cont':'planta', t.laborId)}</select></div>
     <div class="form-row"><label>Módulos</label>${modsHTML}</div>
     <div class="form-row"><label>Meta mesas</label><input type="number" placeholder="120" min="0" value="${t.metaMesas||''}" onchange="updPT('${dayIso}',${ti},'metaMesas',parseInt(this.value)||0)"></div>
-    <div class="form-row"><label>Notas</label><input type="text" placeholder="Indicaciones…" value="${t.notas||''}" onchange="updPT('${dayIso}',${ti},'notas',this.value)"></div>
+    <div class="form-row"><label>Notas</label><input type="text" placeholder="Indicaciones…" value="${escH(t.notas||'')}" onchange="updPT('${dayIso}',${ti},'notas',this.value)"></div>
   </div>`;
 }
 
@@ -8717,7 +8752,7 @@ function progTaskFormHTML(dayIso,ti,t={},ciclosDisp=[]){
 //   · Los guardados van en cola, uno tras otro.
 // v71 · Las reglas de Firestore rechazan guardados de programación sin appV >= 71,
 //       para que un teléfono con una versión vieja no pueda reescribir la semana completa.
-const PROG_APPV=71;
+const PROG_APPV=72;
 let _progSaveChain=Promise.resolve();
 function saveProgToFirestore(dayIso){
   const pe=window._progEdit;
@@ -8776,10 +8811,10 @@ function setTaskCycle(dayIso,ti,cicloId){
 function addProgTask(dayIso){
   const dia = window._progEdit.dias[dayIso];
   if(!window._progEdit.cargado || !dia) return;
-  // Nueva tarea hereda el ciclo de la tarea anterior (si hay), para no repetir tanto
-  const ultima = dia.labores[dia.labores.length-1];
-  const cicloHerencia = ultima ? (ultima.cicloId||null) : null;
-  dia.labores.push({id:ptId(), laborId:null, cicloId:cicloHerencia, modulos:[], metaMesas:0, notas:''});
+  // v72 · La tarea nueva es del ciclo de la pestaña elegida
+  const cs = window._progEdit.cicloSel;
+  if(!cs || cs==='__sin') return;
+  dia.labores.push({id:ptId(), laborId:null, cicloId:cs, modulos:[], metaMesas:0, notas:''});
   const progDays=getProgDays(window._progEdit.mondayIso);
   const dayNames=['Martes','Miércoles','Jueves','Viernes','Lunes (sig.)'];
   renderProgModalDias(progDays,dayNames);
@@ -12454,10 +12489,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v71';
+const MANUAL_VERSION='v72';
 const MANUAL_FECHA='2026-10-20';
 
 const MANUAL_CAMBIOS=[
+  {v:'v72', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación por ciclo.</b> Al editar la programación, arriba se elige el <b>ciclo</b> (por ejemplo Tomate Primor o Especialidades Trastomate) y abajo solo aparecen y se agregan las tareas de ese ciclo. Para programar otro ciclo, toca su pestaña: lo del primero queda guardado. Ya no existe el selector de ciclo dentro de cada tarea, que permitía cambiar por error el ciclo de una tarea ya programada.'},
   {v:'v71', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación protegida.</b> Solo se puede guardar programación desde la versión actual de la app, para que un teléfono con una versión antigua no borre lo que programaron otros. Si al programar aparece <b>“No se guardó… cierra y vuelve a abrir la app”</b>, ciérrala por completo y ábrela de nuevo.'},
   {v:'v70', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación: ya no se borra lo programado.</b> Al programar varios ciclos del mismo subjefe en la misma semana, lo de un ciclo se perdía al programar el siguiente. Ahora la ventana <b>espera a cargar lo ya programado</b> antes de dejar editar, cada cambio guarda <b>solo el día modificado</b>, y si alguien programó ese mismo día desde otro teléfono sus tareas se mantienen. Arriba de la ventana se ve si está <b>guardando</b> o si hubo un error.'},
   {v:'v69', f:'14-10-2026', ver:()=>isCampo(), txt:'<b>Labores de contratista.</b> Las labores que se pagan a contratistas (listado de Paradero 12) quedan aparte, con <b>códigos 101 a 139</b>. Al registrar a un trabajador de un contratista aparecen primero, en el grupo 🧑‍🌾 <b>Labores de contratista</b>; al personal de planta no se le muestran. La cosecha de contratista va separada: <b>132 Cosecha toro</b> y <b>139 Cosecha gamela</b>, pagadas por caja con el $ por caja toro / gamela del contratista. En Config › Contratistas, gerencia puede <b>completar los valores con el listado</b> y guardarlos con su fecha de vigencia.'},
@@ -12570,7 +12606,8 @@ const MANUAL_SECCIONES=[
   pasos:[
     'Con las flechas <b>‹ ›</b> te mueves de semana. Arriba se ve la semana y su rango de fechas.',
     'Elige el <b>Subjefe</b>. Cada subjefe tiene su propia programación.',
-    'Abre el día que quieras programar y agrega las <b>tareas</b>: labor, módulos y meta.',
+    'Toca <b>✏️ Editar programación</b> y arriba elige el <b>ciclo</b> que vas a programar. Luego, en cada día, <b>＋ Tarea</b>: labor, módulos y meta.',
+    'Para programar <b>otro ciclo</b>, toca su pestaña arriba. Cada ciclo tiene su programación; el número entre paréntesis indica cuántas tareas lleva en la semana.',
     'Cierra la ventana cuando termines. <b>No hay que apretar Guardar</b>: cada cambio se guarda solo en el servidor, día por día. Espera a que desaparezca el aviso <b>⏳ Cargando</b> antes de editar.',
     'Puedes programar <b>varios ciclos</b> el mismo día: elige el ciclo en cada tarea. Lo de un ciclo no se borra al agregar tareas de otro.'
   ],
