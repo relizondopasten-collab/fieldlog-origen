@@ -9402,8 +9402,9 @@ function renderContratistasConfig(){
     const fut=(c.historial||[]).filter(x=>x.desde>todayIso).sort((a,b)=>a.desde.localeCompare(b.desde))[0];
     return `<div class="wrow">
       <div><div class="wn">🧑‍🌾 ${escH(c.nombre)}${c.activo===false?' <span style="color:var(--muted);font-weight:400">(inactivo)</span>':''}</div>
-      <div class="wm">${(c.predios||[]).map(p=>PREDIOS[p]?PREDIOS[p].nombre:p).join(', ')||'sin predio'} · ${nT} labores con tarifa${nTe?` (${nTe} por techo)`:''} · toro ${tv.precioToro?fmtCLP(tv.precioToro):'—'} · gamela ${tv.precioGamela?fmtCLP(tv.precioGamela):'—'}${tv.desde?` · vigente desde ${fDesdeTxt(tv.desde)}`:''}${fut?` · <b>cambia el ${fDMY(fut.desde)}</b>`:''}</div></div>
+      <div class="wm">${(c.predios||[]).map(p=>PREDIOS[p]?PREDIOS[p].nombre:p).join(', ')||'sin predio'} · ${nT} labores con tarifa${nTe?` (${nTe} por techo)`:''} · toro ${tv.precioToro?fmtCLP(tv.precioToro):'—'} · gamela ${tv.precioGamela?fmtCLP(tv.precioGamela):'—'}${tv.desde?` · vigente desde ${fDesdeTxt(tv.desde)}`:''}${fut?` · <b>cambia el ${fDMY(fut.desde)}</b>`:''}${c.reemplazadoPor?`<br><span style="color:#B45309">🔁 Reemplazado por ${escH(c.reemplazadoPor)} desde el <b>${c.reemplazadoDesde?fDMY(c.reemplazadoDesde):'?'}</b></span>`:''}</div></div>
       <div style="display:flex;gap:4px;flex-shrink:0">
+        ${canConfigCostos()&&(c.reemplazadoPor||c.activo===false)?`<button class="btn btn-secondary btn-sm" title="Fecha del traspaso" onclick="contTrFechaAbrir('${c.id}')">📅</button>`:''}
         ${canConfigCostos()&&c.activo===false&&c.oculto!==true?`<button class="btn btn-danger btn-sm" title="Quitar de la lista (no borra su historial)" onclick="contQuitar('${c.id}',true)">🗑</button>`:''}
         ${canConfigCostos()&&c.oculto===true?`<button class="btn btn-secondary btn-sm" onclick="contQuitar('${c.id}',false)">↩ Mostrar</button>`:''}
         ${c.oculto===true?'':`<button class="btn btn-secondary btn-sm" onclick="contEditar('${c.id}')">✏️</button>`}
@@ -9801,6 +9802,125 @@ async function contTraspasoEjecutar(){
   loadPredioData(activePred);
   if(err.length) alert('El traspaso quedó incompleto:\n\n'+err.join('\n')+'\n\nLo demás sí se hizo. Puedes volver a abrir el traspaso para lo que falte.');
   else toast(`✅ ${dest.nombre} reemplaza a ${orig.nombre} desde el ${fDMY(fecha)}`);
+}
+
+
+// ══════════════════════════════════════════════
+// v79 · CAMBIAR LA FECHA DE UN TRASPASO
+// Pasa (o devuelve) al nuevo contratista lo registrado entre la fecha antigua
+// y la nueva: contratista y subjefe de cada entrada (el pago no cambia; se
+// recalcula aparte si hace falta), cierre de los ciclos del anterior, tramo de
+// tarifas copiado, programación de esas semanas y, opcional, los trabajadores
+// que seguían con el anterior.
+// ══════════════════════════════════════════════
+let trFec=null;
+function contTrFechaAbrir(id){
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const orig=contratistasCache.find(c=>c.id===id); if(!orig) return;
+  const dests=contratistasCache.filter(c=>c.id!==id && (c.predios||[]).some(p=>(orig.predios||[]).includes(p)));
+  if(!dests.length){ toast('No hay otro contratista en sus predios'); return; }
+  const destSel=dests.find(c=>c.nombre===orig.reemplazadoPor)||dests.find(c=>c.activo!==false)||dests[0];
+  trFec={orig};
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">📅 Fecha del traspaso de ${escH(orig.nombre)}</div>
+    <div class="modal-sub">${orig.reemplazadoDesde?`Hoy dice: reemplazado por <b>${escH(orig.reemplazadoPor||'?')}</b> desde el <b>${fDMY(orig.reemplazadoDesde)}</b>.`:'No tiene fecha de traspaso guardada.'}</div>
+    <div class="form-row"><label>Lo reemplaza</label><select id="tfDest">${dests.map(c=>`<option value="${c.id}"${c.id===destSel.id?' selected':''}>${escH(c.nombre)}</option>`).join('')}</select></div>
+    <div class="form-row"><label>Desde (fecha correcta)</label><input type="date" id="tfFecha" value="${orig.reemplazadoDesde||todayIso}" max="${todayIso}"></div>
+    <label style="display:flex;gap:6px;align-items:flex-start;text-transform:none;font-weight:400;font-size:12px;margin:4px 0 8px"><input type="checkbox" id="tfWorkers" checked style="margin-top:2px"> Pasar también a los trabajadores que siguen con ${escH(orig.nombre)}</label>
+    <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">Lo registrado entre la fecha antigua y la nueva queda a nombre del contratista que corresponde. El monto pagado de cada registro <b>no</b> cambia; si las tarifas son distintas, después usa recalcular en la ficha del contratista.</div>
+    <button class="btn btn-primary" onclick="contTrFechaEjecutar()">Cambiar fecha</button>
+    <button class="btn btn-secondary" style="margin-top:6px" onclick="closeModal()">Cancelar</button>`;
+  document.getElementById('overlay').classList.add('open');
+}
+async function contTrFechaEjecutar(){
+  if(!canConfigCostos()||!trFec) return;
+  const orig=trFec.orig, dest=contratistasCache.find(c=>c.id===document.getElementById('tfDest').value);
+  const nueva=document.getElementById('tfFecha').value;
+  const pasarW=document.getElementById('tfWorkers').checked;
+  if(!dest||!/^\d{4}-\d{2}-\d{2}$/.test(nueva)){ toast('⚠️ Revisa el contratista y la fecha'); return; }
+  const vieja=orig.reemplazadoPor===dest.nombre ? (orig.reemplazadoDesde||'') : '';
+  loading(true,'Revisando registros…');
+  const pids=[...new Set([...(orig.predios||[]), ...(dest.predios||[])])];
+  const aDest=[], aOrig=[], ciclos=[], workers=[], semanas=[];
+  try{
+    for(const pid of pids){
+      // Registros a mover: de la fecha nueva hacia adelante del anterior (hasta la
+      // vieja, si había), y del nuevo entre vieja y nueva si se corre hacia adelante.
+      const hasta = vieja && vieja>nueva ? vieja : null;
+      let q=colRegistros(pid).where('fecha','>=',nueva); if(hasta) q=q.where('fecha','<',hasta);
+      (await q.get()).docs.forEach(d=>{ const r=d.data(); if(r.contratistaId===orig.id) aDest.push({ref:d.ref, r}); });
+      if(vieja && vieja<nueva){
+        (await colRegistros(pid).where('fecha','>=',vieja).where('fecha','<',nueva).get()).docs.forEach(d=>{ const r=d.data(); if(r.contratistaId===dest.id) aOrig.push({ref:d.ref, r}); });
+      }
+      (await colCiclos(pid,orig.nombre).get()).docs.forEach(d=>{ const x=d.data(); if(x.traspasadoA===dest.nombre || (x.fin===null||x.fin===undefined)) ciclos.push({pid, ref:d.ref, x}); });
+      if(pasarW) (await colWorkers(pid).where('subjefe','==',orig.nombre).get()).docs.forEach(d=>workers.push({pid, ref:d.ref, id:d.id}));
+      if(!vieja || nueva<vieja){
+        const l0=cLunes(nueva), l1=vieja?cLunes(vieja):'9999';
+        (await colProg(pid,orig.nombre).get()).docs.forEach(d=>{ if(d.id>=l0 && d.id<l1) semanas.push({pid, id:d.id, data:d.data()}); });
+      }
+    }
+  }catch(e){ loading(false); toast('Error: '+e.message); return; }
+  loading(false);
+  const bloqueados=aDest.filter(o=>o.r.pago&&o.r.pago.valorManual).length;
+  if(!confirm(`${dest.nombre} reemplaza a ${orig.nombre} desde el ${fDMY(nueva)}${vieja?` (antes: ${fDMY(vieja)})`:''}.\n\n`+
+    `• ${aDest.length} registro(s) pasan a ${dest.nombre}\n`+(aOrig.length?`• ${aOrig.length} registro(s) vuelven a ${orig.nombre}\n`:'')+
+    `• ${ciclos.length} ciclo(s) de ${orig.nombre} cierran el ${fDMY(cAdd(nueva,-1))}\n`+
+    (semanas.length?`• ${semanas.length} semana(s) de programación se copian\n`:'')+
+    (workers.length?`• ${workers.length} trabajador(es) pasan a ${dest.nombre}\n`:'')+
+    `\nEl monto de cada registro no cambia. ¿Seguir?`)) return;
+  loading(true,'Cambiando fecha del traspaso…');
+  const err=[], yo=quienSoy(), ts=Date.now();
+  const mover=async(lista, a)=>{
+    for(let i=0;i<lista.length;i+=400){
+      const b=db.batch();
+      lista.slice(i,i+400).forEach(o=>b.update(o.ref,{contratistaId:a.id, contratista:a.nombre, workerSubjefe:a.nombre,
+        traspasoCorregido:{de:o.r.contratista||'', at:ts, por:yo.nombre}}));
+      await b.commit();
+    }
+  };
+  try{ await mover(aDest, dest); }catch(e){ err.push('Registros: '+e.message); }
+  try{ await mover(aOrig, orig); }catch(e){ err.push('Registros devueltos: '+e.message); }
+  for(const c of ciclos){
+    try{
+      const ayer=cAdd(nueva,-1), fin = ayer < (c.x.inicio||'') ? c.x.inicio : ayer;
+      await c.ref.update({fin, traspasadoA:dest.nombre, traspasadoAt:ts});
+      // El nuevo debe tener el ciclo con el mismo id (si el traspaso no lo copió)
+      const dref=colCiclos(c.pid,dest.nombre).doc(c.ref.id);
+      if(!(await dref.get()).exists) await dref.set({...c.x, fin:null, traspasadoDe:orig.nombre, traspasadoAt:ts, traspasadoPor:yo.nombre});
+    }catch(e){ err.push('Ciclo: '+e.message); }
+  }
+  for(const sm of semanas){
+    try{
+      const ref=colProg(sm.pid,dest.nombre).doc(sm.id), prev=await ref.get();
+      const pd=prev.exists?((prev.data()||{}).dias||{}):{}, dias={};
+      Object.keys(sm.data.dias||{}).forEach(iso=>{
+        if(iso<nueva) return;
+        const a=normProgDia(pd[iso]).labores, b=normProgDia(sm.data.dias[iso]).labores, ids=new Set(a.map(t=>t.id));
+        dias[iso]={labores:a.concat(b.filter(t=>!ids.has(t.id))).map(limpiarTareaProg)};
+      });
+      if(Object.keys(dias).length) await ref.set({semana:sm.id, ts, creadoPor:currentUser.uid, appV:PROG_APPV, dias, traspasadoDe:orig.nombre}, {merge:true});
+    }catch(e){ err.push('Programación '+fDMY(sm.id)+': '+e.message); }
+  }
+  for(const w of workers){
+    try{ await w.ref.update({subjefe:dest.nombre, subjefeAnterior:orig.nombre, traspasadoAt:ts}); }
+    catch(e){ err.push('Trabajador: '+e.message); }
+  }
+  // Tarifas copiadas en el traspaso: el tramo pasa a regir desde la fecha nueva
+  try{
+    const hist=(dest.historial||[]).map(x=>({...x}));
+    const t=vieja && hist.find(x=>x.desde===vieja && /copiadas de/.test(x.por||''));
+    if(t && !hist.some(x=>x.desde===nueva)){
+      t.desde=nueva; hist.sort((a,b)=>a.desde.localeCompare(b.desde));
+      const vig=tarifaVigente({historial:hist}, todayIso);
+      await db.collection('contratistas').doc(dest.id).update({historial:hist, tarifas:vig.tarifas, unidades:vig.unidades, precioToro:vig.precioToro, precioGamela:vig.precioGamela, updatedAt:ts, updatedBy:currentUser.uid});
+    }
+    await db.collection('contratistas').doc(orig.id).update({reemplazadoPor:dest.nombre, reemplazadoDesde:nueva, updatedAt:ts, updatedBy:currentUser.uid});
+  }catch(e){ err.push('Contratistas: '+e.message); }
+  await loadContratistas();
+  loading(false); closeModal();
+  renderContratistasConfig(); loadPredioData(activePred);
+  if(err.length) alert('Quedó incompleto:\n\n'+err.join('\n')+'\n\nPuedes repetirlo: lo que ya se hizo no se duplica.');
+  else toast(`✅ ${dest.nombre} reemplaza a ${orig.nombre} desde el ${fDMY(nueva)} · ${aDest.length} registro(s) traspasados`+(bloqueados?` (${bloqueados} con valor a mano)`:''));
 }
 
 // v65 · Recalcula el pago de las entradas del contratista en [desde, hasta).
@@ -13584,10 +13704,12 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v77';
+const MANUAL_VERSION='v79';
 const MANUAL_FECHA='2026-10-21';
 
 const MANUAL_CAMBIOS=[
+  {v:'v79', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'<b>📅 Cambiar la fecha de un traspaso de contratista</b> (gerencia, Config › Contratistas). Lo registrado entre la fecha antigua y la nueva pasa al contratista que corresponde (el monto de cada registro no cambia), los ciclos del anterior cierran el día previo, la programación y las tarifas copiadas se ajustan y, si se marca, pasan los trabajadores que quedaban con el anterior.'},
+  {v:'v78', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'En Config › Contratistas, el contratista que se traspasó muestra <b>🔁 Reemplazado por … desde el …</b> con la fecha del traspaso.'},
   {v:'v77', f:'21-10-2026', ver:()=>isCampo(), txt:'<b>Registros atrasados de contratista.</b> Quien tiene el permiso 💲 puede retroceder hasta <b>6 semanas</b> en el registro (los demás, 3) para registrar o corregir días pasados con el valor de cada labor. Si la gente pasó a otro contratista con un traspaso, los días anteriores al traspaso quedan a nombre y con las tarifas del contratista anterior. Al corregir un registro se conserva el contratista con que se guardó.'},
   {v:'v76', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'<b>Superficie de módulos editable.</b> En Config › Sectores de riego, debajo de los sectores, está la tabla <b>🧱 Superficie de módulos</b> del predio elegido. Se puede escribir módulo por módulo o pegar la tabla desde Excel ("Mod 1 0,73 ha"). Es la superficie que usan las aplicaciones foliares para los L/ha y kg/ha. Lo ya registrado no cambia.'},
   {v:'v75', f:'21-10-2026', ver:()=>isCampo()||canConfigCostos(), txt:'<b>Contratistas: valores en el registro diario y labores editables.</b> Al registrar a un trabajador de contratista, cada labor muestra su <b>💲 valor</b> (por mesa o techo) y el <b>$ por caja</b>. Quien tiene el permiso <b>💲</b> (lo da gerencia en Config › Usuarios) puede cambiarlo ahí mismo y dejarlo como tarifa del contratista desde ese día; los demás lo ven sin cambiarlo. Con el mismo permiso, en Config › Contratistas se ajustan los valores de los contratistas de su campo y se <b>agregan, renombran o desactivan labores de contratista</b>. Gerencia puede <b>🗑 quitar de la lista</b> a un contratista inactivo sin perder su historial.'},
