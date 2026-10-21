@@ -7428,6 +7428,7 @@ async function loadPredioData(pid){
       .limit(500)
       .onSnapshot(snap=>{
         rCache=snap.docs.map(d=>({id:d.id,...d.data()}));
+        rCacheMezclarExtra();   // v77 · semanas antiguas cargadas aparte
         buildSem();renderHoy();
         if(document.getElementById('screen-avance').classList.contains('active'))renderAvance();
         if(document.getElementById('screen-prog').classList.contains('active'))renderProg();
@@ -7650,8 +7651,24 @@ function contratoActual(){
   const sub=document.getElementById('selSub').value||(verTodosSubjefes()?'':userSubjefe());
   const wId=document.getElementById('selW').value;
   if(!wId||esGenerico(wId)) return null;
+  // v77 · Al corregir, el contratista con que se registró
+  if(regEdit && regEdit.data && regEdit.data.contratistaId && regEdit.data.workerId===wId){
+    const c=contratistasCache.find(x=>x.id===regEdit.data.contratistaId); if(c) return c;
+  }
   const w=pWs().find(x=>x.id===wId);
-  return contratistaDe((w&&w.subjefe)||sub);
+  const fecha=(regEdit&&regEdit.data&&regEdit.data.fecha)||selDate;
+  return contratistaDe(subjefeEnFecha(w, fecha)||sub);
+}
+// v77 · Subjefe del trabajador en una fecha: si pasó a otro contratista con el
+// traspaso (v74), los días anteriores al traspaso siguen siendo del anterior.
+function subjefeEnFecha(w, fecha){
+  if(!w) return '';
+  const ant=w.subjefeAnterior;
+  if(ant && fecha){
+    const c=contratistasCache.find(x=>x.nombre===ant && x.reemplazadoPor===w.subjefe && x.reemplazadoDesde);
+    if(c && fecha < c.reemplazadoDesde) return ant;
+  }
+  return w.subjefe||'';
 }
 // v75 · Valores escritos en el registro: cada labor con su $ y unidad, y $ por
 // caja. Si la fila no se tocó, se propone la tarifa vigente del día. Quien no
@@ -7941,16 +7958,41 @@ function buildSem(){
   g.appendChild(dg);
 }
 
+// v77 · El listener trae los últimos 500 registros. En un predio con mucha
+// gente eso no alcanza a cubrir 6 semanas: al ir a una semana antigua se
+// cargan sus registros aparte y se mezclan.
+let rExtra={pid:'', semanas:{}, docs:{}};
+function rCacheMezclarExtra(){
+  if(rExtra.pid!==activePred) return;
+  const ids=new Set(rCache.map(r=>r.id));
+  Object.values(rExtra.docs).forEach(r=>{ if(!ids.has(r.id)) rCache.push(r); });
+}
+async function cargarSemanaRegistros(){
+  const wd=weekDates(), d0=wd[0], d1=wd[wd.length-1], pid=activePred;
+  if(rExtra.pid!==pid) rExtra={pid, semanas:{}, docs:{}};
+  if(rExtra.semanas[d0]) return;
+  const enCache=rCache.filter(r=>r.fecha>=d0&&r.fecha<=d1).length;
+  if(rCache.length<500 && enCache) { rExtra.semanas[d0]=true; return; }
+  try{
+    const snap=await colRegistros(pid).where('fecha','>=',d0).where('fecha','<=',d1).get();
+    snap.docs.forEach(d=>{ rExtra.docs[d.id]={id:d.id,...d.data()}; });
+    rExtra.semanas[d0]=true;
+    rCacheMezclarExtra();
+    if(activePred===pid){ buildSem(); renderHoy(); }
+  }catch(e){ console.warn('Semana antigua:', e && e.message); }
+}
 function navSem(delta){
   const nuevo=semOffset+delta;
   // Máximo 3 semanas atrás, no permitir ir al futuro
   if(nuevo>0)return;
-  if(nuevo<-3){toast('Solo puedes ver hasta 3 semanas atrás');return}
+  const maxAtras=(typeof puedeTarifas==='function'&&puedeTarifas())?6:3;   // v77 · 💲: hasta 6 semanas (pasar valores de contratista atrasados)
+  if(nuevo<-maxAtras){toast(`Solo puedes ver hasta ${maxAtras} semanas atrás`);return}
   semOffset=nuevo;
   const wd=weekDates();
   // Seleccionar por defecto el lunes de la semana al navegar
   selDate=wd[0];
   buildSem();renderHoy();renderCtx();
+  if(semOffset<0) cargarSemanaRegistros();   // v77
 }
 
 // ══════════════════════════════════════════════
@@ -8279,7 +8321,7 @@ async function guardar(){
       if(rwSel) reemplazoNombre = rwSel.nombre;
     }
     const data = {fecha:selDate,workerId:wId,
-      workerNombre:wSel.nombre||'',workerSubjefe:wSel.subjefe||'',
+      workerNombre:wSel.nombre||'',workerSubjefe:(regEdit&&regEdit.data&&regEdit.data.workerSubjefe)||(gen?wSel.subjefe:subjefeEnFecha(wSel, selDate))||'',   // v77
       labores,obs,cultivo:cultivoReg,
       ausente:ausente||false,licencia:document.getElementById('chkLicencia').checked||false,vacaciones:vacaciones||false,reemplazoPredioId,reemplazoWorkerId,reemplazoNombre,
       ts:Date.now(),creadoPor:currentUser.uid};
@@ -8331,6 +8373,7 @@ async function guardar(){
       catch(e){ toast('⚠️ El registro quedó guardado, pero la tarifa no: '+e.message); }
     }
     fotosPend=[]; renderFotosPend(); fotoSugerir();
+    if(semOffset<0 && rExtra.pid===activePred){ rExtra.semanas={}; rExtra.docs={}; cargarSemanaRegistros(); }   // v77 · refresca la semana antigua
     document.getElementById('iO').value='';
     document.getElementById('chkAusente').checked=false;
     document.getElementById('chkLicencia').checked=false;
@@ -8477,6 +8520,7 @@ async function delEntry(id){
     }catch(e){ /* sin fotos o sin acceso: se sigue con la entrada */ }
     await ref.delete();
     if(regEdit && regEdit.id===id) regSalirEdicion();
+    delete rExtra.docs[id]; rCache=rCache.filter(r=>r.id!==id); buildSem(); renderHoy();   // v77
     toast('🗑 Eliminada');
   }
   catch(e){toast('Error: '+e.message)}
@@ -13540,10 +13584,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v76';
+const MANUAL_VERSION='v77';
 const MANUAL_FECHA='2026-10-21';
 
 const MANUAL_CAMBIOS=[
+  {v:'v77', f:'21-10-2026', ver:()=>isCampo(), txt:'<b>Registros atrasados de contratista.</b> Quien tiene el permiso 💲 puede retroceder hasta <b>6 semanas</b> en el registro (los demás, 3) para registrar o corregir días pasados con el valor de cada labor. Si la gente pasó a otro contratista con un traspaso, los días anteriores al traspaso quedan a nombre y con las tarifas del contratista anterior. Al corregir un registro se conserva el contratista con que se guardó.'},
   {v:'v76', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'<b>Superficie de módulos editable.</b> En Config › Sectores de riego, debajo de los sectores, está la tabla <b>🧱 Superficie de módulos</b> del predio elegido. Se puede escribir módulo por módulo o pegar la tabla desde Excel ("Mod 1 0,73 ha"). Es la superficie que usan las aplicaciones foliares para los L/ha y kg/ha. Lo ya registrado no cambia.'},
   {v:'v75', f:'21-10-2026', ver:()=>isCampo()||canConfigCostos(), txt:'<b>Contratistas: valores en el registro diario y labores editables.</b> Al registrar a un trabajador de contratista, cada labor muestra su <b>💲 valor</b> (por mesa o techo) y el <b>$ por caja</b>. Quien tiene el permiso <b>💲</b> (lo da gerencia en Config › Usuarios) puede cambiarlo ahí mismo y dejarlo como tarifa del contratista desde ese día; los demás lo ven sin cambiarlo. Con el mismo permiso, en Config › Contratistas se ajustan los valores de los contratistas de su campo y se <b>agregan, renombran o desactivan labores de contratista</b>. Gerencia puede <b>🗑 quitar de la lista</b> a un contratista inactivo sin perder su historial.'},
   {v:'v74', f:'21-10-2026', txt:'<b>Traspaso de contratista.</b> En Config › Contratistas, el botón <b>🔁 Traspasar a otro contratista</b> pasa al que lo reemplaza los <b>ciclos abiertos</b> (el mismo ciclo, con sus marcas de Control), la <b>programación</b> desde la fecha del traspaso y los <b>trabajadores</b> que se marquen, y deja inactivo al anterior. Lo ya registrado y pagado sigue a nombre del anterior, que se puede seguir viendo en Informes. <b>Bodega:</b> gerencia puede <b>🔗 Fusionar duplicados</b> (un mismo producto cargado con nombres distintos): se suma el stock de cada recinto en el que queda y los otros se desactivan. Los <b>saldos</b> de la planilla, la conciliación y los selectores se muestran con <b>un decimal</b>.'},
