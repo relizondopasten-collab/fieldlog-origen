@@ -559,6 +559,11 @@ body.vista-escritorio .modal-content{max-width:700px}
           <div><label>Cajas toro <span id="precioToroLbl" style="font-weight:400;color:var(--muted)"></span></label><input type="number" id="cajasToro" min="0" step="1" placeholder="0" oninput="pagoPreview()"></div>
           <div><label>Cajas gamela <span id="precioGamelaLbl" style="font-weight:400;color:var(--muted)"></span></label><input type="number" id="cajasGamela" min="0" step="1" placeholder="0" oninput="pagoPreview()"></div>
         </div>
+        <div class="form-grid" id="precioCajaRow">
+          <div><label>💲 $ por caja toro</label><input type="number" id="precioToroIn" min="0" step="1" placeholder="$" oninput="this.dataset.manual='1';pagoPreview()"></div>
+          <div><label>💲 $ por caja gamela</label><input type="number" id="precioGamelaIn" min="0" step="1" placeholder="$" oninput="this.dataset.manual='1';pagoPreview()"></div>
+        </div>
+        <label id="contGuardarTarRow" style="display:none;gap:6px;align-items:flex-start;text-transform:none;font-weight:400;font-size:11.5px;margin:2px 0 4px;cursor:pointer"><input type="checkbox" id="contGuardarTar" checked style="width:16px;height:16px;margin-top:1px"> <span id="contGuardarTarTxt"></span></label>
         <div id="pagoDetalle" style="font-size:11.5px;margin-top:6px;line-height:1.5"></div>
       </div>
       <div class="form-row" style="margin-top:8px"><label>Observación</label><input type="text" id="iO" placeholder="Notas adicionales…" oninput="fotoSugerir()"></div>
@@ -909,6 +914,7 @@ body.vista-escritorio .modal-content{max-width:700px}
         <div id="contList"></div>
         <div id="contForm"></div>
         <button class="btn btn-secondary" id="contNuevoBtn" style="margin-top:6px" onclick="contEditar('')">＋ Nuevo contratista</button>
+        <div id="labContBox"></div>
       </div>
     </div>
     <!-- v68 · Jornada y mesas por módulo (para Labor × módulo) -->
@@ -1168,7 +1174,9 @@ const LABORES=[
 function laborSelectHTML(modo, selId, vacio){
   const sel=selId==null?'':String(selId);
   const opt=l=>`<option value="${l.id}"${sel===String(l.id)?' selected':''}>${l.id}. ${escH(l.d)}</option>`;
-  const pl=LABORES.filter(l=>!l.hidden&&!l.cont), co=LABORES.filter(l=>l.cont);
+  const pidSel=(typeof activePred!=='undefined')?activePred:'';
+  const pl=LABORES.filter(l=>!l.hidden&&!l.cont),
+        co=LABORES.filter(l=>l.cont && (modo==='todas' || String(l.id)===sel || (!l.inactiva && laborEnPredio(l, pidSel))));   // v75
   let h=vacio===false?'':`<option value="">${vacio||'— Seleccionar —'}</option>`;
   if(modo==='cont') h+=`<optgroup label="🧑‍🌾 Labores de contratista">${co.map(opt).join('')}</optgroup><optgroup label="Labores de planta">${pl.map(opt).join('')}</optgroup>`;
   else if(modo==='todas') h+=`<optgroup label="Labores de planta">${pl.map(opt).join('')}</optgroup><optgroup label="🧑‍🌾 Labores de contratista">${co.map(opt).join('')}</optgroup>`;
@@ -1516,7 +1524,46 @@ async function loadContratistas(){
     contratistasCache=snap.docs.map(d=>({id:d.id,...d.data()}));
   }catch(e){ console.warn('Sin contratistas:', e && e.code); contratistasCache=[]; }
   aplicarContratistas();
+  try{   // v75 · labores de contratista agregadas o modificadas desde la app
+    const ls=await db.collection('laboresCont').get();
+    laboresContDocs=ls.docs.map(d=>({...d.data(), id:Number(d.data().id||d.id)}));
+  }catch(e){ console.warn('Sin laboresCont:', e && e.code); laboresContDocs=[]; }
+  aplicarLaboresCont();
 }
+// ══════════════════════════════════════════════
+// v75 · 💲 VALORES Y LABORES DE CONTRATISTA FUERA DE GERENCIA
+// Permiso en el usuario (puedeTarifas), como 🛒 o 🍃: quien lo tiene fija el
+// valor de cada labor de los contratistas de SUS predios, desde el registro
+// diario o desde Config, y agrega o modifica las labores de contratista.
+// Las reglas de Firestore v75 lo limitan a las tarifas (no nombre, predios ni
+// activo) y a la colección /laboresCont.
+// ══════════════════════════════════════════════
+function puedeTarifas(){ return isAdmin() || !!(currentProfile && currentProfile.puedeTarifas); }
+function puedeTarifasDe(cont){
+  if(!cont) return false;
+  if(isSuperAdmin()) return true;
+  return puedeTarifas() && (cont.predios||[]).some(p=>userPredios().includes(p));
+}
+// /laboresCont/{id} = {id, d, ref, uRef, predios[], activo, updatedAt, updatedBy, porNombre}
+// Sobre las labores fijas del código (101–139) solo cambia lo escrito; las
+// nuevas (140 en adelante) se agregan a LABORES con cont:true.
+let laboresContDocs=[];
+function aplicarLaboresCont(){
+  laboresContDocs.forEach(x=>{
+    const id=Number(x.id); if(!(id>=101 && id<=999)) return;
+    let l=LABORES.find(y=>y.id===id);
+    if(!l){ l={id, cont:true}; LABORES.push(l); }
+    if(!l.cont) return;   // nunca se tocan las de planta
+    if(x.d) l.d=String(x.d);
+    if('ref' in x) l.ref = Number(x.ref)>0 ? Number(x.ref) : undefined;
+    if('uRef' in x) l.uRef = x.uRef==='techo' ? 'techo' : undefined;
+    if(Array.isArray(x.predios)) l.predios = x.predios.length ? x.predios.slice() : undefined;
+    l.inactiva = x.activo===false;
+    l.editadaPor = x.porNombre||''; l.editadaAt = x.updatedAt||0;
+  });
+}
+function laborEnPredio(l, pid){ return !l.predios || !l.predios.length || !pid || l.predios.includes(pid); }
+function laborEnAlgunPredio(l, pids){ return !l.predios || !l.predios.length || (pids||[]).some(p=>l.predios.includes(p)); }
 // v65 · Cada labor se paga por MESA o por TECHO (1 techo = 3 mesas). El
 // trabajo se sigue anotando en mesas; si la labor se paga por techo, el monto
 // es mesas ÷ 3 × $/techo.
@@ -1543,8 +1590,12 @@ function tarifaVigente(cont, fecha){
     precioToro:Number(v.precioToro)||0, precioGamela:Number(v.precioGamela)||0, desde:v.desde};
 }
 // Monto a pagar de una entrada de contratista, con la tarifa vigente en `fecha`.
-function calcPagoContratista(cont, labores, toro, gamela, fecha){
-  const tv=tarifaVigente(cont, fecha);
+function calcPagoContratista(cont, labores, toro, gamela, fecha, over){
+  const tv0=tarifaVigente(cont, fecha);
+  // v75 · `over`: valores escritos en el registro diario (pisan la tarifa vigente)
+  const tv = over ? {...tv0, tarifas:Object.assign({}, tv0.tarifas, over.tarifas||{}),
+                     unidades:Object.assign({}, tv0.unidades, over.unidades||{}),
+                     precioToro:Number(over.precioToro)||0, precioGamela:Number(over.precioGamela)||0} : tv0;
   const t=tv.tarifas, u=tv.unidades;
   const labs=labores.map(l=>{
     const mesas=Number(l.mesas)||0;
@@ -7246,7 +7297,8 @@ function applyRoleUI(){
   if(cs)cs.style.display=canConfigCostos()?'block':'none';
   if(canConfigCostos())renderCostosConfig();
   const kc=document.getElementById('contratistasConfigSection');   // v59
-  if(kc){ kc.style.display=canConfigCostos()?'block':'none'; if(canConfigCostos()) renderContratistasConfig(); }
+  if(kc){ const ok=canConfigCostos()||puedeTarifas(); kc.style.display=ok?'block':'none'; if(ok){ renderContratistasConfig(); renderLaboresContCfg(); } }   // v75
+  const nb=document.getElementById('contNuevoBtn'); if(nb) nb.style.display=canConfigCostos()?'':'none';
   const sc=document.getElementById('sectoresConfigSection');   // v47
   if(sc){ sc.style.display=canConfigCostos()?'block':'none'; if(canConfigCostos()) renderSectoresConfig(); }
   const jc=document.getElementById('jornadaConfigSection');   // v68
@@ -7518,24 +7570,65 @@ function contratoActual(){
   const w=pWs().find(x=>x.id===wId);
   return contratistaDe((w&&w.subjefe)||sub);
 }
+// v75 · Valores escritos en el registro: cada labor con su $ y unidad, y $ por
+// caja. Si la fila no se tocó, se propone la tarifa vigente del día. Quien no
+// tiene 💲 para este contratista los ve, pero no los cambia.
+function contResetManual(){
+  ['precioToroIn','precioGamelaIn'].forEach(k=>{ const el=document.getElementById(k); if(el){ el.dataset.manual=''; el.value=''; } });
+  document.querySelectorAll('#laborRows .labor-row').forEach(r=>r.dataset.manual='');
+  const g=document.getElementById('contGuardarTar'); if(g) g.checked=true;
+}
+function contratoOver(cont, fecha){
+  const tv=tarifaVigente(cont, fecha);
+  const editable=puedeTarifasDe(cont);
+  const over={tarifas:{}, unidades:{}, precioToro:tv.precioToro, precioGamela:tv.precioGamela, cambios:[]};
+  document.querySelectorAll('#laborRows .labor-row').forEach(row=>{
+    const id=parseInt(row.querySelector('.lr-labor').value)||0;
+    const vi=row.querySelector('.lr-valor'), ui=row.querySelector('.lr-uni');
+    if(!id || !vi || esPorCaja(id)) return;
+    const tVig=Number(tv.tarifas[id])||0;
+    const lab=LABORES.find(l=>l.id===id)||{};
+    const uVig=tv.unidades[id]==='techo' ? 'techo' : (tVig ? 'mesa' : (lab.uRef==='techo'?'techo':'mesa'));
+    if(row.dataset.manual!=='1'){ vi.value=tVig?String(tVig):''; ui.value=uVig; }
+    vi.disabled=ui.disabled=!editable;
+    const v=Math.max(0,Math.round(Number(vi.value)||0)), u=ui.value==='techo'?'techo':'mesa';
+    over.tarifas[id]=v; over.unidades[id]=u;
+    if(v!==tVig || (v>0 && u!==(tv.unidades[id]==='techo'?'techo':'mesa'))) over.cambios.push(id);
+  });
+  [['Toro','toro'],['Gamela','gamela']].forEach(([K,k])=>{
+    const inp=document.getElementById('precio'+K+'In'); if(!inp) return;
+    const vig=Number(tv['precio'+K])||0;
+    if(inp.dataset.manual!=='1') inp.value=vig?String(vig):'';
+    inp.disabled=!editable;
+    const v=Math.max(0,Math.round(Number(inp.value)||0));
+    over['precio'+K]=v; if(v!==vig) over.cambios.push(k);
+  });
+  over.cambios=[...new Set(over.cambios)];
+  return over;
+}
 function pagoPreview(){
   const sec=document.getElementById('contratoSection'); if(!sec) return;
   const cont=contratoActual();
+  document.querySelectorAll('#laborRows .lr-valor-wrap').forEach(w=>{
+    const id=parseInt(w.closest('.labor-row').querySelector('.lr-labor').value)||0;
+    w.style.display=(cont && id && !esPorCaja(id)) ? 'block' : 'none';
+  });
   if(!cont){ sec.style.display='none'; return; }
   sec.style.display='block';
   document.getElementById('contratoNombre').textContent=cont.nombre;
   const fechaPago=(regEdit&&regEdit.data&&regEdit.data.fecha)||selDate;   // v65 · tarifa del día registrado
-  const tv=tarifaVigente(cont, fechaPago);
-  document.getElementById('precioToroLbl').textContent=tv.precioToro?`(${fmtCLP(tv.precioToro)} c/u)`:'(sin precio)';
-  document.getElementById('precioGamelaLbl').textContent=tv.precioGamela?`(${fmtCLP(tv.precioGamela)} c/u)`:'(sin precio)';
+  const over=contratoOver(cont, fechaPago);
+  document.getElementById('precioToroLbl').textContent='';
+  document.getElementById('precioGamelaLbl').textContent='';
   const labs=[...document.querySelectorAll('#laborRows .labor-row')].map(row=>({
     laborId:parseInt(row.querySelector('.lr-labor').value)||0,
     mesas:parseInt(row.querySelector('.lr-mesas').value)||0
   })).filter(l=>l.laborId);
-  const pago=calcPagoContratista(cont, labs, document.getElementById('cajasToro').value, document.getElementById('cajasGamela').value, fechaPago);
+  const pago=calcPagoContratista(cont, labs, document.getElementById('cajasToro').value, document.getElementById('cajasGamela').value, fechaPago, over);
   const lineas=pago.labores.map(x=>{
     const l=LABORES.find(y=>y.id===x.laborId);
-    const precio=x.tarifa?`${fmtCLP(x.tarifa)}/${x.unidad}`:'<b style="color:var(--red)">sin tarifa</b>';
+    if(esPorCaja(x.laborId)) return `<div>${x.laborId}. ${escH(l?l.d:'')}: se paga por caja</div>`;
+    const precio=x.tarifa?`${fmtCLP(x.tarifa)}/${x.unidad}`:'<b style="color:var(--red)">sin valor</b>';
     const cant=x.unidad==='techo'
       ? `${x.mesas} mesas = ${x.cantidad.toLocaleString('es-CL')} ${unidadTxt('techo',x.cantidad)}${x.mesas%TECHO_MESAS?' <span style="color:#B45309">(no es múltiplo de 3)</span>':''}`
       : `${x.mesas} ${unidadTxt('mesa',x.mesas)}`;
@@ -7544,12 +7637,53 @@ function pagoPreview(){
   if(pago.toro.n) lineas.push(`<div>Toros: ${pago.toro.n} × ${fmtCLP(pago.toro.precio)} = <b>${fmtCLP(pago.toro.monto)}</b></div>`);
   if(pago.gamela.n) lineas.push(`<div>Gamelas: ${pago.gamela.n} × ${fmtCLP(pago.gamela.precio)} = <b>${fmtCLP(pago.gamela.monto)}</b></div>`);
   lineas.push(`<div style="border-top:1px solid #CFE3C8;margin-top:3px;padding-top:3px">A pagar: <b style="font-size:13px">${fmtCLP(pago.total)}</b></div>`);
+  if(!puedeTarifasDe(cont)) lineas.push(`<div style="font-size:10.5px;color:var(--muted)">Los valores los fija quien tiene el permiso 💲 o gerencia.</div>`);
   document.getElementById('pagoDetalle').innerHTML=lineas.join('');
+  const row=document.getElementById('contGuardarTarRow');
+  const mostrar=puedeTarifasDe(cont) && over.cambios.length>0;
+  row.style.display=mostrar?'flex':'none';
+  if(mostrar) document.getElementById('contGuardarTarTxt').textContent=`Guardar ${over.cambios.length===1?'este valor':'estos valores'} como tarifa de ${cont.nombre} desde el ${fDMY(fechaPago)} (se proponen solos en los próximos registros)`;
+}
+// v75 · Guarda en el contratista los valores cambiados en el registro, como
+// tarifa desde `fecha`. Si hay tarifas posteriores, el cambio también se les
+// aplica (el valor nuevo rige de ahí en adelante). Lo ya registrado no cambia.
+async function contGuardarTarifaDesde(cont, fecha, over){
+  const ref=db.collection('contratistas').doc(cont.id);
+  const snap=await ref.get();
+  const c={id:cont.id, ...(snap.data()||{})};
+  let hist=(c.historial||[]).filter(x=>x&&x.desde).map(x=>({...x, tarifas:{...(x.tarifas||{})}, unidades:{...(x.unidades||{})}}));
+  if(!hist.length && (Object.keys(c.tarifas||{}).length || c.precioToro || c.precioGamela))
+    hist.push({desde:TARIFA_DESDE_INICIO, tarifas:{...(c.tarifas||{})}, unidades:{...(c.unidades||{})},
+      precioToro:Number(c.precioToro)||0, precioGamela:Number(c.precioGamela)||0, ts:Date.now(), uid:'', por:'(tarifa inicial)'});
+  const yo=quienSoy();
+  let tr=hist.find(x=>x.desde===fecha);
+  if(!tr){
+    const b=tarifaVigente({...c, historial:hist}, fecha);
+    tr={desde:fecha, tarifas:{...(b.tarifas||{})}, unidades:{...(b.unidades||{})}, precioToro:b.precioToro||0, precioGamela:b.precioGamela||0};
+    hist.push(tr);
+  }
+  const aplicar=t=>over.cambios.forEach(k=>{
+    if(k==='toro') t.precioToro=over.precioToro;
+    else if(k==='gamela') t.precioGamela=over.precioGamela;
+    else {
+      const v=Number(over.tarifas[k])||0;
+      if(v>0) t.tarifas[k]=v; else delete t.tarifas[k];
+      if(over.unidades[k]==='techo') t.unidades[k]='techo'; else delete t.unidades[k];
+    }
+  });
+  hist.filter(x=>x.desde>=fecha).forEach(x=>{ aplicar(x); x.ts=Date.now(); x.uid=yo.uid; x.por=yo.nombre+' (registro diario)'; });
+  hist.sort((a,b)=>a.desde.localeCompare(b.desde));
+  const vig=tarifaVigente({historial:hist}, todayIso);
+  const upd={historial:hist, tarifas:vig.tarifas, unidades:vig.unidades, precioToro:vig.precioToro, precioGamela:vig.precioGamela,
+    updatedAt:Date.now(), updatedBy:currentUser.uid};
+  await ref.update(upd);
+  const loc=contratistasCache.find(x=>x.id===cont.id); if(loc) Object.assign(loc, upd);
 }
 document.addEventListener('input', ev=>{ if(ev.target && ev.target.closest && ev.target.closest('#laborRows')) pagoPreview(); });
 document.addEventListener('change', ev=>{ if(ev.target && ev.target.closest && ev.target.closest('#laborRows')) pagoPreview(); });
 
 function checkAusente(){
+  contResetManual();   // v75 · otro trabajador: se vuelve a proponer la tarifa vigente
   const wId=document.getElementById('selW').value;
   // v58 · Un puesto genérico no falta ni toma vacaciones
   document.getElementById('ausenteSection').style.display=(wId&&!esGenerico(wId))?'block':'none';
@@ -7601,6 +7735,12 @@ function addLaborRow(){
       <div><label>Horas</label><input type="number" class="lr-horas" placeholder="7.5" min="0" max="14" step="0.5" oninput="checkLaborRow(this)"></div>
       <div><label>N° mesas</label><input type="number" class="lr-mesas" placeholder="32" min="0" oninput="checkLaborRow(this)"></div>
     </div>
+    <div class="lr-valor-wrap" style="display:none;margin-top:6px">
+      <div style="display:flex;gap:6px;align-items:flex-end">
+        <div style="flex:1"><label style="font-size:10px">💲 Valor contratista ($)</label><input type="number" class="lr-valor" min="0" step="1" placeholder="$" oninput="this.closest('.labor-row').dataset.manual='1';pagoPreview()"></div>
+        <div style="flex:0 0 120px"><label style="font-size:10px">Por</label><select class="lr-uni" onchange="this.closest('.labor-row').dataset.manual='1';pagoPreview()"><option value="mesa">mesa</option><option value="techo">techo (3 mesas)</option></select></div>
+      </div>
+    </div>
     <div class="lr-warn" style="display:none;font-size:11px;color:#B45309;background:#FEF3C7;border-radius:6px;padding:4px 8px;margin-top:4px"></div>`;
   cont.appendChild(row);updateLaborUI();
 }
@@ -7608,9 +7748,10 @@ function addLaborRow(){
 // Cuando tipean un código, auto-seleccionar en el dropdown
 function onCodeTyped(inp){
   const row=inp.closest('.labor-row');if(!row)return;
+  row.dataset.manual='';   // v75
   const code=parseInt(inp.value)||0;
   const sel=row.querySelector('.lr-labor');
-  let labor=LABORES.find(l=>l.id===code&&!l.hidden);
+  let labor=LABORES.find(l=>l.id===code&&!l.hidden&&!l.inactiva&&(!l.cont||laborEnPredio(l,activePred)));
   // v69 · Labor de contratista tipeada para personal de planta: no vale.
   if(labor && labor.cont && modoLaborReg()!=='cont'){
     sel.value=''; inp.style.borderColor='var(--red)'; inp.style.background='#FEF2F2';
@@ -7645,6 +7786,7 @@ function onCodeTyped(inp){
 // Cuando seleccionan del dropdown, actualizar el código
 function onLaborPicked(sel){
   const row=sel.closest('.labor-row');if(!row)return;
+  row.dataset.manual='';   // v75
   const code=row.querySelector('.lr-code');
   code.value=sel.value||'';
   if(sel.value){
@@ -8010,7 +8152,7 @@ async function guardar(){
   }
   // v59 · Contratista: pago por mesa y por caja, calculado y congelado en la entrada
   const contReg = (!gen && !skipLabores) ? contratoActual() : null;
-  let pagoReg=null, cajasReg=null;
+  let pagoReg=null, cajasReg=null, overReg=null;
   if(contReg){
     const nT=parseInt(document.getElementById('cajasToro').value)||0;
     const nG=parseInt(document.getElementById('cajasGamela').value)||0;
@@ -8021,13 +8163,17 @@ async function guardar(){
     if(nG && !labores.some(l=>l.laborId===LABOR_COSECHA_GAMELA||l.laborId===LABOR_COSECHA)){
       toast('⚠️ Hay cajas gamela: agrega la labor 139 (Cosecha gamela)');return;
     }
-    pagoReg=calcPagoContratista(contReg, labores, nT, nG, (regEdit&&regEdit.data&&regEdit.data.fecha)||selDate);   // v65 · tarifa del día
+    overReg=contratoOver(contReg, (regEdit&&regEdit.data&&regEdit.data.fecha)||selDate);   // v75 · valores escritos en el registro
+    pagoReg=calcPagoContratista(contReg, labores, nT, nG, (regEdit&&regEdit.data&&regEdit.data.fecha)||selDate, overReg);   // v65 · tarifa del día
+    // v75 · Valor puntual (distinto de la tarifa y no guardado como tarifa): el
+    // recálculo de Config no lo pisa.
+    if(overReg.cambios.length && !(puedeTarifasDe(contReg) && (document.getElementById('contGuardarTar')||{}).checked)) pagoReg.valorManual=true;
     const sinTarifa=pagoReg.labores.filter(x=>!x.tarifa && x.mesas>0 && !esPorCaja(x.laborId)).map(x=>x.laborId);   // v69 · cosecha 132/139 se paga por caja
     const faltaPrecio=(nT&&!pagoReg.toro.precio)||(nG&&!pagoReg.gamela.precio);
     if(sinTarifa.length||faltaPrecio){
       if(!confirm(`${contReg.nombre} no tiene precio para: `+
         [...sinTarifa.map(id=>'labor '+id), ...(nT&&!pagoReg.toro.precio?['caja toro']:[]), ...(nG&&!pagoReg.gamela.precio?['caja gamela']:[])].join(', ')+
-        `.\n\nEso queda en $0. Gerencia lo completa en Config › Contratistas.\n¿Guardar igual?`)) return;
+        `.\n\nEso queda en $0. ${puedeTarifasDe(contReg)?'Puedes escribir el valor junto a la labor (💲), o completarlo después':'Lo completa quien tiene el permiso 💲 o gerencia'} en Config › Contratistas.\n¿Guardar igual?`)) return;
     }
     cajasReg={toro:nT, gamela:nG};
   }
@@ -8096,6 +8242,11 @@ async function guardar(){
         creadoPorNombre:(currentProfile&&currentProfile.nombre)||currentUser.email
       }), `Foto ${i+1} de ${fotosPend.length}`);
     }
+    // v75 · Guardar los valores cambiados como tarifa del contratista
+    if(contReg && overReg && overReg.cambios.length && puedeTarifasDe(contReg) && (document.getElementById('contGuardarTar')||{}).checked){
+      try{ await contGuardarTarifaDesde(contReg, data.fecha, overReg); }
+      catch(e){ toast('⚠️ El registro quedó guardado, pero la tarifa no: '+e.message); }
+    }
     fotosPend=[]; renderFotosPend(); fotoSugerir();
     document.getElementById('iO').value='';
     document.getElementById('chkAusente').checked=false;
@@ -8103,7 +8254,7 @@ async function guardar(){
     document.getElementById('chkVacaciones').checked=false;
     document.getElementById('reemplazoDiv').style.display='none';
     document.getElementById('ausenteSection').style.display='none';
-    ['cajasToro','cajasGamela'].forEach(k=>{const el=document.getElementById(k); if(el) el.value='';});
+    ['cajasToro','cajasGamela'].forEach(k=>{const el=document.getElementById(k); if(el) el.value='';}); contResetManual();
     initLaborRows();
     pagoPreview();
     const eraEdicion=!!regEdit;
@@ -8180,6 +8331,19 @@ function regEditar(id, eObj){
     row.querySelector('.lr-horas').value=l.horas||'';
     row.querySelector('.lr-mesas').value=l.mesas||'';
   });
+  if(e.pago && Array.isArray(e.pago.labores)){   // v75 · la corrección parte con los valores registrados
+    cont.querySelectorAll('.labor-row').forEach((row,i)=>{
+      const x=e.pago.labores[i]; if(!x) return;
+      row.querySelector('.lr-valor').value=x.tarifa?String(x.tarifa):'';
+      row.querySelector('.lr-uni').value=x.unidad==='techo'?'techo':'mesa';
+      row.dataset.manual='1';
+    });
+    [['precioToroIn','toro'],['precioGamelaIn','gamela']].forEach(([id,k])=>{
+      const el=document.getElementById(id), x=e.pago[k];
+      if(el && x){ el.value=x.precio?String(x.precio):''; el.dataset.manual='1'; }
+    });
+    const g=document.getElementById('contGuardarTar'); if(g) g.checked=false;   // corregir un día viejo no cambia la tarifa salvo que se marque
+  }
   document.getElementById('iO').value=e.obs||'';
   document.getElementById('cajasToro').value=(e.cajas&&e.cajas.toro)||'';
   document.getElementById('cajasGamela').value=(e.cajas&&e.cajas.gamela)||'';
@@ -8209,7 +8373,7 @@ function regCancelarEdicion(){
   regSalirEdicion();
   document.getElementById('iO').value='';
   ['chkAusente','chkLicencia','chkVacaciones'].forEach(k=>document.getElementById(k).checked=false);
-  ['cajasToro','cajasGamela'].forEach(k=>{const el=document.getElementById(k); if(el) el.value='';});
+  ['cajasToro','cajasGamela'].forEach(k=>{const el=document.getElementById(k); if(el) el.value='';}); contResetManual();
   document.getElementById('reemplazoDiv').style.display='none';
   const selW=document.getElementById('selW'); if(selW) selW.value='';
   document.getElementById('ausenteSection').style.display='none';
@@ -9031,6 +9195,7 @@ async function saveProgModal(){
 // CONFIG + WORKERS
 // ══════════════════════════════════════════════
 async function renderConfig(){
+  if(canConfigCostos()||puedeTarifas()){ renderContratistasConfig(); renderLaboresContCfg(); }   // v75
   document.getElementById('cfgPLbl').textContent=pD().nombre;
   document.getElementById('nS').innerHTML=pD().subjefes.map(s=>`<option>${s}</option>`).join('');
   // predios overview
@@ -9080,9 +9245,30 @@ async function renderConfig(){
 
 // ── v59 · Config › Contratistas ── (v65: unidad mesa/techo y vigencia)
 function fDesdeTxt(d){ return (!d||d===TARIFA_DESDE_INICIO) ? 'el inicio' : fDMY(d); }
+// v75 · Lista de Config: gerencia ve todos (los quitados, aparte); quien tiene
+// 💲 ve los contratistas activos de sus predios.
+let contVerQuitados=false;
+function contratistasCfgLista(){
+  if(canConfigCostos()) return contratistasCache.filter(c=>contVerQuitados ? c.oculto===true : c.oculto!==true);
+  return contratistasCache.filter(c=>c.activo!==false && c.oculto!==true && puedeTarifasDe(c));
+}
+async function contQuitar(id, quitar){
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const c=contratistasCache.find(x=>x.id===id); if(!c) return;
+  if(quitar && c.activo!==false){ toast('⚠️ Primero déjalo inactivo (con el traspaso o desmarcando Activo)'); return; }
+  if(quitar && !confirm(`¿Quitar a ${c.nombre} de la lista?\n\nNo se borra: sus registros, pagos y ciclos se mantienen y sigue apareciendo en Informes. Se puede volver a mostrar.`)) return;
+  try{
+    await db.collection('contratistas').doc(id).update({oculto:!!quitar, updatedAt:Date.now(), updatedBy:currentUser.uid});
+    c.oculto=!!quitar; renderContratistasConfig();
+    toast(quitar?`🗑 ${c.nombre} quitado de la lista`:`${c.nombre} vuelve a la lista`);
+  }catch(e){ toast('Error: '+e.message); }
+}
 function renderContratistasConfig(){
   const el=document.getElementById('contList'); if(!el) return;
-  el.innerHTML=contratistasCache.length ? contratistasCache.slice().sort((a,b)=>a.nombre.localeCompare(b.nombre,'es')).map(c=>{
+  const lista=contratistasCfgLista();
+  const nQuit=contratistasCache.filter(c=>c.oculto===true).length;
+  const pie = canConfigCostos() && (nQuit||contVerQuitados) ? `<div style="font-size:11px;margin:4px 0"><a href="javascript:void(0)" onclick="contVerQuitados=!contVerQuitados;renderContratistasConfig()">${contVerQuitados?'← Volver a la lista':'Ver quitados de la lista ('+nQuit+')'}</a></div>` : '';
+  el.innerHTML=(lista.length ? lista.slice().sort((a,b)=>a.nombre.localeCompare(b.nombre,'es')).map(c=>{
     const tv=tarifaVigente(c, todayIso);
     const nT=Object.values(tv.tarifas||{}).filter(v=>Number(v)>0).length;
     const nTe=Object.keys(tv.tarifas||{}).filter(k=>Number(tv.tarifas[k])>0 && (tv.unidades||{})[k]==='techo').length;
@@ -9090,11 +9276,107 @@ function renderContratistasConfig(){
     return `<div class="wrow">
       <div><div class="wn">🧑‍🌾 ${escH(c.nombre)}${c.activo===false?' <span style="color:var(--muted);font-weight:400">(inactivo)</span>':''}</div>
       <div class="wm">${(c.predios||[]).map(p=>PREDIOS[p]?PREDIOS[p].nombre:p).join(', ')||'sin predio'} · ${nT} labores con tarifa${nTe?` (${nTe} por techo)`:''} · toro ${tv.precioToro?fmtCLP(tv.precioToro):'—'} · gamela ${tv.precioGamela?fmtCLP(tv.precioGamela):'—'}${tv.desde?` · vigente desde ${fDesdeTxt(tv.desde)}`:''}${fut?` · <b>cambia el ${fDMY(fut.desde)}</b>`:''}</div></div>
-      <button class="btn btn-secondary btn-sm" onclick="contEditar('${c.id}')">✏️</button>
-    </div>`;}).join('') : `<div class="empty"><div style="padding:8px 0;font-size:12px">Sin contratistas</div></div>`;
+      <div style="display:flex;gap:4px;flex-shrink:0">
+        ${canConfigCostos()&&c.activo===false&&c.oculto!==true?`<button class="btn btn-danger btn-sm" title="Quitar de la lista (no borra su historial)" onclick="contQuitar('${c.id}',true)">🗑</button>`:''}
+        ${canConfigCostos()&&c.oculto===true?`<button class="btn btn-secondary btn-sm" onclick="contQuitar('${c.id}',false)">↩ Mostrar</button>`:''}
+        ${c.oculto===true?'':`<button class="btn btn-secondary btn-sm" onclick="contEditar('${c.id}')">✏️</button>`}
+      </div>
+    </div>`;}).join('') : `<div class="empty"><div style="padding:8px 0;font-size:12px">${contVerQuitados?'No hay contratistas quitados':'Sin contratistas'}</div></div>`) + pie;
 }
+
+// ══════════════════════════════════════════════
+// v75 · LABORES DE CONTRATISTA EDITABLES (Config, gerencia y 💲)
+// ══════════════════════════════════════════════
+let labContQ='', labContVerInact=false;
+function labContPuedeEditar(l){
+  if(isSuperAdmin()) return true;
+  return puedeTarifas() && laborEnAlgunPredio(l, userPredios());
+}
+function labContPrediosTxt(l){ return (!l.predios||!l.predios.length) ? 'todos los campos' : l.predios.map(p=>PREDIOS[p]?PREDIOS[p].nombre:p).join(', '); }
+function renderLaboresContCfg(){
+  const box=document.getElementById('labContBox'); if(!box) return;
+  if(!(canConfigCostos()||puedeTarifas())){ box.innerHTML=''; return; }
+  const q=normNombre(labContQ);
+  const todas=LABORES.filter(l=>l.cont && (isSuperAdmin() || laborEnAlgunPredio(l, userPredios())));
+  const lista=todas.filter(l=>(labContVerInact || !l.inactiva) && (!q || normNombre(l.id+' '+l.d).includes(q)));
+  const nIn=todas.filter(l=>l.inactiva).length;
+  box.innerHTML=`<div class="sec-div" style="margin-top:12px">Labores de contratista</div>
+    <p style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:6px">El listado que aparece al registrar a la gente de un contratista. Se pueden agregar labores nuevas, cambiarles el nombre o desactivarlas (las desactivadas no se ofrecen, pero lo ya registrado se mantiene). El <b>valor</b> que se paga se pone en el registro diario o en la ficha de cada contratista; el de acá es solo una referencia.</p>
+    <div style="display:flex;gap:6px;margin-bottom:6px"><input type="text" placeholder="🔍 Buscar labor" value="${escH(labContQ)}" oninput="labContQ=this.value;renderLaboresContCfg();const i=document.querySelector('#labContBox input[type=text]');if(i){i.focus();i.setSelectionRange(i.value.length,i.value.length);}" style="flex:1">
+      <button class="btn btn-primary btn-sm" style="width:auto" onclick="labContEditar(0)">＋ Nueva labor</button></div>
+    <div id="labContForm"></div>
+    <div style="max-height:320px;overflow-y:auto;border:1px solid var(--sand);border-radius:8px;padding:2px 8px">
+      ${lista.map(l=>`<div class="wrow" style="${l.inactiva?'opacity:.55':''}">
+        <div><div class="wn" style="font-size:12px"><span style="font-family:'DM Mono',monospace;color:var(--muted)">${l.id}.</span> ${escH(l.d)}${l.inactiva?' <span style="color:var(--red);font-weight:400">(desactivada)</span>':''}</div>
+          <div class="wm">${l.porCaja?'se paga por caja '+l.porCaja:(l.ref?'ref. '+fmtCLP(l.ref)+' / '+(l.uRef==='techo'?'techo':'mesa'):'sin valor de referencia')} · ${escH(labContPrediosTxt(l))}${l.editadaPor?' · editada por '+escH(l.editadaPor):''}</div></div>
+        ${labContPuedeEditar(l)?`<button class="btn btn-secondary btn-sm" onclick="labContEditar(${l.id})">✏️</button>`:''}
+      </div>`).join('')||'<div style="font-size:11px;color:var(--muted);padding:6px 0">Sin labores</div>'}
+    </div>
+    ${nIn?`<div style="font-size:11px;margin-top:4px"><a href="javascript:void(0)" onclick="labContVerInact=!labContVerInact;renderLaboresContCfg()">${labContVerInact?'Ocultar desactivadas':'Ver desactivadas ('+nIn+')'}</a></div>`:''}`;
+}
+function labContEditar(id){
+  const l=id ? LABORES.find(x=>x.id===id) : null;
+  if(l && !labContPuedeEditar(l)){ toast('Sin permiso'); return; }
+  const mis = isSuperAdmin() ? PRED_ORDER.slice() : prediosPermitidos();
+  const predSel = l ? (l.predios||[]) : (isSuperAdmin()?[]:mis.filter(p=>p===activePred).concat(mis.length===1?mis:[]).filter((v,i,a)=>a.indexOf(v)===i));
+  const global = l && (!l.predios || !l.predios.length);
+  document.getElementById('labContForm').innerHTML=`<div style="border:1px solid var(--sand);border-radius:9px;padding:10px;margin:4px 0 8px;background:var(--cream)">
+    <div style="font-weight:700;font-size:12.5px;margin-bottom:6px">${l?`✏️ Labor ${l.id}`:'＋ Nueva labor de contratista'}</div>
+    <div class="form-row"><label>Nombre</label><input type="text" id="lcNom" maxlength="90" value="${escH(l?l.d:'')}" placeholder="Ej: Despunte y amarra"></div>
+    ${l&&l.porCaja?'<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Esta labor se paga por caja: su valor es el $ por caja del contratista.</div>':`<div class="form-grid">
+      <div><label>Valor de referencia ($)</label><input type="number" id="lcRef" min="0" step="1" value="${l&&l.ref?l.ref:''}" placeholder="Opcional"></div>
+      <div><label>Por</label><select id="lcURef"><option value="mesa">mesa</option><option value="techo"${l&&l.uRef==='techo'?' selected':''}>techo (3 mesas)</option></select></div>
+    </div>`}
+    <div class="form-row"><label>Campos donde se usa</label>
+      ${global&&!isSuperAdmin()?'<div style="font-size:11px;color:var(--muted)">Todos los campos (labor del listado común). Solo gerencia cambia los campos.</div>':
+      `<div style="display:flex;gap:12px;flex-wrap:wrap">${mis.map(p=>`<label style="display:flex;gap:4px;align-items:center;text-transform:none;font-weight:400;margin:0"><input type="checkbox" class="lcPred" value="${p}" ${predSel.includes(p)?'checked':''}> ${escH(PREDIOS[p].nombre)}</label>`).join('')}</div>
+      ${isSuperAdmin()?'<div style="font-size:10.5px;color:var(--muted)">Sin marcar = todos los campos.</div>':''}`}
+    </div>
+    ${global?'<div style="font-size:10.5px;color:#B45309;margin-bottom:6px">Esta labor la usan todos los campos: el cambio de nombre se verá en todos.</div>':''}
+    ${l?`<label style="display:flex;gap:6px;align-items:center;text-transform:none;font-weight:400;margin:2px 0 8px"><input type="checkbox" id="lcAct" ${l.inactiva?'':'checked'}> Activa (se ofrece al registrar)</label>`:''}
+    <div style="display:flex;gap:6px"><button class="btn btn-primary" onclick="labContGuardar(${id||0})">Guardar labor</button><button class="btn btn-secondary" onclick="document.getElementById('labContForm').innerHTML=''">Cancelar</button></div>
+  </div>`;
+}
+async function labContGuardar(id){
+  const l=id ? LABORES.find(x=>x.id===id) : null;
+  if(!(canConfigCostos()||puedeTarifas()) || (l && !labContPuedeEditar(l))){ toast('Sin permiso'); return; }
+  const d=(document.getElementById('lcNom').value||'').trim().replace(/\s+/g,' ');
+  if(!d){ toast('⚠️ Escribe el nombre de la labor'); return; }
+  const dup=LABORES.find(x=>x.id!==id && !x.hidden && normNombre(x.d)===normNombre(d));
+  if(dup && !confirm(`Ya existe la labor ${dup.id}. ${dup.d}.\n\n¿Guardar igual con el mismo nombre?`)) return;
+  const refIn=document.getElementById('lcRef'), uIn=document.getElementById('lcURef');
+  const chk=[...document.querySelectorAll('.lcPred')];
+  let predios = chk.length ? chk.filter(x=>x.checked).map(x=>x.value) : (l&&l.predios?l.predios.slice():[]);
+  if(!isSuperAdmin() && chk.length && !predios.length){ toast('⚠️ Marca al menos un campo'); return; }
+  const yo=quienSoy();
+  const data={d, updatedAt:Date.now(), updatedBy:currentUser.uid, porNombre:yo.nombre};
+  if(refIn){ data.ref=Math.max(0,Math.round(Number(refIn.value)||0)); data.uRef=uIn.value==='techo'?'techo':'mesa'; }
+  if(chk.length || !l) data.predios=predios;
+  data.activo = l ? document.getElementById('lcAct').checked : true;
+  loading(true,'Guardando labor…');
+  try{
+    let nid=id;
+    if(!nid){
+      nid=Math.max(139, ...LABORES.filter(x=>x.cont).map(x=>x.id))+1;
+      for(let g=0; g<20; g++){ const ex=await db.collection('laboresCont').doc(String(nid)).get(); if(!ex.exists) break; nid++; }
+      if(nid>999) throw new Error('No quedan códigos libres');
+    }
+    data.id=nid;
+    await db.collection('laboresCont').doc(String(nid)).set(data, {merge:true});
+    const i=laboresContDocs.findIndex(x=>Number(x.id)===nid);
+    if(i>=0) laboresContDocs[i]={...laboresContDocs[i], ...data}; else laboresContDocs.push({...data});
+    aplicarLaboresCont();
+    if(typeof refrescarLaborOpts==='function') refrescarLaborOpts();
+    renderLaboresContCfg();
+    toast(id?`✅ Labor ${nid} guardada`:`✅ Labor nueva: ${nid}. ${d}`);
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
+}
+
 // Abre el formulario. `desdeTramo`: carga ese tramo del historial para corregirlo.
 function contEditar(id, desdeTramo){
+  const ger=canConfigCostos();   // v75 · sin gerencia: solo tarifas
+  if(!ger && (!id || !puedeTarifasDe(contratistasCache.find(x=>x.id===id)))){ toast('Sin permiso'); return; }
   const c=id ? (contratistasCache.find(x=>x.id===id)||{}) : {tarifas:{}, predios:[activePred], activo:true};
   const hist=(c.historial||[]).filter(x=>x&&x.desde).slice().sort((a,b)=>b.desde.localeCompare(a.desde));
   const tramo = desdeTramo ? (hist.find(x=>x.desde===desdeTramo)||null) : null;
@@ -9116,8 +9398,8 @@ function contEditar(id, desdeTramo){
     <input type="hidden" id="contId" value="${escH(id)}">
     <input type="hidden" id="contTramoOrig" value="${tramo?escH(tramo.desde):''}">
     <div class="form-row"><label>Nombre</label><input type="text" id="contNombre" value="${escH(c.nombre||'')}" ${id?'disabled title="El nombre no se cambia: amarra trabajadores, ciclos y registros"':''} placeholder="Ej: Contratista Alicia"></div>
-    <div class="form-row"><label>Predios</label><div style="display:flex;gap:12px;flex-wrap:wrap">${PRED_ORDER.map(p=>`<label style="display:flex;gap:4px;align-items:center;text-transform:none;font-weight:400;margin:0"><input type="checkbox" class="contPred" value="${p}" ${(c.predios||[]).includes(p)?'checked':''}> ${PREDIOS[p].nombre}</label>`).join('')}</div></div>
-    <label style="display:flex;gap:6px;align-items:center;text-transform:none;font-weight:400;margin:4px 0 8px"><input type="checkbox" id="contActivo" ${c.activo!==false?'checked':''}> Activo (aparece como subjefe y en el registro)</label>
+    <div class="form-row"><label>Predios</label><div style="display:flex;gap:12px;flex-wrap:wrap">${PRED_ORDER.map(p=>`<label style="display:flex;gap:4px;align-items:center;text-transform:none;font-weight:400;margin:0"><input type="checkbox" class="contPred" value="${p}" ${(c.predios||[]).includes(p)?'checked':''} ${ger?'':'disabled'}> ${PREDIOS[p].nombre}</label>`).join('')}</div></div>
+    <label style="display:flex;gap:6px;align-items:center;text-transform:none;font-weight:400;margin:4px 0 8px"><input type="checkbox" id="contActivo" ${c.activo!==false?'checked':''} ${ger?'':'disabled'}> Activo (aparece como subjefe y en el registro)</label>
     ${histHTML}
     <div style="background:#F0F7EE;border:1px solid #CFE3C8;border-radius:8px;padding:8px;margin-bottom:8px">
       <div class="form-row" style="margin-bottom:4px"><label>Tarifas vigentes desde</label><input type="date" id="contDesde" value="${desdeVal}"></div>
@@ -9131,7 +9413,7 @@ function contEditar(id, desdeTramo){
     <input type="text" id="contFiltro" placeholder="Buscar labor…" oninput="contFiltrar()" style="margin-bottom:6px">
     <div id="contTarifas" style="max-height:340px;overflow-y:auto;border:1px solid var(--sand);border-radius:7px;padding:4px 8px">
       <div style="font-size:11px;font-weight:700;color:var(--dark);padding:5px 0 2px">🧑‍🌾 Labores de contratista <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 7px;font-size:10.5px;margin-left:6px" onclick="contCargarListado()">Completar vacíos con el listado</button></div>
-      ${LABORES.filter(l=>l.cont).map(l=>contTarRowHTML(l,t,u)).join('')}
+      ${LABORES.filter(l=>l.cont && (t[l.id] || (!l.inactiva && laborEnAlgunPredio(l, c.predios||[])))).map(l=>contTarRowHTML(l,t,u)).join('')}
       <div style="font-size:11px;font-weight:700;color:var(--dark);padding:9px 0 2px">Labores de planta</div>
       ${LABORES.filter(l=>!l.hidden&&!l.cont).map(l=>contTarRowHTML(l,t,u)).join('')}
     </div>
@@ -9139,7 +9421,7 @@ function contEditar(id, desdeTramo){
       <button class="btn btn-primary" onclick="contGuardar()">Guardar contratista</button>
       <button class="btn btn-secondary" onclick="document.getElementById('contForm').innerHTML=''">Cerrar</button>
     </div>
-    ${id?`<button class="btn btn-warn" style="margin-top:8px" onclick="contTraspasoAbrir('${escH(id)}')">🔁 Traspasar a otro contratista</button>
+    ${id&&ger?`<button class="btn btn-warn" style="margin-top:8px" onclick="contTraspasoAbrir('${escH(id)}')">🔁 Traspasar a otro contratista</button>
       <div style="font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.45">Cuando otro contratista toma su lugar: pasa los ciclos abiertos (mismo ciclo), la programación y, si quieres, los trabajadores, y deja a este inactivo. Lo ya registrado y pagado queda a su nombre.</div>`:''}
   </div>`;
 }
@@ -9175,7 +9457,8 @@ function contFiltrar(){
   document.querySelectorAll('.contTarRow').forEach(r=>{ r.style.display=(!q||r.dataset.txt.includes(q))?'flex':'none'; });
 }
 async function contGuardar(){
-  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const idChk=document.getElementById('contId').value;   // v75 · 💲: solo tarifas de sus contratistas
+  if(!canConfigCostos() && !(idChk && puedeTarifasDe(contratistasCache.find(x=>x.id===idChk)))){ toast('Sin permiso'); return; }
   const id=document.getElementById('contId').value;
   const nombre=(document.getElementById('contNombre').value||'').trim().replace(/\s+/g,' ');
   if(!nombre){ toast('⚠️ Escribe el nombre'); return; }
@@ -9229,7 +9512,9 @@ async function contGuardar(){
   let guardado=null;
   try{
     const ref = id ? db.collection('contratistas').doc(id) : db.collection('contratistas').doc();
-    await ref.set(data);
+    if(canConfigCostos()) await ref.set(data, {mergeFields:Object.keys(data)});   // v75 · conserva oculto/reemplazadoPor
+    else await ref.update({historial:data.historial, tarifas:data.tarifas, unidades:data.unidades,
+      precioToro:data.precioToro, precioGamela:data.precioGamela, updatedAt:data.updatedAt, updatedBy:data.updatedBy});   // v75
     await loadContratistas();
     guardado=contratistasCache.find(x=>x.id===ref.id)||{id:ref.id,...data};
     document.getElementById('contForm').innerHTML='';
@@ -9394,7 +9679,7 @@ async function contTraspasoEjecutar(){
 // v65 · Recalcula el pago de las entradas del contratista en [desde, hasta).
 async function contRecalcular(cont, desde, hasta){
   loading(true,'Recalculando pagos…');
-  let n=0, dif=0;
+  let n=0, dif=0, manuales=0;
   try{
     for(const pid of (cont.predios||PRED_ORDER)){
       let q=colRegistros(pid).where('fecha','>=',desde===TARIFA_DESDE_INICIO?'0000':desde);
@@ -9404,6 +9689,7 @@ async function contRecalcular(cont, desde, hasta){
       snap.forEach(d=>{
         const r=d.data();
         if(r.contratistaId!==cont.id || !r.pago) return;
+        if(r.pago.valorManual){ manuales++; return; }   // v75 · valor puesto a mano en el registro
         const cj=r.cajas||{};
         const nuevo=calcPagoContratista(cont, r.labores||[], cj.toro, cj.gamela, r.fecha);
         if(JSON.stringify(nuevo)===JSON.stringify(r.pago)) return;
@@ -9417,7 +9703,7 @@ async function contRecalcular(cont, desde, hasta){
       }
       n+=ops.length;
     }
-    toast(n?`✅ ${n} registro(s) recalculado(s) · diferencia ${dif>=0?'+':''}${fmtCLP(dif)}`:'Nada que recalcular: los montos ya coincidían');
+    toast((n?`✅ ${n} registro(s) recalculado(s) · diferencia ${dif>=0?'+':''}${fmtCLP(dif)}`:'Nada que recalcular: los montos ya coincidían')+(manuales?` · ${manuales} con valor puesto a mano no se tocaron`:''));
   }catch(e){ toast('Error al recalcular: '+e.message); }
   loading(false);
 }
@@ -9535,7 +9821,7 @@ async function loadUsers(){
       return `<div class="user-row">
       <div class="ur-info">
         <div class="ur-name">${u.nombre||u.email}</div>
-        <div class="ur-meta">${escH(u.email)} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}" ${rolMalo?'style="background:#FEE2E2;color:var(--red)"':''}>${escH(ROLES[u.role]||((u.role||'sin rol')+' ⚠'))}</span> · ${escH(prediosLabel(u))}${u.subjefe?' · '+escH(u.subjefe):''}${u.puedeFoliar?' · <span title="Puede registrar desinfecciones foliares">🍃</span>':''}${u.puedeComprar?' · <span title="Registra compras">🛒</span>':''}${(Array.isArray(u.recintos)&&u.recintos.length)?' · 📦 '+escH(u.recintos.filter(esRecinto).map(k=>nombreBodega(k,true)).join(', ')):''}</div>
+        <div class="ur-meta">${escH(u.email)} · <span class="role-badge ${u.role==='admin'?'role-admin':'role-subjefe'}" ${rolMalo?'style="background:#FEE2E2;color:var(--red)"':''}>${escH(ROLES[u.role]||((u.role||'sin rol')+' ⚠'))}</span> · ${escH(prediosLabel(u))}${u.subjefe?' · '+escH(u.subjefe):''}${u.puedeFoliar?' · <span title="Puede registrar desinfecciones foliares">🍃</span>':''}${u.puedeComprar?' · <span title="Registra compras">🛒</span>':''}${u.puedeTarifas?' · <span title="Fija valores y labores de contratistas">💲</span>':''}${(Array.isArray(u.recintos)&&u.recintos.length)?' · 📦 '+escH(u.recintos.filter(esRecinto).map(k=>nombreBodega(k,true)).join(', ')):''}</div>
       </div>
       ${propio?'':`<button class="btn btn-sm" onclick="openUserEdit('${u.uid}')" style="background:var(--sand);color:var(--dark);width:auto;padding:6px 10px">✏️</button>`}
     </div>`}).join('')||'<div style="font-size:12px;color:var(--muted)">Sin usuarios aún</div>';
@@ -9598,6 +9884,13 @@ function openUserEdit(uid){
         🛒 Registra compras (elige a qué recinto entran)
       </label>
     </div>
+    <div class="form-row">
+      <label style="display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;cursor:pointer">
+        <input type="checkbox" id="euTarifas"${u.puedeTarifas?' checked':''} style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">
+        💲 Fija valores y labores de los contratistas de sus predios
+      </label>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">Pone el valor de cada labor al registrar a la gente del contratista (y lo deja como tarifa), y agrega o modifica las labores de contratista. No crea ni da de baja contratistas.</div>
+    </div>
     <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:9px">El cambio se aplica la próxima vez que esa persona inicie sesión. Si está con la app abierta, tiene que cerrar sesión y volver a entrar.</div>
     <button class="btn btn-primary" onclick="saveUserEdit()">Guardar cambios</button>
     <button class="btn btn-secondary" style="margin-top:6px" onclick="closeModal()">Cancelar</button>`;
@@ -9653,7 +9946,8 @@ async function saveUserEdit(){
       role, predios, predioId, subjefe,
       puedeFoliar: !!document.getElementById('euFoliar').checked,   // v40
       recintos: [...document.querySelectorAll('.euRecintoChk')].filter(c=>c.checked).map(c=>c.value),   // v44
-      puedeComprar: !!document.getElementById('euComprar').checked   // v44
+      puedeComprar: !!document.getElementById('euComprar').checked,   // v44
+      puedeTarifas: !!document.getElementById('euTarifas').checked   // v75
     });
     closeModal();
     await loadUsers();
@@ -13163,10 +13457,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v74';
+const MANUAL_VERSION='v75';
 const MANUAL_FECHA='2026-10-21';
 
 const MANUAL_CAMBIOS=[
+  {v:'v75', f:'21-10-2026', ver:()=>isCampo()||canConfigCostos(), txt:'<b>Contratistas: valores en el registro diario y labores editables.</b> Al registrar a un trabajador de contratista, cada labor muestra su <b>💲 valor</b> (por mesa o techo) y el <b>$ por caja</b>. Quien tiene el permiso <b>💲</b> (lo da gerencia en Config › Usuarios) puede cambiarlo ahí mismo y dejarlo como tarifa del contratista desde ese día; los demás lo ven sin cambiarlo. Con el mismo permiso, en Config › Contratistas se ajustan los valores de los contratistas de su campo y se <b>agregan, renombran o desactivan labores de contratista</b>. Gerencia puede <b>🗑 quitar de la lista</b> a un contratista inactivo sin perder su historial.'},
   {v:'v74', f:'21-10-2026', txt:'<b>Traspaso de contratista.</b> En Config › Contratistas, el botón <b>🔁 Traspasar a otro contratista</b> pasa al que lo reemplaza los <b>ciclos abiertos</b> (el mismo ciclo, con sus marcas de Control), la <b>programación</b> desde la fecha del traspaso y los <b>trabajadores</b> que se marquen, y deja inactivo al anterior. Lo ya registrado y pagado sigue a nombre del anterior, que se puede seguir viendo en Informes. <b>Bodega:</b> gerencia puede <b>🔗 Fusionar duplicados</b> (un mismo producto cargado con nombres distintos): se suma el stock de cada recinto en el que queda y los otros se desactivan. Los <b>saldos</b> de la planilla, la conciliación y los selectores se muestran con <b>un decimal</b>.'},
   {v:'v73', f:'20-10-2026', ver:()=>canViewInformes(), txt:'<b>Informes › 🎯 Capacidad.</b> Muestra cuánto avanza cada trabajador comparado con el <b>trabajador típico</b> de su predio y cultivo en las mismas labores (índice 1,00 = típico; 1,20 = 20 % más). Con sus <b>mesas asignadas</b> calcula cuántas mesas podría llevar, en techos de 3 mesas, y lo clasifica: <b>⬆️ puede tomar más</b>, <b>✔️ adecuado</b> o <b>⬇️ revisar</b>. Tocar un trabajador abre el detalle por labor y los días que le toma una vuelta por sus mesas. Las mesas asignadas se anotan con ✏️ en la misma tabla o en Config › Trabajadores.'},
   {v:'v72', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación por ciclo.</b> Al editar la programación, arriba se elige el <b>ciclo</b> (por ejemplo Tomate Primor o Especialidades Trastomate) y abajo solo aparecen y se agregan las tareas de ese ciclo. Para programar otro ciclo, toca su pestaña: lo del primero queda guardado. Ya no existe el selector de ciclo dentro de cada tarea, que permitía cambiar por error el ciclo de una tarea ya programada.'},
@@ -13258,6 +13553,7 @@ const MANUAL_SECCIONES=[
     'Elige el <b>Subjefe / Encargado</b>. Si eres subjefe, ya viene fijo con tus trabajadores.',
     'Elige el <b>Cultivo</b> y, cuando corresponda, el <b>Ciclo</b>. Si el ciclo no aparece en la lista, es porque no está abierto: ábrelo primero en la pantalla <b>Ciclos</b>.',
     'Si la gente es de un <b>contratista</b>, elige el contratista (🧑‍🌾) en Subjefe / Encargado. Al elegir al trabajador aparece <b>Pago contratista</b>: anota las <b>cajas toro</b> y <b>gamela</b> que cosechó (con la labor 132 Cosecha toro y/o 139 Cosecha gamela; antes, la 48). Debajo se ve cuánto se le paga ese día, con las tarifas de su contratista vigentes ese día. Las mesas se anotan igual que siempre: si la labor se paga por <b>techo</b>, la app divide por 3 (1 techo = 3 mesas). Si una labor dice <b>sin tarifa</b>, avisa a gerencia.',
+    'Junto a cada labor del trabajador de contratista aparece <b>💲 Valor contratista</b> y si es por mesa o por techo, y arriba el <b>$ por caja</b> toro y gamela. Se proponen solos con la tarifa vigente. Si tienes el permiso 💲 puedes cambiarlos: lo que escribas es lo que se paga en ese registro, y si dejas marcado <b>Guardar como tarifa…</b> queda como valor de ese contratista desde ese día (se propone solo en los próximos registros). Lo ya registrado no cambia.',
     'Los contratistas trabajan <b>de lunes a domingo</b>: en los predios con contratistas la tira de días muestra también sábado y domingo (en verde claro). Registra cada día. El personal de planta no trabaja el fin de semana: si registras a alguien de planta en sábado o domingo, la app pide confirmar.',
     'Elige el <b>Trabajador</b>. Para el trabajo con tractor (labores 11, 57, 71 u otras) elige <b>🚜 Tractorista</b>, al final de la lista: es un puesto, no una persona, y queda a nombre del subjefe elegido.',
     'Si el trabajador <b>no vino</b>, marca Trabajador ausente, Licencia médica o Vacaciones. Si hubo alguien que lo reemplazó, elígelo en Reemplazante. Con ausencia, licencia o vacaciones no hace falta cargar labores.',
@@ -13509,6 +13805,8 @@ const MANUAL_SECCIONES=[
   pasos:[
     '<b>🧑‍🌾 Contratistas</b> (gerencia): nombre, predios donde trabaja, <b>$ por caja toro</b>, <b>$ por caja gamela</b> y el <b>valor de cada labor</b>, eligiendo si es <b>por mesa o por techo</b> (1 techo = 3 mesas). Las labores que queden vacías no se pagan. El nombre no se cambia después. Para darle gente, agrega sus trabajadores en <b>Trabajadores</b> eligiendo al contratista como subjefe. Si un contratista deja de trabajar, desmárcalo como activo.',
     '<b>Cambio de precios:</b> el valor de cada labor es fijo hasta que se cambie. Para cambiarlo, abre el contratista, pon en <b>Tarifas vigentes desde</b> el día en que rige el valor nuevo y guarda: queda en el <b>historial</b> y lo registrado antes de esa fecha conserva el valor anterior. Si la fecha es pasada, la app ofrece <b>recalcular</b> lo ya registrado desde ese día. Con <b>Ver / corregir</b> se arregla una tarifa del historial.',
+    '<b>💲 Valores y labores de contratista</b> (gerencia y quien tenga el permiso 💲): en Config › Contratistas, el ✏️ de cada contratista de tu campo abre sus valores por labor. Abajo, en <b>Labores de contratista</b>, se agrega una labor nueva (toma el siguiente código libre desde el 140), se le cambia el nombre o se desactiva. Una labor desactivada ya no se ofrece al registrar, pero lo registrado con ella se mantiene.',
+    '<b>Quitar un contratista de la lista</b> (gerencia): primero déjalo inactivo (con el traspaso o desmarcando Activo) y después aprieta <b>🗑</b>. No se borra nada: sus registros, pagos y ciclos se mantienen y sigue en Informes. Con "Ver quitados de la lista" se puede volver a mostrar.',
     '<b>Traspasar un contratista</b> (gerencia): cuando otro contratista toma su lugar, crea primero al nuevo, abre al anterior y aprieta <b>🔁 Traspasar a otro contratista</b>. Elige quién lo reemplaza y desde qué día; marca los ciclos y la programación que pasan, los trabajadores que siguen (si llega con gente nueva, no marques ninguno) y si se copian las tarifas. El anterior queda inactivo, sus ciclos se cierran el día antes y su trabajo pasado sigue en Informes a su nombre.',
     '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes. Al final aparece <b>🚜 Tractorista</b> marcado como <i>fijo</i>: es genérico, está en todos los predios y subjefes, y no se borra.',
     '<b>🗺️ Sectores de riego</b> (gerencia con todos los predios): elige el predio y corrige cada sector con su nombre, metros lineales y hectáreas. Los sectores que se riegan juntos van como uno solo (ej. <i>1A-3</i>). Lo ya registrado no cambia, porque cada aplicación guardó la superficie de ese día.',
@@ -13534,7 +13832,7 @@ const MANUAL_SECCIONES=[
     '<b>Subjefe:</b> trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
     '<b>Encargado de bodega:</b> planilla de bodega de todos los recintos: catálogo, precios, stock, despachos y conciliación. No registra aplicaciones. Confirma lo que llega a sus recintos.',
     '<b>Encargado de riego:</b> registra fertirriego, vía riego y ácidos de sus predios. Si es responsable de la Caseta de Riego, además ve Bodega y confirma lo que le despachan (en El Tránsito y Paradero 12 también ajusta el stock de su caseta). En La Constancia confirma los <b>envíos a la caseta</b> anotando cuánto llegó.',
-    '<b>Permisos extra</b>, aparte del rol: <b>📦 recintos a cargo</b> (despachar, recibir y ajustar en esos recintos), <b>🛒 compras</b> (registrar compras a cualquier recinto) y <b>🍃 desinfecciones</b>.',
+    '<b>Permisos extra</b>, aparte del rol: <b>📦 recintos a cargo</b> (despachar, recibir y ajustar en esos recintos), <b>🛒 compras</b> (registrar compras a cualquier recinto), <b>🍃 desinfecciones</b> y <b>💲 valores y labores de contratistas</b> de sus predios.',
     '<b>Jefe de desinfecciones:</b> registra solo aplicaciones foliares de sus predios.',
     '<b>Informes de gasto:</b> solo el informe de gasto de los predios asignados, sin acceso a campo, aplicaciones ni bodega.',
     '<b>Asesor BPA:</b> solo lectura. Ve las aplicaciones registradas de sus predios. No registra ni modifica nada.'
