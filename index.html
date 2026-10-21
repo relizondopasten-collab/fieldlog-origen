@@ -708,6 +708,7 @@ body.vista-escritorio .modal-content{max-width:700px}
       <div class="plan-toolbar">
         <input type="text" id="planBuscar" placeholder="🔍 Buscar producto…" oninput="planFiltrar(this.value)">
         <button class="btn btn-sm" id="planAddBtn" onclick="planAddProd()" style="background:var(--sand);color:var(--dark)">+ Producto</button>
+        <button class="btn btn-sm" id="planFusionBtn" onclick="abrirFusionProductos()" style="background:var(--sand);color:var(--dark);display:none">🔗 Fusionar duplicados</button>
         <button class="btn btn-sm btn-primary" id="planSaveBtn" onclick="planGuardar()">💾 Guardar cambios</button>
       </div>
       <div id="planInfo" class="plan-hint"></div>
@@ -1256,6 +1257,15 @@ let usersCache = [];   // all system users
 let cultivosCache = [];   // catálogo de cultivos desde Firestore: [{id,nombre,activo,usaMesPlantacion}]
 let modulosCache  = {};   // {fincaId: [módulos]} desde Firestore
 let productosCache = [];  // catálogo de productos fitosanitarios
+// v74 · Productos fusionados: {idViejo: idQueLoAbsorbió}. Las aplicaciones y
+// movimientos antiguos siguen apuntando al id viejo; prodVig() lo traduce al
+// producto vigente para descontar stock, valorizar y conciliar.
+let productosFusionMap = {};
+function prodVig(id){
+  let k=id, g=0;
+  while(k && productosFusionMap[k] && g++<10) k=productosFusionMap[k];
+  return k;
+}
 let categoriasFitoCache = []; // categorías de productos (editables desde la app)
 let terrenoCache = {};    // {predioId: {modulos:{nombre:ha}, sectores:{nombre:ha}}}
 let ciclosAllCache = {};  // {predioId: [{...ciclo, subjefe}]} — ciclos abiertos de TODOS los predios (para aplicaciones)
@@ -1809,6 +1819,8 @@ async function loadCatalogos(){
       .sort((a,b)=>(a.nombre||'').localeCompare(b.nombre||''));
     // Modelo nuevo: el stock vive en p.stock (por predio). Ya no hay subcolección "lotes".
     productosCache.forEach(p=>{ if(!Array.isArray(p.lotes)) p.lotes=[]; });
+    productosFusionMap = {};   // v74
+    prodSnap.docs.forEach(d=>{ const x=d.data()||{}; if(x.fusionadoEn && x.activo===false) productosFusionMap[d.id]=x.fusionadoEn; });
     categoriasFitoCache = (catSnap.exists && Array.isArray(catSnap.data().items) && catSnap.data().items.length)
       ? catSnap.data().items.slice()
       : CATEGORIAS_FITO_DEFAULT.slice();
@@ -2842,7 +2854,7 @@ function folBodegaHTML(){
   const detalle=(aplFol.receta||[]).filter(r=>r.productoId).map(r=>{
     const p=productosCache.find(x=>x.id===r.productoId);
     const st=stockEn(p, sel);
-    return `<span style="color:${st>0?'var(--muted)':'var(--red)'}">${escH(r.nombre||'')}: ${fmtNum(st,2)}${st>0?'':' (sin stock)'}</span>`;
+    return `<span style="color:${st>0?'var(--muted)':'var(--red)'}">${escH(r.nombre||'')}: ${fmtNum(st,1)}${st>0?'':' (sin stock)'}</span>`;
   }).join(' · ');
   return `
     <div style="background:var(--sand);border-radius:8px;padding:8px 10px;margin:8px 0">
@@ -2858,7 +2870,7 @@ function folBodegaHTML_v40(){
   const detalle=(aplFol.receta||[]).filter(r=>r.productoId).map(r=>{
     const p=productosCache.find(x=>x.id===r.productoId);
     const st=p?num((p.stock||{})[sel]):0;
-    return `<span style="color:${st>0?'var(--muted)':'var(--red)'}">${escH(r.nombre||'')}: ${fmtNum(st,2)}${st>0?'':' (sin stock)'}</span>`;
+    return `<span style="color:${st>0?'var(--muted)':'var(--red)'}">${escH(r.nombre||'')}: ${fmtNum(st,1)}${st>0?'':' (sin stock)'}</span>`;
   }).join(' · ');
   return `
     <div style="background:var(--sand);border-radius:8px;padding:8px 10px;margin:8px 0">
@@ -3133,7 +3145,7 @@ function viaRecintoHTML(productoId){
   return `<div style="display:flex;gap:6px;align-items:center;margin:-2px 0 7px 22px">
     <span style="font-size:10px;color:var(--muted);white-space:nowrap">↳ sale de</span>
     <select onchange="viaSetRecinto('${productoId}',this.value)" style="flex:1;font-size:11px;padding:3px 5px">
-      ${pos.map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(RECINTOS[k].nombre)} (${fmtNum(stockEn(p,k),2)})</option>`).join('')}
+      ${pos.map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(RECINTOS[k].nombre)} (${fmtNum(stockEn(p,k),1)})</option>`).join('')}
     </select></div>`;
 }
 
@@ -3430,12 +3442,13 @@ async function calcResumen(){
 
       // Nombres y unidades base desde la receta
       const baseMap={}, nombreMap={};
-      (a.receta||[]).forEach(r=>{ if(r.productoId){ baseMap[r.productoId]=r.base||''; nombreMap[r.productoId]=r.nombre; } });
-      (a.sales||[]).forEach(sx=>{ if(sx.productoId){ baseMap[sx.productoId]=sx.unidad||'kg'; nombreMap[sx.productoId]=sx.nombre; } });
+      (a.receta||[]).forEach(r=>{ if(r.productoId){ baseMap[prodVig(r.productoId)]=r.base||''; nombreMap[prodVig(r.productoId)]=r.nombre; } });
+      (a.sales||[]).forEach(sx=>{ if(sx.productoId){ baseMap[prodVig(sx.productoId)]=sx.unidad||'kg'; nombreMap[prodVig(sx.productoId)]=sx.nombre; } });
 
       const ym=f.slice(0,7);
       (ev.descontado||[]).forEach(d=>{
         if(!d.productoId) return;
+        d={...d, productoId:prodVig(d.productoId)};   // v74
         const prod=productosCache.find(x=>x.id===d.productoId);
         const precio=(prod&&prod.precioUnit!=null&&prod.precioUnit!=='')?Number(prod.precioUnit):null;
         const cant=Number(d.cantidad)||0;
@@ -3938,9 +3951,10 @@ async function ajustarStockBodega(descuentos, bodega, signo, sinAnotar){
   for(const d of descuentos){
     if(!d.productoId || !d.cantidad) continue;
     const k = recintoVigente(d.recinto || bod);   // v44 · un producto puede salir de otro recinto · v61 lo de un recinto fusionado va al que lo absorbió
-    const p=productosCache.find(x=>x.id===d.productoId);
+    const pidV=prodVig(d.productoId);   // v74 · un producto fusionado descuenta del que lo absorbió
+    const p=productosCache.find(x=>x.id===pidV);
     tareas.push(
-      db.collection('productos').doc(d.productoId).update({
+      db.collection('productos').doc(pidV).update({
         ['stock.'+k]: firebase.firestore.FieldValue.increment(signo*d.cantidad),
         updatedAt: Date.now()
       }).catch(e=>{
@@ -3949,7 +3963,7 @@ async function ajustarStockBodega(descuentos, bodega, signo, sinAnotar){
         // movía. Ahora se junta, se deshace en el cache y se avisa.
         console.warn('stock '+d.productoId+':', e&&e.message);
         if(p&&p.stock) p.stock[k]=(Number(p.stock[k])||0)-signo*d.cantidad;
-        fallidos.push({productoId:d.productoId, nombre:d.nombre||(p&&p.nombre)||'', recinto:k,
+        fallidos.push({productoId:pidV, nombre:d.nombre||(p&&p.nombre)||'', recinto:k,
           cantidad:signo*d.cantidad, error:String((e&&(e.code||e.message))||'error')});
       })
     );
@@ -4396,7 +4410,7 @@ function aplHistLimpiarUI(){ const b=document.getElementById('aplFiltros'); if(b
 function aplConsumoTotal(a){
   const lista=(Array.isArray(a.usos)&&a.usos.length) ? a.usos.flatMap(u=>consumoDe(u)) : consumoDe(a);
   const out={};
-  lista.forEach(d=>{ if(!d.productoId) return; out[d.productoId]=(out[d.productoId]||0)+(Number(d.cantidad)||0); });
+  lista.forEach(d=>{ if(!d.productoId) return; const k=prodVig(d.productoId); out[k]=(out[k]||0)+(Number(d.cantidad)||0); });
   return out;
 }
 function aplLugaresTxt(a){
@@ -4426,9 +4440,9 @@ function aplHistExcel(){
     else prods=(a.receta||[]).map(r=>({id:r.productoId, n:r.nombre, dosis:r.cantidad, u:r.unidadStock||''}));
     if(!prods.length) prods=[{n:'', dosis:null, u:''}];
     prods.forEach(pr=>{
-      const pc=(productosCache||[]).find(x=>x.id===pr.id);
+      const pc=(productosCache||[]).find(x=>x.id===prodVig(pr.id));
       filas.push({...base, Producto:pr.n||'', Dosis:pr.dosis!=null?Number(pr.dosis):null, 'Unidad dosis':pr.u,
-        'Cantidad usada':pr.id&&cons[pr.id]!=null?+cons[pr.id].toFixed(3):null, 'Unidad bodega':(pc&&pc.unidad)||''});
+        'Cantidad usada':pr.id&&cons[prodVig(pr.id)]!=null?+cons[prodVig(pr.id)].toFixed(3):null, 'Unidad bodega':(pc&&pc.unidad)||''});
     });
   });
   const ws=XLSX.utils.json_to_sheet(filas), wb=XLSX.utils.book_new();
@@ -4595,7 +4609,7 @@ function recetaATexto(receta){
 function recetaAEstado(receta){
   return (receta||[]).map(r=>({
     txt:r.nombre||r.txt||'', dosis:(r.dosis!=null&&!isNaN(r.dosis))?Number(r.dosis):null,
-    unidad:r.unidad||'', productoId:r.productoId||'', nombre:r.nombre||r.txt||''
+    unidad:r.unidad||'', productoId:r.productoId?prodVig(r.productoId):'', nombre:r.nombre||r.txt||''
   }));
 }
 
@@ -4629,7 +4643,7 @@ async function aplEditar(id){
       aplAci=nuevoAcidoForm(a.predioId||'');
       Object.assign(aplAci, {fecha:a.fecha||todayIso, cultivo:a.cultivo||'', epoca:a.epoca||''});
       aplAci.modo = a.modo==='superficie' ? 'superficie' : a.modo==='mezcla' ? 'mezcla' : 'directo';
-      (a.sales||[]).forEach(sl=>{ const k=ACIDOS_ORDEN.find(z=>ACIDOS[z].nombre===sl.nombre); if(k && sl.productoId) aplAci.prodSel[k]=sl.productoId; });
+      (a.sales||[]).forEach(sl=>{ const k=ACIDOS_ORDEN.find(z=>ACIDOS[z].nombre===sl.nombre); if(k && sl.productoId) aplAci.prodSel[k]=prodVig(sl.productoId); });
       if(aplAci.modo==='superficie'){   // v61
         (a.acidos||[]).forEach(x=>{ if(ACIDOS[x.acido]) aplAci.kg[x.acido]=String(x.kg!=null?x.kg:''); });
         const dentro=new Set((a.sectores||[]).map(x=>String(x.sector)));
@@ -4657,7 +4671,7 @@ async function aplEditar(id){
     }else if(tipo==='viariego'){
       aplVia={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
         recetaTxt:recetaATexto(a.receta), receta:recetaAEstado(a.receta), sectores:{}, recintos:{} };
-      (a.descontado||[]).forEach(d=>{ if(d.productoId && esRecinto(d.recinto)) aplVia.recintos[d.productoId]=d.recinto; });   // v44
+      (a.descontado||[]).forEach(d=>{ if(d.productoId && esRecinto(d.recinto)) aplVia.recintos[prodVig(d.productoId)]=d.recinto; });   // v44
       (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) aplVia.sectores[String(x.sector)]=true; });
     }else{
       const est=nuevoEstanque();
@@ -4667,7 +4681,7 @@ async function aplEditar(id){
         const i=FERTIRRIEGO_SALES.findIndex(x=>claveProd(x.nombre)===claveProd(s.nombre||''));
         if(i>=0){
           est.cant[i]=String(s.cantidadKg!=null?s.cantidadKg:'');
-          if(s.productoId) est.prodSel[i]=s.productoId;
+          if(s.productoId) est.prodSel[i]=prodVig(s.productoId);
         }
       });
       (a.sectores||[]).forEach(x=>{ if(x && x.sector!=null) est.litros[String(x.sector)]=String(x.litros!=null?x.litros:''); });
@@ -5886,6 +5900,7 @@ async function initPlanilla(){
         stockMin: x.stockMin!=null?x.stockMin:'', capEnvase:x.capEnvase!=null?x.capEnvase:'',
         envases:x.envases!=null?x.envases:'', precioEnv:x.precioEnv!=null?x.precioEnv:'',
         vencimiento:x.vencimiento||'', _dirty:false, _new:false,
+        activo: x.activo!==false, fusionadoEn: x.fusionadoEn||'', alias: Array.isArray(x.alias)?x.alias.slice():[],   // v74
         ...(typeof x.casetaLC==='boolean'?{casetaLC:x.casetaLC}:{}), lcPrincipalOk:!!x.lcPrincipalOk   // v61/v62 · marcas de Ordenar bodegas LC
       };
     });
@@ -5920,15 +5935,15 @@ function planRow(p, idx){
   const uni=`<select onchange="planSet(${idx},'unidad',this.value)"><option value="">—</option>${['kg','L','uni'].map(u=>`<option${u===p.unidad?' selected':''}>${u}</option>`).join('')}</select>`;
   const pu=planPrecioUnit(p);
   return `<tr>
-    <td class="pname"><input type="text" value="${escH(p.nombre)}" oninput="planSet(${idx},'nombre',this.value)" placeholder="Nombre"></td>
+    <td class="pname"><input type="text" value="${escH(p.nombre)}" oninput="planSet(${idx},'nombre',this.value)" placeholder="Nombre">${p.activo===false?`<div style="font-size:9.5px;color:var(--red);padding:0 5px;white-space:normal">Desactivado${p.fusionadoEn?' (fusionado)':''} con saldo: usa 🔗 Fusionar</div>`:''}</td>
     <td>${cat}</td>
     <td>${uni}</td>
     ${planColumnasStock().map(k=>{
       const v=p.stock[k]; const neg=num(v)<-1e-9;
       const bg=RECINTOS[k]?TINTE_PREDIO[RECINTOS[k].predio]:'#FEF3C7';
-      return `<td style="background:${bg}"><input type="text" inputmode="decimal" value="${v?escH(String(v)):''}" oninput="planSetStock(${idx},'${k}',this.value)"${neg?' style="color:var(--red);font-weight:700"':''}></td>`;
+      return `<td style="background:${bg}"><input type="text" inputmode="decimal" value="${v?escH(String(Math.round(num(v)*10)/10)):''}" oninput="planSetStock(${idx},'${k}',this.value)"${neg?' style="color:var(--red);font-weight:700"':''}></td>`;
     }).join('')}
-    <td class="plan-total-num" id="tot-${idx}">${fmtNum(planTotal(p))}</td>
+    <td class="plan-total-num" id="tot-${idx}">${fmtNum(planTotal(p),1)}</td>
     <td><input type="text" inputmode="decimal" value="${p.stockMin}" oninput="planSet(${idx},'stockMin',this.value)"></td>
     <td><input type="text" inputmode="decimal" value="${p.capEnvase}" oninput="planSet(${idx},'capEnvase',this.value)" placeholder="kg/L x env"></td>
     <td><input type="text" inputmode="decimal" value="${p.envases}" oninput="planSet(${idx},'envases',this.value)"></td>
@@ -5946,6 +5961,7 @@ function renderPlanilla(){
   let rows='';
   planProds.forEach((p,idx)=>{
     if(f && !p.nombre.toLowerCase().includes(f)) return;
+    if(p.activo===false && Math.abs(planTotal(p))<1e-9) return;   // v74 · desactivados/fusionados sin saldo no se muestran
     rows+=planRow(p,idx);
   });
   grid.innerHTML=`<table class="plan-table">
@@ -5986,6 +6002,7 @@ function renderPlanilla(){
   }
   const ab=document.getElementById('planAddBtn'); if(ab) ab.style.display=canCatalogo()?'':'none';
   const sb=document.getElementById('planSaveBtn'); if(sb) sb.style.display=canCatalogo()?'':'none';
+  const fb=document.getElementById('planFusionBtn'); if(fb) fb.style.display=canManageUsers()?'':'none';   // v74
   planUpdateInfo();
 }
 
@@ -6015,7 +6032,7 @@ function planSetStock(idx,predio,val){
   planProds[idx].stock[predio]=val;
   planProds[idx]._dirty=true;
   const el=document.getElementById('tot-'+idx);
-  if(el) el.textContent=fmtNum(planTotal(planProds[idx]));
+  if(el) el.textContent=fmtNum(planTotal(planProds[idx]),1);
   planUpdateInfo();
 }
 
@@ -6093,7 +6110,7 @@ async function calcConciliacion(){
   const pred=concState.predio, desde=concState.desde||'', hasta=concState.hasta||'';
   const enRango = f => (!desde||f>=desde)&&(!hasta||f<=hasta);
   const acc={}; // acc[bodega][productoId] = {nombre, entregado, usado}
-  const cell=(b,pid)=>{ if(!acc[b])acc[b]={}; if(!acc[b][pid])acc[b][pid]={nombre:'',entregado:0,usado:0}; return acc[b][pid]; };
+  const cell=(b,pid)=>{ pid=prodVig(pid); if(!acc[b])acc[b]={}; if(!acc[b][pid])acc[b][pid]={nombre:'',entregado:0,usado:0}; return acc[b][pid]; };
   try{
     // Movimientos: compras (entrada) y despachos (entrada al destino, salida del origen)
     const mov=await db.collection('movimientos').get();
@@ -6139,6 +6156,8 @@ async function calcConciliacion(){
         });
       });
     });
+    // v74 · Nombre del producto vigente (los movimientos viejos traen el nombre anterior)
+    Object.values(acc).forEach(m=>Object.keys(m).forEach(pid=>{ const p=productosCache.find(x=>x.id===pid); if(p) m[pid].nombre=p.nombre; }));
     // Armar por bodega (todas o la elegida)
     const orden = pred ? [pred] : RECINTO_TODOS.concat(BODEGAS_LEGADO);   // v44 · v61 incluye los retirados
     const grupos=[];
@@ -6183,9 +6202,9 @@ function renderConciliacion(){
             const nota=neg?' ⚠':'';
             return `<tr style="border-bottom:1px solid var(--sand)">
               <td style="padding:4px">${escH(f.nombre)}</td>
-              <td style="padding:4px;text-align:right">${fmtNum(f.entregado,2)}</td>
-              <td style="padding:4px;text-align:right;color:#B45309">${fmtNum(f.usado,2)}</td>
-              <td style="padding:4px;text-align:right;color:${col};font-weight:600">${fmtNum(f.dif,2)}${nota}</td>
+              <td style="padding:4px;text-align:right">${fmtNum(f.entregado,1)}</td>
+              <td style="padding:4px;text-align:right;color:#B45309">${fmtNum(f.usado,1)}</td>
+              <td style="padding:4px;text-align:right;color:${col};font-weight:600">${fmtNum(f.dif,1)}${nota}</td>
             </tr>`;
           }).join('')}
           </tbody></table></div>
@@ -6216,7 +6235,7 @@ function recintoOptsHTML(lista, sel, conStockDe){
   return PRED_ORDER.map(pid=>{
     const ks=lista.filter(k=>RECINTOS[k]&&RECINTOS[k].predio===pid);
     if(!ks.length) return '';
-    return `<optgroup label="${escH(PREDIOS[pid].nombre)}">`+ks.map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(RECINTOS[k].nombre)}${conStockDe?` (${fmtNum(stockEn(conStockDe,k),2)})`:''}</option>`).join('')+`</optgroup>`;
+    return `<optgroup label="${escH(PREDIOS[pid].nombre)}">`+ks.map(k=>`<option value="${k}"${k===sel?' selected':''}>${escH(RECINTOS[k].nombre)}${conStockDe?` (${fmtNum(stockEn(conStockDe,k),1)})`:''}</option>`).join('')+`</optgroup>`;
   }).join('');
 }
 
@@ -6231,7 +6250,7 @@ function abrirMovProducto(idx){
   document.getElementById('modalContent').innerHTML=`
     <div class="modal-title">📦 ${escH(p.nombre)}</div>
     <div class="modal-sub" style="line-height:1.6">${conStock.length
-      ? conStock.map(k=>`<b${stockEn(p,k)<0?' style="color:var(--red)"':''}>${fmtNum(stockEn(p,k),2)}</b> ${escH(nombreBodega(k,true))}`).join(' · ')+` ${escH(uni)}`
+      ? conStock.map(k=>`<b${stockEn(p,k)<0?' style="color:var(--red)"':''}>${fmtNum(stockEn(p,k),1)}</b> ${escH(nombreBodega(k,true))}`).join(' · ')+` ${escH(uni)}`
       : 'Sin stock en ningún recinto'}</div>
 
     ${canComprar()?`
@@ -6829,7 +6848,7 @@ function abrirEnvioCasetaLC(){
 }
 function envLCStockTxt(){
   const p=productosCache.find(x=>x.id===document.getElementById('envProd').value);
-  document.getElementById('envStock').textContent = p ? `Stock en Bodega Principal: ${fmtNum(stockEn(p,RECINTO_LC_BODEGA),2)} ${p.unidad||''}` : '';
+  document.getElementById('envStock').textContent = p ? `Stock en Bodega Principal: ${fmtNum(stockEn(p,RECINTO_LC_BODEGA),1)} ${p.unidad||''}` : '';
 }
 async function guardarEnvioCasetaLC(){
   if(!puedeEnviarCasetaLC()){ toast('Sin permiso'); return; }
@@ -6839,7 +6858,7 @@ async function guardarEnvioCasetaLC(){
   const nota=(document.getElementById('envNota').value||'').trim();
   if(!p){ toast('⚠️ Elige el producto'); return; }
   if(!(cant>0)){ toast('⚠️ Indica la cantidad enviada'); return; }
-  if(stockEn(p,RECINTO_LC_BODEGA) < cant-1e-9 && !confirm(`Bodega Principal tiene ${fmtNum(stockEn(p,RECINTO_LC_BODEGA),2)} ${p.unidad||''} de ${p.nombre}.\n\n¿Registrar el envío de ${fmtNum(cant,2)} igual?`)) return;
+  if(stockEn(p,RECINTO_LC_BODEGA) < cant-1e-9 && !confirm(`Bodega Principal tiene ${fmtNum(stockEn(p,RECINTO_LC_BODEGA),1)} ${p.unidad||''} de ${p.nombre}.\n\n¿Registrar el envío de ${fmtNum(cant,2)} igual?`)) return;
   const yo=quienSoy();
   loading(true,'Enviando aviso…');
   try{
@@ -6898,6 +6917,153 @@ async function anularEnvioCasetaLC(id){
     toast('Envío anulado');
   }catch(e){ toast('Error: '+e.message); }
   loading(false);
+}
+
+
+// ══════════════════════════════════════════════
+// v74 · FUSIONAR PRODUCTOS DUPLICADOS (gerencia)
+// El mismo producto quedó cargado con nombres distintos (p. ej. SULFATO DE
+// POTASIO / SULFATO POTASIO / S. POTASIO). Se elige el que queda; a ese se le
+// suma el stock de cada recinto y se le agregan los otros nombres como alias.
+// Los otros NO se borran: quedan activo:false, stock en cero, stockPrevio y
+// fusionadoEn. Las aplicaciones y movimientos antiguos siguen apuntando a su
+// id; prodVig() los traduce al que quedó (stock, gasto y conciliación).
+// ══════════════════════════════════════════════
+let fus={sel:new Set(), win:'', q:''};
+function fusGrupos(){
+  const prods=planProds.filter(p=>p.id);
+  const padre={}; const raiz=x=>{ while(padre[x]!==x) x=padre[x]=padre[padre[x]]; return x; };
+  prods.forEach(p=>padre[p.id]=p.id);
+  const porClave={};
+  prods.forEach(p=>clavesProd(p).forEach(k=>{ (porClave[k]=porClave[k]||[]).push(p.id); }));
+  Object.values(porClave).forEach(ids=>ids.slice(1).forEach(id=>{ padre[raiz(id)]=raiz(ids[0]); }));
+  const g={};
+  prods.forEach(p=>{ (g[raiz(p.id)]=g[raiz(p.id)]||[]).push(p); });
+  // Solo los grupos con algo que ordenar: más de un activo, o un inactivo con saldo
+  return Object.values(g).filter(l=>l.length>1 && (l.filter(p=>p.activo!==false).length>1 || l.some(p=>p.activo===false && Math.abs(planTotal(p))>1e-9)));
+}
+function fusSugerirGanador(lista){
+  return lista.slice().sort((a,b)=>
+    ((b.activo!==false)-(a.activo!==false)) ||
+    (/\bDE\b/i.test(b.nombre)-/\bDE\b/i.test(a.nombre)) ||
+    (Math.abs(planTotal(b))-Math.abs(planTotal(a))) ||
+    (b.nombre.length-a.nombre.length))[0];
+}
+function fusStockTxt(p){
+  const ks=Object.keys(p.stock||{}).filter(k=>Math.abs(num(p.stock[k]))>1e-9);
+  return ks.length ? ks.map(k=>`${escH(esRecinto(k)?nombreBodega(k,true):k)} ${fmtNum(num(p.stock[k]),1)}`).join(' · ') : 'sin saldo';
+}
+function abrirFusionProductos(){
+  if(!canManageUsers()){ toast('Solo gerencia'); return; }
+  if(planProds.some(p=>p._dirty||p._new)){ toast('⚠️ Primero guarda los cambios de la planilla'); return; }
+  fus={sel:new Set(), win:'', q:''};
+  document.getElementById('overlay').classList.add('open');
+  renderFusion();
+}
+function fusElegirGrupo(i){
+  const g=fusGrupos()[i]; if(!g) return;
+  fus.sel=new Set(g.map(p=>p.id)); fus.win=fusSugerirGanador(g).id; renderFusion();
+}
+function fusToggle(id, on){
+  if(on) fus.sel.add(id); else fus.sel.delete(id);
+  if(!fus.sel.has(fus.win)) fus.win=fus.sel.size ? fusSugerirGanador(planProds.filter(p=>fus.sel.has(p.id))).id : '';
+  renderFusion();
+}
+function fusBuscar(v){ fus.q=v; const el=document.getElementById('fusRes'); if(el) el.innerHTML=fusResultadosHTML(); }
+function fusResultadosHTML(){
+  const q=normNombre(fus.q); if(q.length<2) return '';
+  const l=planProds.filter(p=>p.id && !fus.sel.has(p.id) && (normNombre(p.nombre).includes(q) || (p.alias||[]).some(a=>normNombre(a).includes(q)))).slice(0,15);
+  return l.length ? l.map(p=>`<label style="display:flex;gap:8px;align-items:center;font-size:12px;text-transform:none;font-weight:400;margin:3px 0;cursor:pointer">
+      <input type="checkbox" style="width:16px;height:16px" onchange="fusToggle('${p.id}',this.checked)">
+      <span><b>${escH(p.nombre)}</b>${p.activo===false?' <span style="color:var(--red)">(desactivado)</span>':''} <span style="color:var(--muted)">· ${escH(p.unidad||'—')} · ${fusStockTxt(p)}</span></span></label>`).join('')
+    : '<div style="font-size:11px;color:var(--muted)">Sin resultados</div>';
+}
+function renderFusion(){
+  const grupos=fusGrupos();
+  const sel=planProds.filter(p=>fus.sel.has(p.id));
+  const win=sel.find(p=>p.id===fus.win);
+  const unidades=[...new Set(sel.map(p=>p.unidad).filter(Boolean))];
+  const suma={}; sel.forEach(p=>Object.keys(p.stock||{}).forEach(k=>{ suma[k]=(suma[k]||0)+num(p.stock[k]); }));
+  const sumaTxt=Object.keys(suma).filter(k=>Math.abs(suma[k])>1e-9).map(k=>`${escH(esRecinto(k)?nombreBodega(k,true):k)} <b>${fmtNum(suma[k],1)}</b>`).join(' · ')||'sin saldo';
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">🔗 Fusionar productos duplicados</div>
+    <div class="modal-sub">El que queda suma el stock de cada recinto y recibe los otros nombres como alias (las recetas escritas con el nombre viejo siguen funcionando). Los otros quedan desactivados, no se borran, y su historial pasa a contar en el que queda.</div>
+    ${grupos.length?`<div class="sec-div">Duplicados detectados por nombre</div>`+grupos.map((g,i)=>`<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--sand)">
+        <div style="flex:1;font-size:12px">${g.map(p=>`<b>${escH(p.nombre)}</b>${p.activo===false?' <span style="color:var(--red);font-size:10px">(desact.)</span>':''}`).join(' · ')}</div>
+        <button class="btn btn-sm btn-secondary" onclick="fusElegirGrupo(${i})">Elegir</button></div>`).join(''):'<div style="font-size:11px;color:var(--muted);margin:6px 0">No se detectaron duplicados por nombre. Búscalos abajo.</div>'}
+    <div class="sec-div">Agregar a la fusión</div>
+    <input type="text" placeholder="🔍 Buscar producto (ej: potasio)" value="${escH(fus.q)}" oninput="fusBuscar(this.value)">
+    <div id="fusRes" style="margin:4px 0 8px">${fusResultadosHTML()}</div>
+    <div class="sec-div">Selección (${sel.length})</div>
+    ${sel.length?sel.map(p=>`<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:1px solid var(--sand)">
+        <input type="radio" name="fusWin" ${p.id===fus.win?'checked':''} onchange="fus.win='${p.id}';renderFusion()" style="width:16px;height:16px;margin-top:2px" title="Este es el que queda">
+        <div style="flex:1;font-size:12px"><b>${escH(p.nombre)}</b>${p.id===fus.win?' <span style="color:var(--green);font-weight:700">← queda</span>':''}${p.activo===false?' <span style="color:var(--red)">(desactivado)</span>':''}
+          <div style="color:var(--muted);font-size:11px">${escH(p.categoria||'sin categoría')} · ${escH(p.unidad||'sin unidad')} · ${fusStockTxt(p)}</div></div>
+        <button class="del-btn" onclick="fusToggle('${p.id}',false)">✕</button></div>`).join('')
+      +`<div style="font-size:11.5px;margin:8px 0;line-height:1.5">Stock resultante: ${sumaTxt}</div>`
+      +(unidades.length>1?`<div style="font-size:11.5px;color:var(--red);font-weight:700;margin-bottom:6px">⚠️ Tienen unidades distintas (${unidades.map(escH).join(' y ')}). Corrige la unidad en la planilla antes de fusionar: no se pueden sumar kg con L.</div>`:'')
+      : '<div style="font-size:11px;color:var(--muted)">Elige un grupo o busca productos.</div>'}
+    ${sel.length>1&&win&&unidades.length<=1?`<div class="form-row"><label>Nombre final</label><input type="text" id="fusNombre" value="${escH(win.nombre)}"></div>
+      <button class="btn btn-primary" onclick="ejecutarFusion()">Fusionar ${sel.length} en «${escH(win.nombre)}»</button>`:''}
+    <button class="btn btn-secondary" style="margin-top:6px" onclick="closeModal()">Cerrar</button>`;
+}
+async function ejecutarFusion(){
+  if(!canManageUsers()) return;
+  const ids=[...fus.sel], winId=fus.win;
+  const losers=ids.filter(id=>id!==winId);
+  if(!winId||!losers.length){ toast('⚠️ Elige al menos dos productos'); return; }
+  const nombreFinal=(document.getElementById('fusNombre').value||'').trim();
+  if(!nombreFinal){ toast('⚠️ Escribe el nombre final'); return; }
+  if(!confirm(`Se fusionan ${ids.length} productos en «${nombreFinal}».\n\nLos otros ${losers.length} quedan desactivados (no se borran) y su saldo pasa al que queda.\n\n¿Seguir?`)) return;
+  const yo=quienSoy();
+  loading(true,'Fusionando…');
+  try{
+    let resumen=null;
+    await db.runTransaction(async tx=>{
+      const refs=ids.map(id=>db.collection('productos').doc(id));
+      const snaps=await Promise.all(refs.map(r=>tx.get(r)));
+      const docs={}; snaps.forEach((sn,i)=>{ if(!sn.exists) throw new Error('Un producto ya no existe; recarga la planilla'); docs[ids[i]]=sn.data()||{}; });
+      const W=docs[winId];
+      const unis=[...new Set(ids.map(id=>docs[id].unidad).filter(Boolean))];
+      if(unis.length>1) throw new Error('Unidades distintas: '+unis.join(' y '));
+      const stock=Object.assign({}, W.stock||{});
+      const alias=new Set((W.alias||[]).map(String));
+      if(normNombre(W.nombre)!==normNombre(nombreFinal)) alias.add(W.nombre);
+      const fusionadoDe=new Set(W.fusionadoDe||[]);
+      const upd={};
+      losers.forEach(id=>{
+        const L=docs[id];
+        Object.keys(L.stock||{}).forEach(k=>{ stock[k]=num(stock[k])+num(L.stock[k]); });
+        if(L.nombre && normNombre(L.nombre)!==normNombre(nombreFinal)) alias.add(L.nombre);
+        (L.alias||[]).forEach(a=>alias.add(String(a)));
+        (L.fusionadoDe||[]).forEach(x=>fusionadoDe.add(x));
+        fusionadoDe.add(id);
+        ['categoria','unidad','proveedor','precioUnit','precioEnv','capEnvase','vencimiento','stockMin'].forEach(c=>{
+          const vacio=v=>v===undefined||v===null||v==='';
+          if(vacio(W[c]) && vacio(upd[c]) && !vacio(L[c])) upd[c]=L[c];
+        });
+        const ceros={}; Object.keys(L.stock||{}).forEach(k=>ceros[k]=0);
+        tx.update(refs[ids.indexOf(id)], {stock:ceros, stockPrevio:L.stock||{}, activo:false,
+          fusionadoEn:winId, fusionadoEnNombre:nombreFinal, fusionadoTs:Date.now(), fusionadoPor:yo.nombre, updatedAt:Date.now()});
+      });
+      Object.keys(stock).forEach(k=>{ stock[k]=Math.round(stock[k]*1e6)/1e6; });
+      [...alias].forEach(a=>{ if(normNombre(a)===normNombre(nombreFinal)) alias.delete(a); });
+      Object.assign(upd, {nombre:nombreFinal, stock, alias:[...alias], fusionadoDe:[...fusionadoDe],
+        activo:true, fusionadoEn:firebase.firestore.FieldValue.delete(), fusionadoTs:Date.now(), updatedAt:Date.now()});
+      tx.update(refs[ids.indexOf(winId)], upd);
+      resumen={stock, alias:[...alias]};
+    });
+    // Memoria local
+    losers.forEach(id=>{
+      productosFusionMap[id]=winId;
+      const p=planProds.find(x=>x.id===id); if(p){ p.activo=false; p.fusionadoEn=winId; Object.keys(p.stock||{}).forEach(k=>p.stock[k]=0); }
+    });
+    productosCache=productosCache.filter(p=>!losers.includes(p.id));
+    const pw=planProds.find(x=>x.id===winId); if(pw){ pw.nombre=nombreFinal; pw.stock=Object.assign({}, resumen.stock); pw.alias=resumen.alias; pw.activo=true; pw.fusionadoEn=''; }
+    const pc=productosCache.find(x=>x.id===winId); if(pc){ pc.nombre=nombreFinal; pc.stock=Object.assign({}, resumen.stock); pc.alias=resumen.alias; }
+    loading(false); closeModal(); renderPlanilla();
+    toast(`✅ Fusionados en «${nombreFinal}»`);
+  }catch(e){ loading(false); toast('Error: '+e.message); }
 }
 
 // ── Migración de las bodegas antiguas a recintos (una vez, gerencia) ──
@@ -8973,6 +9139,8 @@ function contEditar(id, desdeTramo){
       <button class="btn btn-primary" onclick="contGuardar()">Guardar contratista</button>
       <button class="btn btn-secondary" onclick="document.getElementById('contForm').innerHTML=''">Cerrar</button>
     </div>
+    ${id?`<button class="btn btn-warn" style="margin-top:8px" onclick="contTraspasoAbrir('${escH(id)}')">🔁 Traspasar a otro contratista</button>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.45">Cuando otro contratista toma su lugar: pasa los ciclos abiertos (mismo ciclo), la programación y, si quieres, los trabajadores, y deja a este inactivo. Lo ya registrado y pagado queda a su nombre.</div>`:''}
   </div>`;
 }
 // v69 · Fila de tarifa. Las labores de contratista muestran el valor del
@@ -9078,6 +9246,151 @@ async function contGuardar(){
       await contRecalcular(guardado, desde, hasta);
   }
 }
+
+// ══════════════════════════════════════════════
+// v74 · TRASPASO DE CONTRATISTA (p. ej. Alicia → Saavedra PSA)
+// Los ciclos y la programación viven bajo el nombre del subjefe en la ruta
+// (/ciclos/{predio}/subjefes/{nombre}/…), y el nombre de un contratista no se
+// cambia. El traspaso:
+//   · copia cada ciclo abierto al nuevo contratista con el MISMO id (así
+//     siguen las marcas de Control y el filtro por ciclo de los informes) y
+//     cierra el original el día anterior al traspaso;
+//   · copia la programación desde la semana del traspaso, sumando tareas si
+//     el nuevo ya tenía algo programado esa semana;
+//   · cambia de subjefe a los trabajadores que se marquen;
+//   · opcional: copia las tarifas vigentes si el nuevo no tiene;
+//   · deja inactivo al contratista anterior.
+// Nada de lo registrado se toca: cada entrada guarda workerSubjefe,
+// contratistaId y el pago con que se registró.
+// ══════════════════════════════════════════════
+let trasp=null;
+async function contTraspasoAbrir(id){
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const orig=contratistasCache.find(c=>c.id===id); if(!orig) return;
+  const destinos=contratistasCache.filter(c=>c.id!==id && c.activo!==false);
+  if(!destinos.length){ toast('⚠️ Primero crea el contratista que lo reemplaza (＋ Nuevo contratista)'); return; }
+  loading(true,'Revisando ciclos, programación y trabajadores…');
+  const ciclos=[], semanas=[], workers=[];
+  for(const pid of (orig.predios||[])){
+    try{ (await colCiclos(pid,orig.nombre).get()).docs.forEach(d=>{ const x=d.data(); if(x.fin===null||x.fin===undefined) ciclos.push({pid, id:d.id, data:x}); }); }catch(e){}
+    try{ (await colProg(pid,orig.nombre).get()).docs.forEach(d=>semanas.push({pid, id:d.id, data:d.data()})); }catch(e){}
+    try{ (await colWorkers(pid).where('subjefe','==',orig.nombre).get()).docs.forEach(d=>workers.push({pid, id:d.id, ...d.data()})); }catch(e){}
+  }
+  loading(false);
+  const dest=destinos.find(c=>(c.predios||[]).some(p=>(orig.predios||[]).includes(p)))||destinos[0];
+  trasp={orig, ciclos, semanas, workers, destId:dest.id};
+  workers.sort((a,b)=>String(a.nombre).localeCompare(String(b.nombre),'es'));
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">🔁 Traspasar ${escH(orig.nombre)}</div>
+    <div class="modal-sub">Lo ya registrado y pagado sigue a nombre de ${escH(orig.nombre)}.</div>
+    <div class="form-row"><label>Lo reemplaza</label><select id="trDest" onchange="trasp.destId=this.value;trTarifasTxt()">${destinos.map(c=>`<option value="${c.id}"${c.id===dest.id?' selected':''}>🧑‍🌾 ${escH(c.nombre)}${(c.predios||[]).length?' · '+c.predios.map(p=>PREDIOS[p]?PREDIOS[p].nombre:p).join(', '):''}</option>`).join('')}</select></div>
+    <div class="form-row"><label>Desde (primer día del nuevo contratista)</label><input type="date" id="trFecha" value="${todayIso}" onchange="trSemTxt()"></div>
+    <div class="sec-div">Ciclos abiertos (${ciclos.length})</div>
+    ${ciclos.length?ciclos.map((c,i)=>`<label style="display:flex;gap:8px;align-items:center;font-size:12px;text-transform:none;font-weight:400;margin:3px 0;cursor:pointer"><input type="checkbox" class="trCic" data-i="${i}" checked style="width:16px;height:16px"> ${escH(cicloLabel(c.data))} · ${escH(PREDIOS[c.pid]?PREDIOS[c.pid].nombre:c.pid)}${c.data.modulos&&c.data.modulos.length?' · '+escH(modulosLabel(c.data.modulos)):''} <span style="color:var(--muted)">(desde ${fDMY(c.data.inicio)})</span></label>`).join('')
+      :'<div style="font-size:11px;color:var(--muted)">No tiene ciclos abiertos.</div>'}
+    <div style="font-size:10.5px;color:var(--muted);line-height:1.45;margin:2px 0 6px">Cada ciclo pasa al nuevo contratista con el mismo identificador (sigue el mismo cultivo, sus marcas de Control y su fecha de plantación) y el de ${escH(orig.nombre)} se cierra el día anterior.</div>
+    <div class="sec-div">Programación</div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:12px;text-transform:none;font-weight:400;cursor:pointer"><input type="checkbox" id="trProg" checked style="width:16px;height:16px"> <span id="trSemTxt"></span></label>
+    <div class="sec-div">Trabajadores de ${escH(orig.nombre)} (${workers.length})</div>
+    ${workers.length?`<div style="font-size:10.5px;color:var(--muted);line-height:1.45;margin-bottom:4px">Marca solo a quienes siguen trabajando con el nuevo contratista. Si llega con gente nueva, déjalos sin marcar y agrégala en Trabajadores.</div>
+      <div style="display:flex;gap:6px;margin-bottom:4px"><button type="button" class="btn btn-sm" style="flex:1;background:var(--sand);color:var(--dark)" onclick="document.querySelectorAll('.trW').forEach(x=>x.checked=true)">Marcar todos</button><button type="button" class="btn btn-sm" style="flex:1;background:var(--sand);color:var(--dark)" onclick="document.querySelectorAll('.trW').forEach(x=>x.checked=false)">Desmarcar todos</button></div>
+      <div style="max-height:200px;overflow-y:auto;border:1px solid var(--sand);border-radius:8px;padding:4px 8px">${workers.map((w,i)=>`<label style="display:flex;gap:8px;align-items:center;font-size:12px;text-transform:none;font-weight:400;margin:3px 0;cursor:pointer"><input type="checkbox" class="trW" data-i="${i}" style="width:16px;height:16px"> ${escH(w.nombre||'')} <span style="color:var(--muted)">· ${escH(PREDIOS[w.pid]?PREDIOS[w.pid].nombre:w.pid)}</span></label>`).join('')}</div>`
+      :'<div style="font-size:11px;color:var(--muted)">No tiene trabajadores.</div>'}
+    <div class="sec-div">Tarifas</div>
+    <div id="trTar"></div>
+    <div class="sec-div">${escH(orig.nombre)}</div>
+    <label style="display:flex;gap:8px;align-items:center;font-size:12px;text-transform:none;font-weight:400;cursor:pointer"><input type="checkbox" id="trDesact" checked style="width:16px;height:16px"> Dejarlo inactivo (deja de aparecer en registro y programación; sigue en informes)</label>
+    <button class="btn btn-primary" style="margin-top:10px" onclick="contTraspasoEjecutar()">Traspasar</button>
+    <button class="btn btn-secondary" style="margin-top:6px" onclick="closeModal()">Cancelar</button>`;
+  document.getElementById('overlay').classList.add('open');
+  trSemTxt(); trTarifasTxt();
+}
+function trSemTxt(){
+  const f=document.getElementById('trFecha').value||todayIso, lun=cLunes(f);
+  const n=trasp.semanas.filter(s=>s.id>=lun).length;
+  const el=document.getElementById('trSemTxt');
+  if(el) el.textContent = n ? `Pasar la programación desde la semana del ${fDMY(lun)} (${n} semana${n>1?'s':''})` : `No hay programación desde la semana del ${fDMY(lun)}`;
+}
+function trTarifasTxt(){
+  const d=contratistasCache.find(c=>c.id===trasp.destId), el=document.getElementById('trTar'); if(!el||!d) return;
+  const tv=tarifaVigente(d, todayIso);
+  const tiene=Object.values(tv.tarifas||{}).some(v=>Number(v)>0)||tv.precioToro||tv.precioGamela;
+  el.innerHTML = tiene
+    ? `<div style="font-size:11.5px">${escH(d.nombre)} ya tiene tarifas: se mantienen las suyas.</div>`
+    : `<label style="display:flex;gap:8px;align-items:center;font-size:12px;text-transform:none;font-weight:400;cursor:pointer"><input type="checkbox" id="trTarCopiar" style="width:16px;height:16px"> ${escH(d.nombre)} no tiene tarifas: copiar las vigentes de ${escH(trasp.orig.nombre)} desde la fecha del traspaso</label>
+       <div style="font-size:10.5px;color:var(--muted);margin-top:2px">Si cobra distinto, déjalo sin marcar y cárgalas en su ficha.</div>`;
+}
+async function contTraspasoEjecutar(){
+  if(!canConfigCostos()||!trasp) return;
+  const orig=trasp.orig, dest=contratistasCache.find(c=>c.id===trasp.destId);
+  const fecha=document.getElementById('trFecha').value||todayIso;
+  const lun=cLunes(fecha);
+  const cics=[...document.querySelectorAll('.trCic:checked')].map(x=>trasp.ciclos[+x.dataset.i]);
+  const ws=[...document.querySelectorAll('.trW:checked')].map(x=>trasp.workers[+x.dataset.i]);
+  const conProg=document.getElementById('trProg').checked;
+  const sems=conProg ? trasp.semanas.filter(s=>s.id>=lun) : [];
+  const copiarTar=!!(document.getElementById('trTarCopiar')||{}).checked;
+  const desact=document.getElementById('trDesact').checked;
+  if(!dest){ toast('⚠️ Elige el contratista que lo reemplaza'); return; }
+  if(!confirm(`Traspaso de ${orig.nombre} a ${dest.nombre} desde el ${fDMY(fecha)}:\n\n• ${cics.length} ciclo(s)\n• ${sems.length} semana(s) de programación\n• ${ws.length} trabajador(es)\n• Tarifas: ${copiarTar?'se copian':'no se tocan'}\n• ${orig.nombre}: ${desact?'queda inactivo':'sigue activo'}\n\n¿Seguir?`)) return;
+  const yo=quienSoy(), marca={traspasadoDe:orig.nombre, traspasadoAt:Date.now(), traspasadoPor:yo.nombre};
+  loading(true,'Traspasando…');
+  const err=[];
+  // Predios: el nuevo tiene que estar en los predios donde tenía ciclos o gente
+  const predios=[...new Set([...(dest.predios||[]), ...cics.map(c=>c.pid), ...ws.map(w=>w.pid), ...sems.map(s=>s.pid)])];
+  try{
+    const updDest={predios, updatedAt:Date.now(), updatedBy:currentUser.uid};
+    if(copiarTar){
+      const tv=tarifaVigente(orig, fecha);
+      const hist=(dest.historial||[]).filter(x=>x&&x.desde&&x.desde!==fecha).concat([{desde:fecha, tarifas:tv.tarifas||{}, unidades:tv.unidades||{},
+        precioToro:tv.precioToro||0, precioGamela:tv.precioGamela||0, ts:Date.now(), uid:currentUser.uid, por:yo.nombre+' (copiadas de '+orig.nombre+')'}]).sort((a,b)=>a.desde.localeCompare(b.desde));
+      const vig=tarifaVigente({historial:hist}, todayIso);
+      Object.assign(updDest, {historial:hist, tarifas:vig.tarifas, unidades:vig.unidades, precioToro:vig.precioToro, precioGamela:vig.precioGamela});
+    }
+    await db.collection('contratistas').doc(dest.id).update(updDest);
+  }catch(e){ err.push('Contratista nuevo: '+e.message); }
+  for(const c of cics){
+    try{
+      await colCiclos(c.pid,dest.nombre).doc(c.id).set({...c.data, fin:null, ...marca});
+      const ayer=cAdd(fecha,-1);
+      const fin = ayer < (c.data.inicio||'') ? c.data.inicio : ayer;
+      await colCiclos(c.pid,orig.nombre).doc(c.id).update({fin, traspasadoA:dest.nombre, traspasadoAt:Date.now(),
+        notas:((c.data.notas?c.data.notas+' · ':'')+'Traspasado a '+dest.nombre+' el '+fDMY(fecha))});
+    }catch(e){ err.push('Ciclo '+cicloLabel(c.data)+': '+e.message); }
+  }
+  for(const sm of sems){
+    try{
+      const ref=colProg(sm.pid,dest.nombre).doc(sm.id);
+      const prev=await ref.get();
+      const pd=prev.exists?((prev.data()||{}).dias||{}):{};
+      const dias={};
+      Object.keys(sm.data.dias||{}).forEach(iso=>{
+        const a=normProgDia(pd[iso]).labores, b=normProgDia(sm.data.dias[iso]).labores;
+        const ids=new Set(a.map(t=>t.id));
+        dias[iso]={labores:a.concat(b.filter(t=>!ids.has(t.id))).map(limpiarTareaProg)};
+      });
+      await ref.set({semana:sm.id, ts:Date.now(), creadoPor:currentUser.uid, appV:PROG_APPV, dias, ...marca}, {merge:true});
+    }catch(e){ err.push('Programación '+fDMY(sm.id)+': '+e.message); }
+  }
+  for(const w of ws){
+    try{
+      await colWorkers(w.pid).doc(w.id).update({subjefe:dest.nombre, subjefeAnterior:orig.nombre, traspasadoAt:Date.now()});
+      const wl=(wMap[w.pid]||[]).find(x=>x.id===w.id); if(wl) wl.subjefe=dest.nombre;
+    }catch(e){ err.push('Trabajador '+(w.nombre||'')+': '+e.message); }
+  }
+  if(desact){
+    try{ await db.collection('contratistas').doc(orig.id).update({activo:false, reemplazadoPor:dest.nombre, reemplazadoDesde:fecha, updatedAt:Date.now(), updatedBy:currentUser.uid}); }
+    catch(e){ err.push(orig.nombre+': '+e.message); }
+  }
+  await loadContratistas();
+  loading(false); closeModal();
+  document.getElementById('contForm').innerHTML='';
+  renderContratistasConfig();
+  loadPredioData(activePred);
+  if(err.length) alert('El traspaso quedó incompleto:\n\n'+err.join('\n')+'\n\nLo demás sí se hizo. Puedes volver a abrir el traspaso para lo que falte.');
+  else toast(`✅ ${dest.nombre} reemplaza a ${orig.nombre} desde el ${fDMY(fecha)}`);
+}
+
 // v65 · Recalcula el pago de las entradas del contratista en [desde, hasta).
 async function contRecalcular(cont, desde, hasta){
   loading(true,'Recalculando pagos…');
@@ -9426,12 +9739,20 @@ function initInformes(){
   document.getElementById('infTabsWrap').style.display = 'none';
 }
 
+// v74 · Subjefes para informes: los de planta, los contratistas activos y
+// también los inactivos de ese predio, para que su trabajo pasado siga
+// apareciendo con su ciclo y se pueda filtrar.
+function subjefesInforme(pid){
+  const l=PREDIOS[pid].subjefes.slice();
+  contratistasCache.forEach(c=>{ if((c.predios||[]).includes(pid) && !l.includes(c.nombre)) l.push(c.nombre); });
+  return l;
+}
 function onInfPredioChange(){
   const pid = document.getElementById('infPredio').value;
   const selS = document.getElementById('infSubjefe');
   let subs = [];
-  if(pid) subs = PREDIOS[pid].subjefes.slice();
-  else subs = [...new Set(PRED_ORDER.flatMap(p=>PREDIOS[p].subjefes))];
+  if(pid) subs = subjefesInforme(pid);
+  else subs = [...new Set(PRED_ORDER.flatMap(p=>subjefesInforme(p)))];
   if(!verTodosSubjefes()){
     subs = [currentProfile.subjefe];
     selS.innerHTML = `<option value="${currentProfile.subjefe}">${currentProfile.subjefe}</option>`;
@@ -9473,8 +9794,12 @@ async function cargarYRenderInformes(){
         const snap = await colRegistros(pid).where('fecha','>=',desde).where('fecha','<=',hasta).get();
         snap.forEach(d=>{
           const r = d.data();
-          const w = (workers[pid]||{})[r.workerId] ||
+          let w = (workers[pid]||{})[r.workerId] ||
             (r.workerNombre ? {nombre:r.workerNombre, subjefe:r.workerSubjefe||'', _histor:true} : {});
+          // v74 · El informe usa el subjefe con que se registró la entrada: si el
+          // trabajador cambió de subjefe (p. ej. traspaso de contratista), lo
+          // pasado sigue contando para el anterior.
+          if(r.workerSubjefe && w.subjefe && r.workerSubjefe!==w.subjefe) w = {...w, subjefe:r.workerSubjefe};
           if(subjefeSel && w.subjefe !== subjefeSel) return;
           registros.push({ ...r, _id:d.id, _predio:pid, _worker:w });
         });
@@ -9482,7 +9807,7 @@ async function cargarYRenderInformes(){
     }
     // 3. Programaciones (puede haber semanas que terminan dentro del rango aunque empiecen antes)
     for(const pid of preds){
-      const subs = subjefeSel ? [subjefeSel] : PREDIOS[pid].subjefes;
+      const subs = subjefeSel ? [subjefeSel] : subjefesInforme(pid);
       for(const sub of subs){
         try{
           const snap = await colProg(pid, sub).get();
@@ -9501,7 +9826,7 @@ async function cargarYRenderInformes(){
     var ciclosInf = {};
     for(const pid of preds){
       ciclosInf[pid] = {};
-      const subs = subjefeSel ? [subjefeSel] : PREDIOS[pid].subjefes;
+      const subs = subjefeSel ? [subjefeSel] : subjefesInforme(pid);
       for(const sub of subs){
         try{
           const snap = await colCiclos(pid, sub).get();
@@ -12838,10 +13163,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v73';
-const MANUAL_FECHA='2026-10-20';
+const MANUAL_VERSION='v74';
+const MANUAL_FECHA='2026-10-21';
 
 const MANUAL_CAMBIOS=[
+  {v:'v74', f:'21-10-2026', txt:'<b>Traspaso de contratista.</b> En Config › Contratistas, el botón <b>🔁 Traspasar a otro contratista</b> pasa al que lo reemplaza los <b>ciclos abiertos</b> (el mismo ciclo, con sus marcas de Control), la <b>programación</b> desde la fecha del traspaso y los <b>trabajadores</b> que se marquen, y deja inactivo al anterior. Lo ya registrado y pagado sigue a nombre del anterior, que se puede seguir viendo en Informes. <b>Bodega:</b> gerencia puede <b>🔗 Fusionar duplicados</b> (un mismo producto cargado con nombres distintos): se suma el stock de cada recinto en el que queda y los otros se desactivan. Los <b>saldos</b> de la planilla, la conciliación y los selectores se muestran con <b>un decimal</b>.'},
   {v:'v73', f:'20-10-2026', ver:()=>canViewInformes(), txt:'<b>Informes › 🎯 Capacidad.</b> Muestra cuánto avanza cada trabajador comparado con el <b>trabajador típico</b> de su predio y cultivo en las mismas labores (índice 1,00 = típico; 1,20 = 20 % más). Con sus <b>mesas asignadas</b> calcula cuántas mesas podría llevar, en techos de 3 mesas, y lo clasifica: <b>⬆️ puede tomar más</b>, <b>✔️ adecuado</b> o <b>⬇️ revisar</b>. Tocar un trabajador abre el detalle por labor y los días que le toma una vuelta por sus mesas. Las mesas asignadas se anotan con ✏️ en la misma tabla o en Config › Trabajadores.'},
   {v:'v72', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación por ciclo.</b> Al editar la programación, arriba se elige el <b>ciclo</b> (por ejemplo Tomate Primor o Especialidades Trastomate) y abajo solo aparecen y se agregan las tareas de ese ciclo. Para programar otro ciclo, toca su pestaña: lo del primero queda guardado. Ya no existe el selector de ciclo dentro de cada tarea, que permitía cambiar por error el ciclo de una tarea ya programada.'},
   {v:'v71', f:'20-10-2026', ver:()=>isCampo(), txt:'<b>Programación protegida.</b> Solo se puede guardar programación desde la versión actual de la app, para que un teléfono con una versión antigua no borre lo que programaron otros. Si al programar aparece <b>“No se guardó… cierra y vuelve a abrir la app”</b>, ciérrala por completo y ábrela de nuevo.'},
@@ -13162,6 +13488,7 @@ const MANUAL_SECCIONES=[
     '<b>Devolver al proveedor</b> (quien tenga 🛒, hoy Luciano, y gerencia): 📦 del producto → <b>↩️ Devolución al proveedor</b> → recinto desde donde sale, cantidad, motivo (producto con problema, se compró de más u otro), proveedor y, si hay, el N° de guía o nota de crédito. Sale al tiro del stock del recinto y queda registrada con el valor al último precio de compra.',
     '<b>Anular una compra mal registrada</b> (quien tenga 🛒, hoy Luciano, y gerencia): en <b>📥 Ingresos y movimientos</b> aprieta <b>✖ Anular</b> en la fila de la compra y escribe el motivo (ej: compra repetida). Se resta del recinto lo que había sumado y la compra queda tachada, con el motivo. No se borra. Si estaba mal la cantidad o el recinto, anúlala y regístrala de nuevo. Si al registrar una compra ya existe una igual (mismo producto, recinto, fecha y cantidad), la app pregunta antes de guardarla.',
     '<b>Ajustar por conteo</b>: 📦 del producto → Ajuste → recinto, lo que contaste y el motivo. Queda registrado como movimiento con la diferencia.',
+    '<b>Fusionar duplicados</b> (gerencia): si un producto aparece con dos o tres nombres (ej. SULFATO DE POTASIO y SULFATO POTASIO), aprieta <b>🔗 Fusionar duplicados</b>. La app propone los grupos con nombres parecidos; también se pueden buscar a mano. Marca cuál queda, revisa el stock resultante y el nombre final, y confirma. Se suma el stock de cada recinto, los otros nombres quedan como alias (las recetas viejas siguen funcionando) y los demás quedan desactivados. Las aplicaciones y compras antiguas pasan a contar en el que queda. Si tienen unidades distintas (kg y L), primero hay que corregirlas.',
     '<b>Ver lo que ha entrado</b>: tarjeta <b>📥 Ingresos y movimientos</b>, debajo de la planilla. Parte mostrando los ingresos (compras y despachos) de los últimos 30 días. Cambia las fechas, elige un recinto o un campo completo, el tipo de movimiento o escribe el producto. Los despachos muestran si están ✅ recibidos o ⏳ por confirmar. El botón <b>⬇️ Excel</b> baja lo que estás viendo. Es solo consulta, salvo el botón <b>✖ Anular</b> de las compras (ver más abajo).',
     '<b>Descuentos que no llegaron</b> (gerencia y bodega): si la bodega rechazó el descuento de una aplicación, aparece la tarjeta roja <b>⚠️ Descuentos que no llegaron a bodega</b> con el producto, la cantidad y el recinto. <b>✅ Aplicar</b> lo descuenta ahora; <b>Descartar</b> si ya se corrigió a mano.',
     'Quien mantiene el catálogo (bodega y gerencia) también puede editar las celdas directamente y apretar <b>💾 Guardar cambios</b>. Mientras no lo apriete, nada queda guardado.',
@@ -13182,6 +13509,7 @@ const MANUAL_SECCIONES=[
   pasos:[
     '<b>🧑‍🌾 Contratistas</b> (gerencia): nombre, predios donde trabaja, <b>$ por caja toro</b>, <b>$ por caja gamela</b> y el <b>valor de cada labor</b>, eligiendo si es <b>por mesa o por techo</b> (1 techo = 3 mesas). Las labores que queden vacías no se pagan. El nombre no se cambia después. Para darle gente, agrega sus trabajadores en <b>Trabajadores</b> eligiendo al contratista como subjefe. Si un contratista deja de trabajar, desmárcalo como activo.',
     '<b>Cambio de precios:</b> el valor de cada labor es fijo hasta que se cambie. Para cambiarlo, abre el contratista, pon en <b>Tarifas vigentes desde</b> el día en que rige el valor nuevo y guarda: queda en el <b>historial</b> y lo registrado antes de esa fecha conserva el valor anterior. Si la fecha es pasada, la app ofrece <b>recalcular</b> lo ya registrado desde ese día. Con <b>Ver / corregir</b> se arregla una tarifa del historial.',
+    '<b>Traspasar un contratista</b> (gerencia): cuando otro contratista toma su lugar, crea primero al nuevo, abre al anterior y aprieta <b>🔁 Traspasar a otro contratista</b>. Elige quién lo reemplaza y desde qué día; marca los ciclos y la programación que pasan, los trabajadores que siguen (si llega con gente nueva, no marques ninguno) y si se copian las tarifas. El anterior queda inactivo, sus ciclos se cierran el día antes y su trabajo pasado sigue en Informes a su nombre.',
     '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes. Al final aparece <b>🚜 Tractorista</b> marcado como <i>fijo</i>: es genérico, está en todos los predios y subjefes, y no se borra.',
     '<b>🗺️ Sectores de riego</b> (gerencia con todos los predios): elige el predio y corrige cada sector con su nombre, metros lineales y hectáreas. Los sectores que se riegan juntos van como uno solo (ej. <i>1A-3</i>). Lo ya registrado no cambia, porque cada aplicación guardó la superficie de ese día.',
     '<b>Costos del personal</b> (gerencia con todos los predios): sueldo mínimo mensual, bono o extra fijo y jornada semanal. De ahí sale el costo por hora de los informes; actualízalo cuando cambie el sueldo mínimo legal.',
