@@ -904,6 +904,9 @@ body.vista-escritorio .modal-content{max-width:700px}
         <p style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">Superficie (ha) y metros lineales de cada sector. De la superficie salen los L/ha, los kg/ha y el gasto por hectárea. Cambiar un sector no altera lo ya registrado: cada aplicación guardó la superficie que tenía ese día.</p>
         <div class="form-row"><label>Predio</label><select id="secCfgPredio" onchange="renderSectoresConfig()"></select></div>
         <div id="secCfgBody"></div>
+        <div class="sec-div" style="margin-top:14px">🧱 Superficie de módulos</div>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:6px;line-height:1.5">Hectáreas de cada módulo del predio elegido arriba. Se usan en las aplicaciones foliares (L/ha y kg/ha) y en el gasto por hectárea. Lo ya registrado no cambia: cada aplicación guardó la superficie de ese día.</p>
+        <div id="modCfgBody"></div>
       </div>
     </div>
     <!-- v59 · Contratistas: tarifas por labor ($/mesa) y por caja -->
@@ -7226,6 +7229,86 @@ function renderSectoresConfig(){
       <button class="btn btn-sm" style="background:var(--dark);color:#fff;margin-top:4px" onclick="secCfgPegar()">Pasar a la tabla</button>
     </details>
     <button class="btn btn-primary" style="margin-top:10px" onclick="guardarSectoresConfig()">💾 Guardar sectores de ${escH(PREDIOS[pid].nombre)}</button>`;
+  renderModulosConfig();   // v76
+}
+// v76 · Superficie de módulos (/terreno/{predio}.modulos = {nombre: ha}).
+// Antes solo se cambiaba desde la consola de Firebase.
+let modCfg=null;   // {pid, filas:[{nombre, ha}]}
+function modCfgNombresBase(pid){
+  const enTerreno=modulosDePredio(pid);
+  const otros=(modulosCache[pid]||[]).map(x=>String((x&&typeof x==='object')?(x.nombre||x.id||''):x)).filter(Boolean);
+  const todos=[...enTerreno];
+  otros.forEach(n=>{ if(!todos.some(t=>t.toLowerCase()===n.toLowerCase())) todos.push(n); });
+  return todos.sort((a,b)=>{ const na=parseFloat(a), nb=parseFloat(b); if(!isNaN(na)&&!isNaN(nb)&&na!==nb) return na-nb; return a.localeCompare(b); });
+}
+function renderModulosConfig(){
+  const selP=document.getElementById('secCfgPredio'), box=document.getElementById('modCfgBody');
+  if(!selP||!box) return;
+  const pid=selP.value||PRED_ORDER[0];
+  if(!modCfg || modCfg.pid!==pid){
+    const m=(terrenoCache[pid]||{}).modulos||{};
+    modCfg={pid, filas:modCfgNombresBase(pid).map(n=>({nombre:n, ha:m[n]!=null?String(m[n]):''}))};
+  }
+  const F=modCfg.filas, tot=F.reduce((a,f)=>a+num(f.ha),0);
+  box.innerHTML=`
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="border-bottom:2px solid var(--sand)"><th style="text-align:left;padding:4px">Módulo</th><th style="padding:4px">ha</th><th></th></tr></thead>
+      <tbody>${F.map((f,i)=>`<tr style="border-bottom:1px solid var(--sand)">
+        <td style="padding:3px"><input type="text" value="${escH(f.nombre)}" oninput="modCfg.filas[${i}].nombre=this.value" style="width:100%"></td>
+        <td style="padding:3px;width:90px"><input type="text" inputmode="decimal" value="${escH(f.ha)}" oninput="modCfg.filas[${i}].ha=this.value;modCfgTotal()" style="width:100%;text-align:right"></td>
+        <td style="padding:3px;width:30px"><button class="plan-del" onclick="modCfg.filas.splice(${i},1);renderModulosConfig()">✕</button></td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td style="padding:4px;font-weight:700">Total</td><td id="modCfgTot" style="padding:4px;text-align:right;font-weight:700">${fmtNum(tot,2)}</td><td></td></tr></tfoot>
+    </table>
+    <button class="btn btn-sm" style="background:var(--sand);color:var(--dark);margin-top:6px" onclick="modCfg.filas.push({nombre:'',ha:''});renderModulosConfig()">+ Módulo</button>
+    <details style="margin-top:8px"><summary style="font-size:11.5px;cursor:pointer;color:var(--dark)">📋 Pegar desde Excel</summary>
+      <div style="font-size:10.5px;color:var(--muted);margin:4px 0">Una línea por módulo: <i>módulo&nbsp;&nbsp;ha</i>. Sirve "Mod 1 0,73 ha" o "1 0,73". La fila TOTAL se ignora. Los módulos que no vengan en la lista se mantienen.</div>
+      <textarea id="modCfgPegar" style="width:100%;min-height:90px;font-size:12px;box-sizing:border-box"></textarea>
+      <button class="btn btn-sm" style="background:var(--dark);color:#fff;margin-top:4px" onclick="modCfgPegar()">Pasar a la tabla</button>
+    </details>
+    <button class="btn btn-primary" style="margin-top:10px" onclick="guardarModulosConfig()">💾 Guardar módulos de ${escH(PREDIOS[pid].nombre)}</button>`;
+}
+function modCfgTotal(){ const a=document.getElementById('modCfgTot'); if(a) a.textContent=fmtNum(modCfg.filas.reduce((x,f)=>x+num(f.ha),0),2); }
+function modCfgPegar(){
+  const txt=(document.getElementById('modCfgPegar').value||'').trim();
+  if(!txt){ toast('Pega la lista primero'); return; }
+  const malas=[]; let n=0;
+  txt.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).forEach(l=>{
+    if(/^(total|m[oó]dulo\b)/i.test(l)) return;   // encabezado y total
+    const m=l.match(/^(?:m[oó]d(?:ulo)?\.?\s*)?(.+?)[\s;\t]+([\d.,]+)\s*(?:ha)?$/i);
+    if(!m){ malas.push(l); return; }
+    const nom=m[1].trim(), ha=m[2].replace(',','.');
+    const f=modCfg.filas.find(x=>String(x.nombre).trim().toLowerCase()===nom.toLowerCase());
+    if(f) f.ha=ha; else modCfg.filas.push({nombre:nom, ha});
+    n++;
+  });
+  if(malas.length){ toast('⚠️ No entendí: '+malas.slice(0,2).join(' | ')); return; }
+  renderModulosConfig();
+  toast(`${n} módulos cargados en la tabla · revisa el total y guarda`);
+}
+async function guardarModulosConfig(){
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const pid=modCfg.pid, F=modCfg.filas.filter(f=>String(f.nombre).trim());
+  const nombres=F.map(f=>String(f.nombre).trim());
+  if(new Set(nombres.map(x=>x.toLowerCase())).size!==nombres.length){ toast('⚠️ Hay módulos con el mismo nombre'); return; }
+  if(F.some(f=>!(num(f.ha)>0))){ toast('⚠️ Todos los módulos necesitan su superficie en ha'); return; }
+  if(nombres.some(n=>/[.\/\[\]*~]/.test(n))){ toast('⚠️ El nombre de un módulo no puede llevar . / [ ] * ~'); return; }
+  const modulos={}; F.forEach(f=>{ modulos[String(f.nombre).trim()]=num(f.ha); });
+  const antes=(terrenoCache[pid]||{}).modulos||{};
+  const quitados=Object.keys(antes).filter(n=>!(n in modulos));
+  const cambios=Object.keys(modulos).filter(n=>antes[n]!==modulos[n]).map(n=>`${n}: ${antes[n]!=null?fmtNum(antes[n],2):'—'} → ${fmtNum(modulos[n],2)}`);
+  const tot=Object.values(modulos).reduce((a,b)=>a+b,0);
+  if(!cambios.length && !quitados.length){ toast('No hay cambios'); return; }
+  if(!confirm(`Módulos de ${PREDIOS[pid].nombre} · total ${fmtNum(tot,2)} ha\n\n`+cambios.slice(0,20).join('\n')+(cambios.length>20?`\n… y ${cambios.length-20} más`:'')+(quitados.length?`\n\nSe quitan: ${quitados.join(', ')}`:'')+`\n\nLo ya registrado no cambia. ¿Guardar?`)) return;
+  loading(true,'Guardando…');
+  try{
+    await db.collection('terreno').doc(pid).set({modulosAt:Date.now()}, {merge:true});
+    await db.collection('terreno').doc(pid).update({modulos});
+    terrenoCache[pid]=Object.assign({}, terrenoCache[pid]||{}, {modulos});
+    modCfg=null; renderModulosConfig();
+    toast('✅ Superficie de módulos guardada');
+  }catch(e){ toast('Error: '+e.message); }
+  loading(false);
 }
 function secCfgTotales(){
   const F=secCfg.filas;
@@ -13457,10 +13540,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v75';
+const MANUAL_VERSION='v76';
 const MANUAL_FECHA='2026-10-21';
 
 const MANUAL_CAMBIOS=[
+  {v:'v76', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'<b>Superficie de módulos editable.</b> En Config › Sectores de riego, debajo de los sectores, está la tabla <b>🧱 Superficie de módulos</b> del predio elegido. Se puede escribir módulo por módulo o pegar la tabla desde Excel ("Mod 1 0,73 ha"). Es la superficie que usan las aplicaciones foliares para los L/ha y kg/ha. Lo ya registrado no cambia.'},
   {v:'v75', f:'21-10-2026', ver:()=>isCampo()||canConfigCostos(), txt:'<b>Contratistas: valores en el registro diario y labores editables.</b> Al registrar a un trabajador de contratista, cada labor muestra su <b>💲 valor</b> (por mesa o techo) y el <b>$ por caja</b>. Quien tiene el permiso <b>💲</b> (lo da gerencia en Config › Usuarios) puede cambiarlo ahí mismo y dejarlo como tarifa del contratista desde ese día; los demás lo ven sin cambiarlo. Con el mismo permiso, en Config › Contratistas se ajustan los valores de los contratistas de su campo y se <b>agregan, renombran o desactivan labores de contratista</b>. Gerencia puede <b>🗑 quitar de la lista</b> a un contratista inactivo sin perder su historial.'},
   {v:'v74', f:'21-10-2026', txt:'<b>Traspaso de contratista.</b> En Config › Contratistas, el botón <b>🔁 Traspasar a otro contratista</b> pasa al que lo reemplaza los <b>ciclos abiertos</b> (el mismo ciclo, con sus marcas de Control), la <b>programación</b> desde la fecha del traspaso y los <b>trabajadores</b> que se marquen, y deja inactivo al anterior. Lo ya registrado y pagado sigue a nombre del anterior, que se puede seguir viendo en Informes. <b>Bodega:</b> gerencia puede <b>🔗 Fusionar duplicados</b> (un mismo producto cargado con nombres distintos): se suma el stock de cada recinto en el que queda y los otros se desactivan. Los <b>saldos</b> de la planilla, la conciliación y los selectores se muestran con <b>un decimal</b>.'},
   {v:'v73', f:'20-10-2026', ver:()=>canViewInformes(), txt:'<b>Informes › 🎯 Capacidad.</b> Muestra cuánto avanza cada trabajador comparado con el <b>trabajador típico</b> de su predio y cultivo en las mismas labores (índice 1,00 = típico; 1,20 = 20 % más). Con sus <b>mesas asignadas</b> calcula cuántas mesas podría llevar, en techos de 3 mesas, y lo clasifica: <b>⬆️ puede tomar más</b>, <b>✔️ adecuado</b> o <b>⬇️ revisar</b>. Tocar un trabajador abre el detalle por labor y los días que le toma una vuelta por sus mesas. Las mesas asignadas se anotan con ✏️ en la misma tabla o en Config › Trabajadores.'},
@@ -13809,6 +13893,7 @@ const MANUAL_SECCIONES=[
     '<b>Quitar un contratista de la lista</b> (gerencia): primero déjalo inactivo (con el traspaso o desmarcando Activo) y después aprieta <b>🗑</b>. No se borra nada: sus registros, pagos y ciclos se mantienen y sigue en Informes. Con "Ver quitados de la lista" se puede volver a mostrar.',
     '<b>Traspasar un contratista</b> (gerencia): cuando otro contratista toma su lugar, crea primero al nuevo, abre al anterior y aprieta <b>🔁 Traspasar a otro contratista</b>. Elige quién lo reemplaza y desde qué día; marca los ciclos y la programación que pasan, los trabajadores que siguen (si llega con gente nueva, no marques ninguno) y si se copian las tarifas. El anterior queda inactivo, sus ciclos se cierran el día antes y su trabajo pasado sigue en Informes a su nombre.',
     '<b>Trabajadores</b> (gerencia): nombre completo, código de rango, subjefe y número de plantas. Un trabajador mal asignado de subjefe desordena Avance e Informes. Al final aparece <b>🚜 Tractorista</b> marcado como <i>fijo</i>: es genérico, está en todos los predios y subjefes, y no se borra.',
+    '<b>🧱 Superficie de módulos</b> (gerencia, en la misma tarjeta de Sectores de riego): hectáreas de cada módulo del predio elegido. Se escriben una por una o se pegan desde Excel ("Mod 1 0,73 ha"; la fila TOTAL se ignora). La usan las aplicaciones foliares para los L/ha y kg/ha. Al guardar se muestra cada cambio y el total para revisarlo.',
     '<b>🗺️ Sectores de riego</b> (gerencia con todos los predios): elige el predio y corrige cada sector con su nombre, metros lineales y hectáreas. Los sectores que se riegan juntos van como uno solo (ej. <i>1A-3</i>). Lo ya registrado no cambia, porque cada aplicación guardó la superficie de ese día.',
     '<b>Costos del personal</b> (gerencia con todos los predios): sueldo mínimo mensual, bono o extra fijo y jornada semanal. De ahí sale el costo por hora de los informes; actualízalo cuando cambie el sueldo mínimo legal.',
     '<b>Usuarios del sistema</b> (gerencia con todos los predios): se crea un acceso por persona, con su correo, una contraseña inicial que tú le entregas, el rol y los predios. Al elegir el rol, la app explica en una línea qué podrá hacer esa persona.',
