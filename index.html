@@ -7822,6 +7822,7 @@ function refrescarLaborOpts(){
   });
 }
 function initLaborRows(){const c=document.getElementById('laborRows');if(!c)return;c.innerHTML='';addLaborRow();}
+document.addEventListener('change', ev=>{ const id=ev.target&&ev.target.id; if(id==='selCiclo'||id==='selCultivo'||id==='selSub'||id==='selW') setTimeout(refrescarCicloFilas,0); });   // v80
 function addLaborRow(){
   const cont=document.getElementById('laborRows'),cur=cont.querySelectorAll('.labor-row').length;
   if(cur>=MAX_LAB){toast('Máximo '+MAX_LAB+' labores por entrada');return}
@@ -7835,6 +7836,9 @@ function addLaborRow(){
       <div><label>Horas</label><input type="number" class="lr-horas" placeholder="7.5" min="0" max="14" step="0.5" oninput="checkLaborRow(this)"></div>
       <div><label>N° mesas</label><input type="number" class="lr-mesas" placeholder="32" min="0" oninput="checkLaborRow(this)"></div>
     </div>
+    <div class="lr-cic-wrap" style="display:none;margin-top:6px">
+      <label style="font-size:10px">Ciclo de esta labor</label><select class="lr-ciclo" onchange="lrCicloCambio(this)"></select>
+    </div>
     <div class="lr-valor-wrap" style="display:none;margin-top:6px">
       <div style="display:flex;gap:6px;align-items:flex-end">
         <div style="flex:1"><label style="font-size:10px">💲 Valor contratista ($)</label><input type="number" class="lr-valor" min="0" step="1" placeholder="$" oninput="this.closest('.labor-row').dataset.manual='1';pagoPreview()"></div>
@@ -7843,6 +7847,7 @@ function addLaborRow(){
     </div>
     <div class="lr-warn" style="display:none;font-size:11px;color:#B45309;background:#FEF3C7;border-radius:6px;padding:4px 8px;margin-top:4px"></div>`;
   cont.appendChild(row);updateLaborUI();
+  refrescarCicloFilas();   // v80
 }
 
 // Cuando tipean un código, auto-seleccionar en el dropdown
@@ -7914,6 +7919,33 @@ function checkLaborRow(inp){
   if(warnings.length){warn.textContent='⚠️ '+warnings.join(' · ');warn.style.display='block';}
   else {warn.style.display='none';}
 }
+// v80 · Ciclo por labor: un mismo trabajador puede hacer medio día en un
+// ciclo (ej. Especialidades/cherry) y medio día en otro (ej. Tomate
+// Trastomate). Si el subjefe tiene más de un ciclo abierto, cada labor puede
+// llevar el suyo; al guardar se crea una entrada por ciclo.
+function ciclosAbiertosReg(){
+  const sub=document.getElementById('selSub').value||(verTodosSubjefes()?'':userSubjefe());
+  const wId=(document.getElementById('selW')||{}).value;
+  const w=wId?pWs().find(x=>x.id===wId):null;
+  const sj=(w&&w.subjefe)||sub;
+  return (ciclosCache[sj]||[]).filter(c=>c.fin===null||c.fin===undefined);
+}
+function refrescarCicloFilas(){
+  const cics=ciclosAbiertosReg();
+  const selF=document.getElementById('selCiclo');
+  const fId=selF&&selF.value, fC=cics.find(c=>c.id===fId);
+  document.querySelectorAll('#laborRows .labor-row').forEach(row=>{
+    const wrap=row.querySelector('.lr-cic-wrap'), sel=row.querySelector('.lr-ciclo'); if(!wrap||!sel) return;
+    if(cics.length<2){ wrap.style.display='none'; sel.innerHTML='<option value=""></option>'; sel.value=''; return; }
+    const cur=sel.value||row.dataset.cic||'';
+    sel.innerHTML=`<option value="">${fC?'Igual que arriba ('+escH(cicloLabel(fC))+')':'Igual que arriba'}</option>`+
+      cics.map(c=>`<option value="${c.id}">${escH(cicloLabel(c))}</option>`).join('');
+    sel.value=cics.some(c=>c.id===cur)?cur:'';
+    if(sel.value===fId) sel.value='';
+    wrap.style.display='block';
+  });
+}
+function lrCicloCambio(sel){ const row=sel.closest('.labor-row'); if(row) row.dataset.cic=sel.value; }
 function rmLaborRow(btn){
   btn.closest('.labor-row').remove();
   document.querySelectorAll('.labor-row').forEach((r,i)=>{r.dataset.idx=i+1;r.querySelector('.labor-row-num span').textContent=`Labor ${i+1}`});
@@ -8214,7 +8246,7 @@ async function guardar(){
   const vacaciones=document.getElementById('chkVacaciones').checked;
   if(ausente&&!reemplazoVal&&!licencia&&!vacaciones){toast('⚠️ Selecciona un reemplazante, licencia médica o vacaciones');return}
   const rows=document.querySelectorAll('#laborRows .labor-row');
-  const labores=[];let hasError=false;
+  const labores=[], cicFilas=[];let hasError=false;
   rows.forEach(row=>{
     const lId=parseInt(row.querySelector('.lr-labor').value)||0;
     const horas=parseFloat(row.querySelector('.lr-horas').value)||0;
@@ -8222,6 +8254,7 @@ async function guardar(){
     if(!lId){row.querySelector('.lr-labor').style.borderColor='var(--red)';hasError=true;return}
     row.querySelector('.lr-labor').style.borderColor='';
     labores.push({laborId:lId,horas,mesas});
+    cicFilas.push((row.querySelector('.lr-ciclo')||{}).value||'');   // v80
   });
   const sinReemplazo=reemplazoVal==='sin|reemplazo'||reemplazoVal==='sin|sin';
   const skipLabores=licencia||vacaciones||(ausente&&sinReemplazo)||(ausente&&!reemplazoVal);
@@ -8271,7 +8304,8 @@ async function guardar(){
   // Si cultivo no es pimentón, exigir ciclo (excepto registros de ausencia que no requieren labor)
   const cultMeta = cultivosCache.find(c=>c.id===cultivoReg);
   const usaMes = (cultMeta && cultMeta.usaMesPlantacion) || cultivoReg==='pimenton';
-  if(!usaMes && !cicloIdReg && !ausente && !vacaciones){
+  const todasConCiclo = cicFilas.length>0 && cicFilas.every(Boolean);   // v80
+  if(!usaMes && !cicloIdReg && !ausente && !vacaciones && !todasConCiclo){
     toast('⚠️ Selecciona el ciclo. Si no aparece, ábrelo en CICLOS.');
     return;
   }
@@ -8333,6 +8367,41 @@ async function guardar(){
     // v39 · nFotos viaja en la entrada para que el listado sepa que hay respaldo
     // sin tener que leer las imágenes.
     data.nFotos = fotosPend.length;
+    // v80 · Una entrada por ciclo cuando las labores son de ciclos distintos.
+    const cicsAb=ciclosAbiertosReg().concat(ciclosCache[(wSel&&wSel.subjefe)||'']||[]);
+    const grupos=[];
+    if(!skipLabores){
+      labores.forEach((l,i)=>{
+        const cid=cicFilas[i]||cicloIdReg||'';
+        let g=grupos.find(x=>x.cid===cid); if(!g){ g={cid, labores:[]}; grupos.push(g); }
+        g.labores.push(l);
+      });
+    }
+    const extras=[];
+    if(grupos.length>1){
+      // La entrada original (o la corregida) queda con el ciclo de arriba, o el de la primera labor
+      grupos.sort((a,b)=>(b.cid===cicloIdReg)-(a.cid===cicloIdReg));
+      const nT=cajasReg?cajasReg.toro:0, nG=cajasReg?cajasReg.gamela:0;
+      const conCaja=g=>g.labores.some(l=>[LABOR_COSECHA_TORO,LABOR_COSECHA_GAMELA,LABOR_COSECHA].includes(l.laborId));
+      const gCaja=grupos.find(conCaja)||grupos[0];
+      const parte=g=>{
+        const c=cicsAb.find(x=>x.id===g.cid);
+        const o={labores:g.labores, cultivo:(c&&c.cultivo)||cultivoReg};
+        if(g.cid) o.cicloId=g.cid;
+        if(contReg){
+          const cj=g===gCaja?{toro:nT,gamela:nG}:{toro:0,gamela:0};
+          o.cajas=cj; o.pago=calcPagoContratista(contReg, g.labores, cj.toro, cj.gamela, fechaReg, overReg);
+          if(pagoReg&&pagoReg.valorManual) o.pago.valorManual=true;
+        }
+        return o;
+      };
+      Object.assign(data, parte(grupos[0]));
+      if(!data.cicloId && !regEdit) delete data.cicloId;
+      grupos.slice(1).forEach(g=>extras.push(parte(g)));
+    }else if(grupos.length===1 && grupos[0].cid && grupos[0].cid!==cicloIdReg){
+      const c=cicsAb.find(x=>x.id===grupos[0].cid);
+      data.cicloId=grupos[0].cid; if(c&&c.cultivo) data.cultivo=c.cultivo;
+    }
     let refEntry;
     if(regEdit){
       // v43 · Corrección: se reescribe la misma entrada. Se conservan la fecha,
@@ -8343,7 +8412,7 @@ async function guardar(){
       data.ts = prev.ts || data.ts;
       data.creadoPor = prev.creadoPor || data.creadoPor;
       data.nFotos = (Number(prev.nFotos)||0) + fotosPend.length;
-      if(!cicloIdReg) data.cicloId = firebase.firestore.FieldValue.delete();
+      if(!data.cicloId) data.cicloId = firebase.firestore.FieldValue.delete();   // v80 · puede venir de la labor
       if(!contReg && prev.pago){
         ['contratistaId','contratista','cajas','pago'].forEach(k=>data[k]=firebase.firestore.FieldValue.delete());
       }
@@ -8357,6 +8426,15 @@ async function guardar(){
       // entrada pertenecen aunque se esté registrando sin señal.
       refEntry = colRegistros(activePred).doc();
       await enCola(refEntry.set(data), 'Registro de '+(wSel.nombre||'trabajador'));
+    }
+    // v80 · Entradas adicionales del mismo día, una por cada otro ciclo
+    for(let k=0;k<extras.length;k++){
+      const d2={...data, ...extras[k], ts:Date.now()+k+1, creadoPor:currentUser.uid, nFotos:0, obs:obs, separadaDe:refEntry.id};
+      ['editadoPor','editadoPorNombre','editadoAt'].forEach(x=>delete d2[x]);
+      const FV=firebase.firestore.FieldValue;
+      Object.keys(d2).forEach(x=>{ const v=d2[x]; if(v && typeof v==='object' && (v.__del || (typeof FV==='function' && v instanceof FV))) delete d2[x]; });
+      if(regEdit) d2.fecha=regEdit.data.fecha;
+      await enCola(colRegistros(activePred).doc().set(d2), 'Registro de '+(wSel.nombre||'trabajador')+' (otro ciclo)');
     }
     for(let i=0;i<fotosPend.length;i++){
       const f=fotosPend[i];
@@ -8385,7 +8463,7 @@ async function guardar(){
     pagoPreview();
     const eraEdicion=!!regEdit;
     regSalirEdicion();
-    avisoGuardado(eraEdicion?'✅ Entrada corregida':'✅ Entrada guardada');
+    avisoGuardado((eraEdicion?'✅ Entrada corregida':'✅ Entrada guardada')+(extras.length?` · separada en ${extras.length+1} entradas, una por ciclo`:''));
     if(eraEdicion && infVolverCtx) setTimeout(()=>infVolver(), 600);   // v67 · de vuelta al informe
   }catch(e){toast('Error: '+e.message)}
   loading(false);
@@ -8456,7 +8534,9 @@ function regEditar(id, eObj){
     }
     row.querySelector('.lr-horas').value=l.horas||'';
     row.querySelector('.lr-mesas').value=l.mesas||'';
+    row.dataset.cic='';
   });
+  refrescarCicloFilas();   // v80
   if(e.pago && Array.isArray(e.pago.labores)){   // v75 · la corrección parte con los valores registrados
     cont.querySelectorAll('.labor-row').forEach((row,i)=>{
       const x=e.pago.labores[i]; if(!x) return;
@@ -13704,10 +13784,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v79';
+const MANUAL_VERSION='v80';
 const MANUAL_FECHA='2026-10-21';
 
 const MANUAL_CAMBIOS=[
+  {v:'v80', f:'21-10-2026', ver:()=>isCampo(), txt:'<b>Dos ciclos el mismo día.</b> Si el subjefe tiene más de un ciclo abierto (por ejemplo Especialidades y Tomate Trastomate), cada labor muestra <b>Ciclo de esta labor</b>. Si un trabajador hizo medio día en cada uno, se anotan las dos labores con su ciclo y al guardar quedan como dos entradas, una por ciclo, cada una con sus horas y mesas.'},
   {v:'v79', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'<b>📅 Cambiar la fecha de un traspaso de contratista</b> (gerencia, Config › Contratistas). Lo registrado entre la fecha antigua y la nueva pasa al contratista que corresponde (el monto de cada registro no cambia), los ciclos del anterior cierran el día previo, la programación y las tarifas copiadas se ajustan y, si se marca, pasan los trabajadores que quedaban con el anterior.'},
   {v:'v78', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'En Config › Contratistas, el contratista que se traspasó muestra <b>🔁 Reemplazado por … desde el …</b> con la fecha del traspaso.'},
   {v:'v77', f:'21-10-2026', ver:()=>isCampo(), txt:'<b>Registros atrasados de contratista.</b> Quien tiene el permiso 💲 puede retroceder hasta <b>6 semanas</b> en el registro (los demás, 3) para registrar o corregir días pasados con el valor de cada labor. Si la gente pasó a otro contratista con un traspaso, los días anteriores al traspaso quedan a nombre y con las tarifas del contratista anterior. Al corregir un registro se conserva el contratista con que se guardó.'},
