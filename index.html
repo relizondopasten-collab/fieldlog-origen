@@ -2603,7 +2603,7 @@ async function confirmImport(){
       if(g.existe){
         prodId = g.existe.id; prodObj = g.existe; actualizados++;
       }else{
-        const data = { nombre:g.nombre, categoria:g.categoria||'', proveedor:'',
+        const data = { nombre:g.nombre, categoria:catCanon(g.categoria), proveedor:'',
                        unidadStock:g.unidades[0], stockMinimo:null, stockMinimoUnidad:'',
                        activo:true, createdAt:Date.now(), createdBy:currentUser.uid };
         const ref = await db.collection('productos').add(data);
@@ -3411,12 +3411,18 @@ function temporadaDeAplicacion(a, ciclos){
 }
 
 // Categoría de un producto, normalizada al catálogo vigente.
+// v81 · Singular o plural, mayúsculas y tildes dan lo mismo: "Fitosanitario"
+// y "fitosanitarios" son Fitosanitarios.
+function catCanon(c){
+  c=String(c||'').trim(); if(!c) return '';
+  const sinS=x=>normNombre(x).replace(/s$/,'');
+  const match=CATEGORIAS_BODEGA.find(k=>normNombre(k)===normNombre(c)) || CATEGORIAS_BODEGA.find(k=>sinS(k)===sinS(c));
+  return match || c;
+}
 function categoriaDe(productoId){
   const p=productosCache.find(x=>x.id===productoId);
-  const c=(p&&p.categoria||'').trim();
-  if(!c) return 'Sin clasificar';
-  const match=CATEGORIAS_BODEGA.find(k=>normNombre(k)===normNombre(c));
-  return match || c;
+  const c=catCanon(p&&p.categoria);
+  return c || 'Sin clasificar';
 }
 
 async function calcResumen(){
@@ -5984,8 +5990,9 @@ function planPrecioUnit(p){
 }
 
 function planRow(p, idx){
-  const catOpts=[...new Set([...CATEGORIAS_BODEGA, p.categoria].filter(Boolean))];
-  const cat=`<select onchange="planSet(${idx},'categoria',this.value)"><option value="">—</option>${catOpts.map(c=>`<option${c===p.categoria?' selected':''}>${escH(c)}</option>`).join('')}</select>`;
+  const pc=catCanon(p.categoria);   // v81
+  const catOpts=[...new Set([...CATEGORIAS_BODEGA, pc].filter(Boolean))];
+  const cat=`<select onchange="planSet(${idx},'categoria',this.value)"><option value="">—</option>${catOpts.map(c=>`<option${c===pc?' selected':''}>${escH(c)}</option>`).join('')}</select>`;
   const uni=`<select onchange="planSet(${idx},'unidad',this.value)"><option value="">—</option>${['kg','L','uni'].map(u=>`<option${u===p.unidad?' selected':''}>${u}</option>`).join('')}</select>`;
   const pu=planPrecioUnit(p);
   return `<tr>
@@ -6129,7 +6136,7 @@ async function planGuardar(){
     if(!(p._dirty||p._new)) continue;
     const pu=planPrecioUnit(p);
     const data={
-      nombre:p.nombre.trim(), categoria:p.categoria||'', unidad:p.unidad||'',
+      nombre:p.nombre.trim(), categoria:catCanon(p.categoria), unidad:p.unidad||'',   // v81
       stock: Object.fromEntries(Object.keys(p.stock||{}).map(k=>[k, num(p.stock[k])])),   // v44
       stockMin: p.stockMin===''?null:num(p.stockMin),
       capEnvase: p.capEnvase===''?null:num(p.capEnvase),
@@ -13784,10 +13791,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v80';
+const MANUAL_VERSION='v81';
 const MANUAL_FECHA='2026-10-21';
 
 const MANUAL_CAMBIOS=[
+  {v:'v81', f:'21-10-2026', ver:()=>canVerGastos()||canBodega(), txt:'<b>Categorías unificadas.</b> En gastos de aplicaciones ya no aparecen por separado "Fertilizante" y "Fertilizantes", "Bioestimulante" y "Bioestimulantes" ni "Fitosanitario" y "Fitosanitarios": se suman en la categoría en plural. Los productos del catálogo quedaron con la categoría corregida.'},
   {v:'v80', f:'21-10-2026', ver:()=>isCampo(), txt:'<b>Dos ciclos el mismo día.</b> Si el subjefe tiene más de un ciclo abierto (por ejemplo Especialidades y Tomate Trastomate), cada labor muestra <b>Ciclo de esta labor</b>. Si un trabajador hizo medio día en cada uno, se anotan las dos labores con su ciclo y al guardar quedan como dos entradas, una por ciclo, cada una con sus horas y mesas.'},
   {v:'v79', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'<b>📅 Cambiar la fecha de un traspaso de contratista</b> (gerencia, Config › Contratistas). Lo registrado entre la fecha antigua y la nueva pasa al contratista que corresponde (el monto de cada registro no cambia), los ciclos del anterior cierran el día previo, la programación y las tarifas copiadas se ajustan y, si se marca, pasan los trabajadores que quedaban con el anterior.'},
   {v:'v78', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'En Config › Contratistas, el contratista que se traspasó muestra <b>🔁 Reemplazado por … desde el …</b> con la fecha del traspaso.'},
