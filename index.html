@@ -9715,7 +9715,7 @@ function contEditar(id, desdeTramo){
   document.getElementById('contForm').innerHTML=`<div style="border:1px solid var(--sand);border-radius:9px;padding:10px;margin-top:8px">
     <input type="hidden" id="contId" value="${escH(id)}">
     <input type="hidden" id="contTramoOrig" value="${tramo?escH(tramo.desde):''}">
-    <div class="form-row"><label>Nombre</label><input type="text" id="contNombre" value="${escH(c.nombre||'')}" ${id?'disabled title="El nombre no se cambia: amarra trabajadores, ciclos y registros"':''} placeholder="Ej: Contratista Alicia"></div>
+    <div class="form-row"><label>Nombre</label><div style="display:flex;gap:6px"><input type="text" id="contNombre" value="${escH(c.nombre||'')}" ${id?'disabled title="Para cambiarlo usa ✏️ Cambiar nombre: actualiza trabajadores, ciclos, programación y registros"':''} placeholder="Ej: Contratista Alicia" style="flex:1">${id&&ger?`<button type="button" class="btn btn-secondary btn-sm" style="white-space:nowrap" onclick="contRenAbrir('${escH(id)}')">✏️ Cambiar nombre</button>`:''}</div></div>
     <div class="form-row"><label>Predios</label><div style="display:flex;gap:12px;flex-wrap:wrap">${PRED_ORDER.map(p=>`<label style="display:flex;gap:4px;align-items:center;text-transform:none;font-weight:400;margin:0"><input type="checkbox" class="contPred" value="${p}" ${(c.predios||[]).includes(p)?'checked':''} ${ger?'':'disabled'}> ${PREDIOS[p].nombre}</label>`).join('')}</div></div>
     <label style="display:flex;gap:6px;align-items:center;text-transform:none;font-weight:400;margin:4px 0 8px"><input type="checkbox" id="contActivo" ${c.activo!==false?'checked':''} ${ger?'':'disabled'}> Activo (aparece como subjefe y en el registro)</label>
     ${histHTML}
@@ -9994,6 +9994,126 @@ async function contTraspasoEjecutar(){
   else toast(`✅ ${dest.nombre} reemplaza a ${orig.nombre} desde el ${fDMY(fecha)}`);
 }
 
+
+// ══════════════════════════════════════════════
+// v83 · CAMBIAR EL NOMBRE DE UN CONTRATISTA (gerencia)
+// El nombre amarra datos guardados en varias partes (es la clave del grupo
+// como "subjefe"): trabajadores (subjefe, subjefeAnterior), registros
+// (contratista, workerSubjefe), ciclos y programación (van bajo
+// /…/subjefes/{nombre}), control del proceso y labor × módulo (campo
+// subjefe), otros contratistas (reemplazadoPor), usuarios (subjefe) y las
+// marcas de traspaso de los ciclos. Se copian ciclos y programación al nombre
+// nuevo con el mismo id, se actualiza todo lo demás y solo al final, si no hubo
+// errores, se borran las copias con el nombre antiguo. Los montos no cambian.
+// ══════════════════════════════════════════════
+let contRen=null;
+function contRenAbrir(id){
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const c=contratistasCache.find(x=>x.id===id); if(!c) return;
+  contRen={c};
+  document.getElementById('modalContent').innerHTML=`
+    <div class="modal-title">✏️ Cambiar nombre</div>
+    <div class="modal-sub">Hoy: <b>${escH(c.nombre)}</b></div>
+    <div class="form-row"><label>Nombre nuevo</label><input type="text" id="crNombre" value="${escH(c.nombre)}" placeholder="Ej: Contratista Ruth"></div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">Se cambia en los trabajadores, registros, ciclos, programación, control del proceso y labor × módulo. Los montos y las tarifas no cambian. Conviene hacerlo cuando nadie esté registrando a su gente.</div>
+    <button class="btn btn-primary" onclick="contRenEjecutar()">Revisar y cambiar</button>
+    <button class="btn btn-secondary" style="margin-top:6px" onclick="closeModal()">Cancelar</button>`;
+  document.getElementById('overlay').classList.add('open');
+  setTimeout(()=>{ const i=document.getElementById('crNombre'); if(i){ i.focus(); i.select(); } },50);
+}
+function contRenValidar(nuevo, c){
+  if(!nuevo) return 'Escribe el nombre';
+  if(/[\/]/.test(nuevo)) return 'El nombre no puede llevar "/"';
+  if(nuevo===c.nombre) return 'Es el mismo nombre';
+  const low=nuevo.toLowerCase();
+  if(Object.values(PREDIOS_SUBJEFES_BASE).some(l=>l.some(n=>n.toLowerCase()===low))) return 'Ya hay un subjefe con ese nombre';
+  if(contratistasCache.some(x=>x.id!==c.id && (x.nombre||'').toLowerCase()===low)) return 'Ya hay otro contratista con ese nombre';
+  return '';
+}
+async function contRenEjecutar(){
+  if(!canConfigCostos()||!contRen) return;
+  const c=contRen.c, viejo=c.nombre;
+  const nuevo=(document.getElementById('crNombre').value||'').trim().replace(/\s+/g,' ');
+  const msg=contRenValidar(nuevo, c); if(msg){ toast('⚠️ '+msg); return; }
+  loading(true,'Revisando dónde se usa el nombre…');
+  const R={regs:new Map(), wSub:[], wAnt:[], ciclos:[], semanas:[], control:[], labMod:[], cicMarcas:[], conts:[], users:[]};
+  try{
+    for(const pid of PRED_ORDER){
+      (await colRegistros(pid).where('contratistaId','==',c.id).get()).docs.forEach(d=>R.regs.set(d.ref.path,{ref:d.ref, r:d.data()}));
+      (await colRegistros(pid).where('workerSubjefe','==',viejo).get()).docs.forEach(d=>R.regs.set(d.ref.path,{ref:d.ref, r:d.data()}));
+      (await colWorkers(pid).where('subjefe','==',viejo).get()).docs.forEach(d=>R.wSub.push(d.ref));
+      (await colWorkers(pid).where('subjefeAnterior','==',viejo).get()).docs.forEach(d=>R.wAnt.push(d.ref));
+      (await colCiclos(pid,viejo).get()).docs.forEach(d=>R.ciclos.push({pid, id:d.id, ref:d.ref, data:d.data()}));
+      (await colProg(pid,viejo).get()).docs.forEach(d=>R.semanas.push({pid, id:d.id, ref:d.ref, data:d.data()}));
+      (await db.collection('control').doc(pid).collection('ciclos').where('subjefe','==',viejo).get()).docs.forEach(d=>R.control.push(d.ref));
+      (await colLabMod(pid).where('subjefe','==',viejo).get()).docs.forEach(d=>R.labMod.push(d.ref));
+      // Marcas de traspaso en ciclos de los otros contratistas del predio
+      for(const o of contratistasCache.filter(x=>x.id!==c.id && (x.predios||[]).includes(pid))){
+        (await colCiclos(pid,o.nombre).get()).docs.forEach(d=>{
+          const x=d.data(), u={};
+          if(x.traspasadoA===viejo) u.traspasadoA=nuevo;
+          if(x.traspasadoDe===viejo) u.traspasadoDe=nuevo;
+          if(Object.keys(u).length) R.cicMarcas.push({ref:d.ref, u});
+        });
+      }
+    }
+    contratistasCache.filter(x=>x.id!==c.id && x.reemplazadoPor===viejo).forEach(x=>R.conts.push(x.id));
+    try{ (await colUsers().where('subjefe','==',viejo).get()).docs.forEach(d=>R.users.push(d.ref)); }catch(e){}
+  }catch(e){ loading(false); toast('Error: '+e.message); return; }
+  loading(false);
+  const regs=[...R.regs.values()];
+  if(!confirm(`Cambiar "${viejo}" por "${nuevo}":\n\n`+
+    `• ${regs.length} registro(s) diario(s)\n• ${R.wSub.length+R.wAnt.length} trabajador(es)\n`+
+    `• ${R.ciclos.length} ciclo(s) y ${R.semanas.length} semana(s) de programación\n`+
+    `• ${R.control.length} ficha(s) de control del proceso · ${R.labMod.length} labor(es) × módulo\n`+
+    (R.conts.length||R.cicMarcas.length?`• ${R.conts.length+R.cicMarcas.length} referencia(s) de traspasos\n`:'')+
+    (R.users.length?`• ${R.users.length} usuario(s)\n`:'')+
+    `\nLos montos y las tarifas no cambian. ¿Seguir?`)) return;
+  loading(true,'Cambiando nombre…');
+  const err=[], ts=Date.now(), yo=quienSoy();
+  const enLotes=async(items, fn)=>{
+    for(let i=0;i<items.length;i+=400){ const b=db.batch(); items.slice(i,i+400).forEach(x=>fn(b,x)); await b.commit(); }
+  };
+  // 1. Copias con el nombre nuevo (mismo id): ciclos y programación
+  const okCic=[], okSem=[];
+  for(const x of R.ciclos){
+    try{ await colCiclos(x.pid,nuevo).doc(x.id).set({...x.data, renombradoDe:viejo, renombradoAt:ts}); okCic.push(x); }
+    catch(e){ err.push('Ciclo '+(x.data.nombre||x.id)+': '+e.message); }
+  }
+  for(const x of R.semanas){
+    try{ await colProg(x.pid,nuevo).doc(x.id).set({...x.data, appV:PROG_APPV, renombradoDe:viejo, ts}); okSem.push(x); }
+    catch(e){ err.push('Programación '+fDMY(x.id)+': '+e.message); }
+  }
+  // 2. Referencias por nombre
+  try{ await enLotes(regs,(b,o)=>{ const u={renombre:{de:viejo, at:ts, por:yo.nombre}};
+    if(o.r.contratista===viejo) u.contratista=nuevo;
+    if(o.r.workerSubjefe===viejo) u.workerSubjefe=nuevo;
+    b.update(o.ref,u); }); }catch(e){ err.push('Registros: '+e.message); }
+  try{ await enLotes(R.wSub,(b,r)=>b.update(r,{subjefe:nuevo})); }catch(e){ err.push('Trabajadores: '+e.message); }
+  try{ await enLotes(R.wAnt,(b,r)=>b.update(r,{subjefeAnterior:nuevo})); }catch(e){ err.push('Trabajadores (traspaso): '+e.message); }
+  try{ await enLotes(R.control,(b,r)=>b.update(r,{subjefe:nuevo, updatedAt:ts})); }catch(e){ err.push('Control del proceso: '+e.message); }
+  try{ await enLotes(R.labMod,(b,r)=>b.update(r,{subjefe:nuevo})); }catch(e){ err.push('Labor × módulo: '+e.message); }
+  try{ await enLotes(R.cicMarcas,(b,x)=>b.update(x.ref,x.u)); }catch(e){ err.push('Traspasos en ciclos: '+e.message); }
+  for(const cid of R.conts){ try{ await db.collection('contratistas').doc(cid).update({reemplazadoPor:nuevo, updatedAt:ts, updatedBy:currentUser.uid}); }catch(e){ err.push('Contratista que reemplazó: '+e.message); } }
+  for(const r of R.users){ try{ await r.update({subjefe:nuevo}); }catch(e){ err.push('Usuario: '+e.message); } }
+  // 3. El contratista
+  try{
+    const ants=[...new Set([...(c.nombresAnteriores||[]), viejo])];
+    await db.collection('contratistas').doc(c.id).update({nombre:nuevo, nombresAnteriores:ants, updatedAt:ts, updatedBy:currentUser.uid});
+  }catch(e){ err.push('Contratista: '+e.message); }
+  // 4. Borrar lo del nombre antiguo, solo si todo lo anterior salió bien
+  if(!err.length){
+    try{ await enLotes(okCic,(b,x)=>b.delete(x.ref)); }catch(e){ err.push('Borrar ciclos antiguos: '+e.message); }
+    try{ await enLotes(okSem,(b,x)=>b.delete(x.ref)); }catch(e){ err.push('Borrar programación antigua: '+e.message); }
+  }
+  await loadContratistas();
+  loading(false); closeModal(); contRen=null;
+  document.getElementById('contForm').innerHTML='';
+  renderContratistasConfig();
+  loadPredioData(activePred);
+  if(err.length) alert('El cambio de nombre quedó incompleto:\n\n'+err.join('\n')+'\n\nLos ciclos y la programación con el nombre antiguo NO se borraron. Avísale a Rafael antes de volver a intentarlo.');
+  else toast(`✅ "${viejo}" ahora se llama "${nuevo}"`);
+}
 
 // ══════════════════════════════════════════════
 // v79 · CAMBIAR LA FECHA DE UN TRASPASO
@@ -13894,10 +14014,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v82';
+const MANUAL_VERSION='v83';
 const MANUAL_FECHA='2026-10-24';
 
 const MANUAL_CAMBIOS=[
+  {v:'v83', f:'24-10-2026', ver:()=>canConfigCostos(), txt:'<b>✏️ Cambiar el nombre de un contratista</b> (gerencia, Config › Contratistas › ✏️ del contratista › <b>✏️ Cambiar nombre</b>). El nombre nuevo queda en sus trabajadores, registros diarios, ciclos, programación, control del proceso y labor × módulo. Los montos y las tarifas no cambian. Antes de cambiar, la app muestra cuántos registros se tocan.'},
   {v:'v82', f:'24-10-2026', ver:()=>canAplicFoliar()||canVerGastos(), txt:'<b>🌫️ Foliar en polvo.</b> En Aplicaciones › 🍃 Foliar hay un botón <b>Polvo (kg/ha, sin agua)</b> para productos que se espolvorean al follaje (Velezensis dust, Jaka Bio Dust, Puelche dust…). Se escribe la dosis por hectárea, se marcan los módulos aplicados y la app descuenta dosis × hectáreas de los módulos, desde la misma bodega que las foliares. En "Aplicaciones registradas" aparecen con 🌫️ y se pueden filtrar aparte.'},
   {v:'v81', f:'21-10-2026', ver:()=>canVerGastos()||canBodega(), txt:'<b>Categorías unificadas.</b> En gastos de aplicaciones ya no aparecen por separado "Fertilizante" y "Fertilizantes", "Bioestimulante" y "Bioestimulantes" ni "Fitosanitario" y "Fitosanitarios": se suman en la categoría en plural. Los productos del catálogo quedaron con la categoría corregida.'},
   {v:'v80', f:'21-10-2026', ver:()=>isCampo(), txt:'<b>Dos ciclos el mismo día.</b> Si el subjefe tiene más de un ciclo abierto (por ejemplo Especialidades y Tomate Trastomate), cada labor muestra <b>Ciclo de esta labor</b>. Si un trabajador hizo medio día en cada uno, se anotan las dos labores con su ciclo y al guardar quedan como dos entradas, una por ciclo, cada una con sus horas y mesas.'},
