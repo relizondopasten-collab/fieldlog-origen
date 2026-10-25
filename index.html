@@ -2657,7 +2657,7 @@ let aplVia = null;      // estado del formulario vía riego (dosis/ha)
 let aplEdit = null;
 
 function aplResetForms(){
-  aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], litros:{}, bodega:'' };
+  aplFol = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], litros:{}, bodega:'', forma:'liquido', mods:{} };
   aplRie = { fecha: todayIso, predioId:'', epoca:'', estanques:estanquesPorDefecto('') };
   aplVia = { fecha: todayIso, predioId:'', cultivo:'', epoca:'', recetaTxt:'', receta:[], sectores:{} };
   aplAci = nuevoAcidoForm('');   // v43
@@ -2952,7 +2952,7 @@ function renderFoliarForm(){
   if(aplFol.receta.length){
     recetaH = aplFol.receta.map((r,i)=>{
       const ok=!!r.productoId;
-      const dosisTxt = (r.dosis!=null ? `${fmtNum(r.dosis)} ${escH(r.unidad||'?')}/100L` : '<span style="color:var(--red)">sin dosis</span>');
+      const dosisTxt = (r.dosis!=null ? `${fmtNum(r.dosis)} ${escH(r.unidad||'?')}${folEsPolvo()?'/ha':'/100L'}` : '<span style="color:var(--red)">sin dosis</span>');
       if(ok){
         return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;font-size:12.5px">
           <span style="color:#2E7D32">✅</span>
@@ -2989,6 +2989,17 @@ function renderFoliarForm(){
     const mods = modulosDePredio(aplFol.predioId);
     if(!mods.length){
       destH='<p style="font-size:11px;color:var(--muted)">Este predio no tiene módulos cargados.</p>';
+    }else if(folEsPolvo()){
+      // v82 · Polvo: se marca el módulo; la superficie sale de Config.
+      destH = mods.map((m,i)=>{
+        const ha=haModulo(aplFol.predioId,m);
+        const on=!!aplFol.mods[m];
+        return `<label style="display:flex;gap:8px;align-items:center;margin-bottom:4px;font-size:12px;cursor:pointer;text-transform:none;letter-spacing:normal;font-weight:400;color:var(--dark)">
+          <input type="checkbox"${on?' checked':''} onchange="folPolvoMod(${i},this.checked)" style="width:18px;height:18px">
+          <span style="flex:1">Mód ${escH(m)}</span>
+          <span style="color:${ha!=null?'var(--muted)':'#B45309'}">${ha!=null?fmtNum(ha,2)+' ha':'sin superficie'}</span>
+        </label>`;
+      }).join('');
     }else{
       destH = mods.map((m,i)=>{
         const ha=haModulo(aplFol.predioId,m);
@@ -3008,12 +3019,17 @@ function renderFoliarForm(){
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplFolSetCampo('cultivo',this.value)">${cultOpts}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">${epocaLabelCampo(aplFol.cultivo)}</label><select onchange="aplFolSetCampo('epoca',this.value)">${epocaOptsHTML(aplFol.cultivo, aplFol.epoca)}</select></div>
     </div>
-    <div class="sec-div">Receta (dosis por 100 L de agua)</div>
-    <textarea id="folTxt" placeholder="Ej: Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + acido citrico 30 g" oninput="folSetTxt(this.value)" style="width:100%;min-height:64px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplFol.recetaTxt)}</textarea>
+    <div class="sec-div">Forma de aplicación</div>
+    <div style="display:flex;gap:6px;margin-bottom:4px">
+      <button class="btn btn-sm" onclick="folSetForma('liquido')" style="flex:1;${folEsPolvo()?'background:var(--sand);color:var(--dark)':'background:var(--dark);color:#fff'}">💧 Líquida (por 100 L)</button>
+      <button class="btn btn-sm" onclick="folSetForma('polvo')" style="flex:1;${folEsPolvo()?'background:var(--dark);color:#fff':'background:var(--sand);color:var(--dark)'}">🌫️ Polvo (kg/ha, sin agua)</button>
+    </div>
+    <div class="sec-div">${folEsPolvo()?'Receta (dosis por hectárea)':'Receta (dosis por 100 L de agua)'}</div>
+    <textarea id="folTxt" placeholder="${folEsPolvo()?'Ej: Velezensis dust 20 kg + Puelche dust 15 kg':'Ej: Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + acido citrico 30 g'}" oninput="folSetTxt(this.value)" style="width:100%;min-height:64px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplFol.recetaTxt)}</textarea>
     <button class="btn btn-sm" onclick="folInterpretar()" style="background:var(--dark);color:#fff;margin:6px 0">🔎 Interpretar receta</button>
     ${recetaH}
     ${folBodegaHTML()}
-    <div class="sec-div">Mojamiento gastado por módulo (L)</div>
+    <div class="sec-div">${folEsPolvo()?'Módulos aplicados':'Mojamiento gastado por módulo (L)'}</div>
     ${destH}
     <div id="folConsumo"></div>
     ${aplBotonGuardar('guardarFoliar()','Registrar aplicación')}
@@ -3022,9 +3038,44 @@ function renderFoliarForm(){
 }
 
 function folSetTxt(v){ aplFol.recetaTxt=v; }  // sin re-render: no perder foco
+// v82 · Polvo al follaje (Velezensis dust, Jaka Bio Dust, Puelche dust…): se
+// aplica sin agua, la dosis es por hectárea y se marcan los módulos tratados.
+// Consumo = dosis × ha de los módulos marcados. Sigue siendo tipo 'foliar'
+// (misma bodega, permisos, informe de gasto); se distingue por forma:'polvo'.
+function folEsPolvo(){ return !!(aplFol && aplFol.forma==='polvo'); }
+function folSetForma(f){
+  const ta=document.getElementById('folTxt'); if(ta) aplFol.recetaTxt=ta.value;
+  if((aplFol.forma||'liquido')===f) return;
+  aplFol.forma=f;
+  aplFol.litros={}; aplFol.mods={};               // mojamiento y módulos marcados no se traspasan
+  aplFol.receta=parseRecetaFol(aplFol.recetaTxt);  // las unidades se leen distinto
+  renderFoliarForm();
+}
+function folPolvoMod(i,on){
+  const mods=modulosDePredio(aplFol.predioId); const m=mods[i];
+  if(m==null) return;
+  if(on) aplFol.mods[m]=true; else delete aplFol.mods[m];
+  folRenderConsumo();
+}
+// En polvo, una dosis sin unidad se entiende en kg/ha.
+function parseRecetaFol(txt){
+  const r=parseReceta(txt);
+  if(folEsPolvo()) r.forEach(x=>{
+    if(x.dosis==null){   // "Velezensis dust 20" (sin unidad): el número final es la dosis
+      const m=String(x.txt||'').match(/^(.*?)\s+(\d+(?:[.,]\d+)?)\s*$/);
+      if(m){
+        const prod=matchProducto(m[1]);
+        x.txt=m[1]; x.dosis=parseFloat(m[2].replace(',','.'));
+        x.productoId=prod?prod.id:''; x.nombre=prod?prod.nombre:m[1];
+      }
+    }
+    if(x.dosis!=null && !x.unidad) x.unidad='kg';
+  });
+  return r;
+}
 function folInterpretar(){
   const ta=document.getElementById('folTxt'); if(ta) aplFol.recetaTxt=ta.value;
-  aplFol.receta = parseReceta(aplFol.recetaTxt);
+  aplFol.receta = parseRecetaFol(aplFol.recetaTxt);
   renderFoliarForm();
 }
 function folSetProd(i,productoId){
@@ -3043,7 +3094,7 @@ function aplFolSetCampo(campo,val){
   const cultAntes=aplFol.cultivo;
   aplFol[campo]=val;
   if(campo==='predioId'){
-    aplFol.litros={};                                  // los módulos son otros: se parte de cero
+    aplFol.litros={}; aplFol.mods={};                  // los módulos son otros: se parte de cero
     aplFol.epoca=epocaSugerida(val, aplFol.cultivo);   // v38 · época del ciclo abierto
     aplFol.bodega='';                                  // v40 · que vuelva a sugerir la bodega
   }
@@ -3063,6 +3114,8 @@ function aplFolSetCampo(campo,val){
 
 // Módulos con mojamiento escrito, en el formato que se guarda en Firestore.
 function folDestinos(){
+  if(folEsPolvo()) return Object.keys(aplFol.mods||{}).filter(m=>aplFol.mods[m])
+    .map(m=>({modulo:String(m), litros:0, ha:haModulo(aplFol.predioId,m)}));
   return Object.keys(aplFol.litros)
     .filter(m=>num(aplFol.litros[m])>0)
     .map(m=>({modulo:String(m), litros:num(aplFol.litros[m]), ha:haModulo(aplFol.predioId,m)}));
@@ -3070,6 +3123,19 @@ function folDestinos(){
 
 // Consumo por producto = dosis × litros/100 (en unidad escrita y en base L/kg)
 function calcFolConsumo(){
+  if(folEsPolvo()){
+    const dest=folDestinos();
+    const ha=dest.reduce((s,d)=>s+(num(d.ha)||0),0);
+    const items=[];
+    aplFol.receta.forEach(r=>{
+      if(r.productoId && r.dosis!=null && !isNaN(r.dosis)){
+        const cv=aStock(r.dosis, r.unidad);
+        items.push({ productoId:r.productoId, nombre:r.nombre, unidad:r.unidad, dosis:r.dosis,
+          origTotal:r.dosis*ha, base:cv.base, baseTotal:cv.val*ha });
+      }
+    });
+    return {total:ha, items, polvo:true, sinHa:dest.filter(d=>d.ha==null||isNaN(Number(d.ha))).map(d=>d.modulo)};
+  }
   const totalAgua = Object.keys(aplFol.litros).reduce((s,m)=>s+(num(aplFol.litros[m])||0),0);
   const items=[];
   aplFol.receta.forEach(r=>{
@@ -3084,6 +3150,15 @@ function calcFolConsumo(){
 function folRenderConsumo(){
   const el=document.getElementById('folConsumo'); if(!el) return;
   const consumo=calcFolConsumo();
+  if(consumo.polvo){
+    const aviso=consumo.sinHa.length?`<div style="font-size:11px;color:#B45309;margin-top:4px">⚠️ Sin superficie: mód ${consumo.sinHa.map(escH).join(', ')}. Gerencia la carga en Config › Sectores de riego › Superficie de módulos.</div>`:'';
+    el.innerHTML = (consumo.total>0 && consumo.items.length) ? `<div class="sec-div">Consumo calculado</div>
+      <div style="font-size:11px;color:var(--dark);line-height:1.7">
+        <b>${fmtNum(consumo.total,2)} ha</b> en ${folDestinos().length} módulo(s)<br>
+        ${consumo.items.map(it=>`${escH(it.nombre)}: <b>${fmtNum(it.baseTotal,3)} ${escH(it.base)}</b>`).join('<br>')}
+      </div>${aviso}` : aviso;
+    return;
+  }
   if(consumo.total>0 && consumo.items.length){
     el.innerHTML=`<div class="sec-div">Consumo calculado</div>
       <div style="font-size:11px;color:var(--dark);line-height:1.7">
@@ -3985,6 +4060,13 @@ function descuentosFoliar(recetaData, totalLitros){
     return { productoId:r.productoId, nombre:r.nombre, cantidad: cv.val*totalLitros/100 };
   });
 }
+// v82 · Consumo en polvo (sin agua): dosis por ha × ha de los módulos marcados
+function descuentosPolvo(recetaData, haTotal){
+  return recetaData.map(r=>{
+    const cv=aStock(r.dosis, r.unidad);
+    return { productoId:r.productoId, nombre:r.nombre, cantidad: cv.val*haTotal };
+  });
+}
 // Consumo riego = lo que se echó al estanque (ya en kg/L)
 function descuentosRiego(recetaData){
   return recetaData.map(r=>({ productoId:r.productoId, nombre:r.nombre, cantidad:r.cantidad }));
@@ -4347,7 +4429,14 @@ async function guardarFoliar(){
   if(!aplFol.epoca){ toast(esCultivoPim(aplFol.cultivo)?'⚠️ Elige el mes de plantación del pimentón':'⚠️ Elige la época: sin ella el gasto no entra en la temporada'); return; }
   if(!epocaCompatible(aplFol.epoca, aplFol.cultivo)){ toast('⚠️ La época no corresponde al cultivo: vuelve a elegirla'); return; }   // v43
   const destData = folDestinos();
-  if(!destData.length){ toast('⚠️ Anota el mojamiento de al menos un módulo'); return; }
+  const polvo = folEsPolvo();   // v82
+  if(!destData.length){ toast(polvo?'⚠️ Marca al menos un módulo':'⚠️ Anota el mojamiento de al menos un módulo'); return; }
+  if(polvo){
+    const sinHa=destData.filter(d=>d.ha==null||isNaN(Number(d.ha))||Number(d.ha)<=0);
+    if(sinHa.length){ toast('⚠️ Sin superficie: mód '+sinHa.map(d=>d.modulo).join(', ')+'. Gerencia la carga en Config.'); return; }
+    const malas=aplFol.receta.filter(r=>!['kg','g'].includes(String(r.unidad||'').toLowerCase()));
+    if(malas.length){ toast('⚠️ En polvo la dosis va en kg/ha (o g/ha): '+malas.map(r=>r.nombre||r.txt).join(', ')); return; }
+  }
 
   const recetaData = aplFol.receta.map(r=>{
     const cv=aStock(r.dosis,r.unidad);
@@ -4357,7 +4446,8 @@ async function guardarFoliar(){
   loading(true, editando?'Guardando cambios…':'Registrando…');
   try{
     const totalLitros = destData.reduce((s,d)=>s+d.litros,0);
-    const desc = descuentosFoliar(recetaData, totalLitros).filter(d=>d.productoId);
+    const haTotal = destData.reduce((s,d)=>s+(Number(d.ha)||0),0);
+    const desc = (polvo ? descuentosPolvo(recetaData, haTotal) : descuentosFoliar(recetaData, totalLitros)).filter(d=>d.productoId);
     const hist=esHistorico(aplFol.fecha), consumoHist=hist?desc.map(d=>({...d})):[];   // v45
     if(hist) desc.length=0;
     const sinDescontar = recetaData.filter(r=>!r.productoId)
@@ -4368,6 +4458,7 @@ async function guardarFoliar(){
       tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'', bodegaDescuento:bodDesc,
       ...datosTemporadaEdit(aplFol.predioId, aplFol.epoca, aplFol.cultivo, aplFol.fecha),
       receta:recetaData, destinos:destData, sinDescontar,
+      forma: polvo?'polvo':'liquido', ...(polvo?{haTotal:Math.round(haTotal*10000)/10000}:{}),
       descontado: desc.map(d=>({productoId:d.productoId, nombre:d.nombre||'', cantidad:d.cantidad})),
       ...marcaHistorico(hist, consumoHist)
     };
@@ -4385,7 +4476,7 @@ async function guardarFoliar(){
     }
     const pid=aplFol.predioId;
     aplEdit=null;
-    aplFol={ fecha:todayIso, predioId:pid, cultivo:'', epoca:epocaSugerida(pid), recetaTxt:'', receta:[], litros:{}, bodega:'' };
+    aplFol={ fecha:todayIso, predioId:pid, cultivo:'', epoca:epocaSugerida(pid), recetaTxt:'', receta:[], litros:{}, bodega:'', forma:polvo?'polvo':'liquido', mods:{} };
     renderFoliarForm();
     renderAplList();
     if(editando) avisoGuardado(faltan.length ? `✅ Corregida · ⚠️ stock bajo: ${faltan.slice(0,3).join(', ')}` : '✅ Aplicación corregida · stock recalculado');
@@ -4405,7 +4496,7 @@ async function guardarFoliar(){
 // ══════════════════════════════════════════════
 let aplHistDocs=[];
 let aplHist={tipo:'', predio:'', desde:'', hasta:'', txt:'', por:'', orden:'registro', max:15};
-const APL_TIPOS_HIST=[['','Todos los tipos'],['foliar','🍃 Foliar'],['fertirriego','🧪 Fertilización'],['acido','⚗️ Ácidos'],['viariego','💧 Vía riego']];
+const APL_TIPOS_HIST=[['','Todos los tipos'],['foliar','🍃 Foliar (todas)'],['polvo','🌫️ Foliar en polvo'],['fertirriego','🧪 Fertilización'],['acido','⚗️ Ácidos'],['viariego','💧 Vía riego']];
 function aplTipoDe(a){ return a.tipo==='fertirriego' ? (a.subtipo==='acido'?'acido':'fertirriego') : (a.tipo||''); }
 // Fechas en que se aplicó (un estanque puede tener varios días).
 function aplFechasDe(a){ const f=usosDe(a).map(u=>u.fecha||a.fecha).filter(Boolean); return f.length?f:[a.fecha||'']; }
@@ -4419,7 +4510,8 @@ function aplHistFiltradas(){
   const filtrar=f.tipo||f.predio||f.desde||f.hasta||txt||f.por;
   let lista=aplHistDocs.filter(doc=>{
     const a=doc.data();
-    if(f.tipo && aplTipoDe(a)!==f.tipo) return false;
+    if(f.tipo==='polvo'){ if(!(a.tipo==='foliar' && a.forma==='polvo')) return false; }   // v82
+    else if(f.tipo && aplTipoDe(a)!==f.tipo) return false;
     if(f.predio && a.predioId!==f.predio) return false;
     if(f.desde||f.hasta){
       if(!aplFechasDe(a).some(x=>(!f.desde||x>=f.desde)&&(!f.hasta||x<=f.hasta))) return false;
@@ -4474,6 +4566,7 @@ function aplConsumoTotal(a){
   return out;
 }
 function aplLugaresTxt(a){
+  if(a.tipo==='foliar' && a.forma==='polvo') return (a.destinos||[]).map(d=>`mód ${d.modulo||''}${d.ha!=null?` (${fmtNum(d.ha,2)} ha)`:''}`).join(' · ');   // v82
   if(a.tipo==='foliar') return (a.destinos||[]).map(d=>`mód ${d.modulo||d.unidad||''}: ${fmtNum(d.litros,0)} L`).join(' · ');
   if(a.subtipo==='acido') return usosDe(a).map(u=>(u.acidoSectores&&u.acidoSectores.length?u.acidoSectores.map(x=>`${x.sector} ${fmtNum(x.lAcido,1)} L`):(u.sectores||[]).map(x=>x.sector)).join(', ')).join(' · ');
   if(a.tipo==='fertirriego') return usosDe(a).map(u=>(u.sectores||[]).map(x=>x.sector+(x.litros?` ${fmtNum(x.litros,0)} L`:'')).join(', ')).join(' · ');
@@ -4487,13 +4580,14 @@ function aplHistExcel(){
   const filas=[];
   docs.forEach(doc=>{
     const a=doc.data(), t=aplTipoDe(a), cons=aplConsumoTotal(a);
-    const base={Fecha:aplFechasDe(a).map(fDMY).join(', '), Tipo:TIPO_TXT[t]||t, Predio:(PREDIOS[a.predioId]||{}).nombre||a.predioId||'',
+    const esPolvo=a.tipo==='foliar'&&a.forma==='polvo';   // v82
+    const base={Fecha:aplFechasDe(a).map(fDMY).join(', '), Tipo:esPolvo?'Foliar en polvo':(TIPO_TXT[t]||t), Predio:(PREDIOS[a.predioId]||{}).nombre||a.predioId||'',
       Cultivo:a.cultivo||'', 'Época / mes plant.':a.epoca?(TNAMES[a.epoca]||a.epoca):'', 'Módulos / sectores':aplLugaresTxt(a),
-      'Agua o mezcla (L)': t==='foliar' ? (a.destinos||[]).reduce((s,d)=>s+(Number(d.litros)||0),0) : (Number(a.totalLitros)||null),
+      'Agua o mezcla (L)': esPolvo ? null : t==='foliar' ? (a.destinos||[]).reduce((s,d)=>s+(Number(d.litros)||0),0) : (Number(a.totalLitros)||null),
       'Superficie (ha)': a.haTotal!=null?Number(a.haTotal):null,
       'Histórico': (a.historico||usosDe(a).some(u=>u.historico))?'Sí (no descontó bodega)':'', 'Registró':a.registradoPorNombre||''};
     let prods=[];
-    if(t==='foliar') prods=(a.receta||[]).map(r=>({id:r.productoId, n:r.nombre, dosis:r.dosis, u:(r.unidad||'')+'/100 L'}));
+    if(t==='foliar') prods=(a.receta||[]).map(r=>({id:r.productoId, n:r.nombre, dosis:r.dosis, u:(r.unidad||'')+(esPolvo?'/ha':'/100 L')}));
     else if(t==='viariego') prods=(a.receta||[]).map(r=>({id:r.productoId, n:r.nombre, dosis:r.dosis, u:(r.unidad||'')+'/ha'}));
     else if(t==='fertirriego') prods=(a.sales||[]).map(x=>({id:x.productoId, n:x.nombre, dosis:x.cantidadKg, u:(x.unidad||'kg')+' en estanque'}));
     else if(t==='acido') prods=(a.sales&&a.sales.length?a.sales:(a.acidos||[])).map(x=>({id:x.productoId, n:x.nombre||x.acido, dosis:x.cantidadKg!=null?x.cantidadKg:x.kg, u:(x.unidad||'kg')}));
@@ -4592,6 +4686,14 @@ function aplHistPintar(){
         const pred=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
         sub=(a.destinos||[]).map(d=>`${escH(d.sector)}: ${fmtNum(d.litros,0)}L`).join(' · ');
         totalTxt=`${escH(pred)} · estanque ${fmtNum(a.litrosEstanque,0)}L → ${fmtNum(totalApl,0)}L aplicados`;
+      }else if(a.forma==='polvo'){
+        // v82 · Foliar en polvo: dosis por ha y módulos marcados.
+        etiqueta='🌫️';
+        receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.dosis)} ${escH(r.unidad||'kg')}/ha`).join(' + ');
+        const haT=a.haTotal!=null?Number(a.haTotal):(a.destinos||[]).reduce((s,d)=>s+(Number(d.ha)||0),0);
+        const predF=PREDIOS[a.predioId]?PREDIOS[a.predioId].nombre:(a.predioId||'');
+        sub=(a.destinos||[]).map(d=>`mód ${escH(d.modulo||'')}${d.ha!=null?` (${fmtNum(d.ha,2)} ha)`:''}`).join(' · ');
+        totalTxt=`${escH(predF)}${a.cultivo?' · '+escH(a.cultivo):''}${a.epoca?' · '+(TNAMES[a.epoca]||a.epoca):''} · polvo sin agua en ${fmtNum(haT,2)} ha`;
       }else{
         etiqueta='🍃';
         receta=(a.receta||[]).map(r=>`${escH(r.nombre)} ${fmtNum(r.dosis)}${escH(r.unidad||(r.unidadStock==='L'?'cc':'g'))}/100L`).join(' + ');
@@ -4726,8 +4828,9 @@ async function aplEditar(id){
       // la corrección devolvería el stock a una bodega y lo sacaría de otra.
       aplFol={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
         recetaTxt:recetaATexto(a.receta), receta:recetaAEstado(a.receta), litros:{},
-        bodega:a.bodegaDescuento||'' };
-      (a.destinos||[]).forEach(d=>{ if(d && d.modulo!=null) aplFol.litros[String(d.modulo)]=String(d.litros!=null?d.litros:''); });
+        bodega:a.bodegaDescuento||'', forma:a.forma==='polvo'?'polvo':'liquido', mods:{} };
+      if(aplFol.forma==='polvo') (a.destinos||[]).forEach(d=>{ if(d && d.modulo!=null) aplFol.mods[String(d.modulo)]=true; });   // v82
+      else (a.destinos||[]).forEach(d=>{ if(d && d.modulo!=null) aplFol.litros[String(d.modulo)]=String(d.litros!=null?d.litros:''); });
     }else if(tipo==='viariego'){
       aplVia={ fecha:a.fecha||todayIso, predioId:a.predioId||'', cultivo:a.cultivo||'', epoca:a.epoca||'',
         recetaTxt:recetaATexto(a.receta), receta:recetaAEstado(a.receta), sectores:{}, recintos:{} };
@@ -13791,10 +13894,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v81';
-const MANUAL_FECHA='2026-10-21';
+const MANUAL_VERSION='v82';
+const MANUAL_FECHA='2026-10-24';
 
 const MANUAL_CAMBIOS=[
+  {v:'v82', f:'24-10-2026', ver:()=>canAplicFoliar()||canVerGastos(), txt:'<b>🌫️ Foliar en polvo.</b> En Aplicaciones › 🍃 Foliar hay un botón <b>Polvo (kg/ha, sin agua)</b> para productos que se espolvorean al follaje (Velezensis dust, Jaka Bio Dust, Puelche dust…). Se escribe la dosis por hectárea, se marcan los módulos aplicados y la app descuenta dosis × hectáreas de los módulos, desde la misma bodega que las foliares. En "Aplicaciones registradas" aparecen con 🌫️ y se pueden filtrar aparte.'},
   {v:'v81', f:'21-10-2026', ver:()=>canVerGastos()||canBodega(), txt:'<b>Categorías unificadas.</b> En gastos de aplicaciones ya no aparecen por separado "Fertilizante" y "Fertilizantes", "Bioestimulante" y "Bioestimulantes" ni "Fitosanitario" y "Fitosanitarios": se suman en la categoría en plural. Los productos del catálogo quedaron con la categoría corregida.'},
   {v:'v80', f:'21-10-2026', ver:()=>isCampo(), txt:'<b>Dos ciclos el mismo día.</b> Si el subjefe tiene más de un ciclo abierto (por ejemplo Especialidades y Tomate Trastomate), cada labor muestra <b>Ciclo de esta labor</b>. Si un trabajador hizo medio día en cada uno, se anotan las dos labores con su ciclo y al guardar quedan como dos entradas, una por ciclo, cada una con sus horas y mesas.'},
   {v:'v79', f:'21-10-2026', ver:()=>canConfigCostos(), txt:'<b>📅 Cambiar la fecha de un traspaso de contratista</b> (gerencia, Config › Contratistas). Lo registrado entre la fecha antigua y la nueva pasa al contratista que corresponde (el monto de cada registro no cambia), los ciclos del anterior cierran el día previo, la programación y las tarifas copiadas se ajustan y, si se marca, pasan los trabajadores que quedaban con el anterior.'},
@@ -14026,6 +14130,7 @@ const MANUAL_SECCIONES=[
     'Escribe la <b>receta tal como la anotas en terreno</b>, con dosis por 100 L de agua. Ejemplo: <i>Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + ácido cítrico 30 g</i>.',
     'La app trata de reconocer cada producto en la bodega. El que quede en amarillo con "no reconocí", elígelo a mano de la lista.',
     'Al elegir el predio aparecen <b>todos sus módulos</b> en una lista. Anota el <b>mojamiento gastado en litros</b> solo en los que aplicaste; los que dejes en blanco no se guardan.',
+    '<b>🌫️ Productos en polvo</b> (Velezensis dust, Jaka Bio Dust, Puelche dust…): aprieta <b>Polvo (kg/ha, sin agua)</b> arriba de la receta. Escribe la dosis <b>por hectárea</b> (ejemplo: <i>Velezensis dust 20 kg</i>) y <b>marca los módulos</b> donde se aplicó. La app descuenta la dosis por las hectáreas de esos módulos. Un módulo sin superficie cargada no se puede usar: pídele a gerencia que la cargue en Config.',
     'Aprieta <b>Registrar aplicación</b>. Abajo, en "Aplicaciones registradas", queda el respaldo.',
     '¿Te equivocaste o faltó un producto? En "Aplicaciones registradas" aprieta el <b>✏️</b> del registro, corrige y guarda. El stock se devuelve y se vuelve a descontar solo.',
     '<b>Buscar aplicaciones pasadas</b>: en la tarjeta <b>📋 Aplicaciones registradas</b>, arriba de la lista, elige el <b>tipo</b> (🍃 foliar, 🧪 fertilización, ⚗️ ácidos o 💧 vía riego), las fechas <b>Desde/Hasta</b>, el <b>producto</b> o <b>quién registró</b>. Con <b>Orden: Por fecha de aplicación</b> quedan ordenadas por el día en que se aplicaron. Aprieta <b>Ver más</b> para seguir bajando y <b>✕ Limpiar</b> para volver a las últimas registradas. <b>⬇️ Excel</b> baja lo filtrado, una fila por producto (fecha, módulos o sectores, dosis, agua y cantidad usada).'
