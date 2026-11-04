@@ -11218,22 +11218,40 @@ function obsDiasPersona(selCic, porCiclo){
       const o = g.obs[ok];
       o.mesas += m; o.horas += h;
       const otras = (r.labores||[]).filter(x=>x!==l && x.laborId).map(x=>`${x.laborId} (${Number(x.mesas)||0} m, ${Number(x.horas)||0} h)`);
-      o.ents.push({ pid:r._predio, id:r._id, mesas:m, horas:h, otras, obs:r.obs||'' });
+      o.ents.push({ pid:r._predio, id:r._id, mesas:m, horas:h, otras, obs:r.obs||'', incOK:r.incOK||null });
     });
   });
-  Object.values(grupos).forEach(g=>{ g.lista = Object.values(g.obs); delete g.obs; marcarAtipicos(g.lista); });
+  Object.values(grupos).forEach(g=>{ g.lista = Object.values(g.obs); delete g.obs; marcarAtipicos(g.lista, g.laborId); });
   return grupos;
 }
-function marcarAtipicos(lista){
+// v84 · Clave y firma de una señal de revisión. La firma es el valor revisado:
+// si después se corrige la entrada (cambian mesas u horas), la marca deja de valer.
+function incClaveAtip(f, laborId){
+  const t = f==='Posible duplicado' ? 'dup' : f==='Muy bajo' ? 'bajo' : f.startsWith('Sobre') ? 'sobre' : 'alto';
+  return t+'_'+laborId;
+}
+function incFirmaAtip(f, o){ return f==='Posible duplicado' ? o.ents.length+':'+o.mesas : String(o.mesas); }
+// ¿Todas las entradas tienen la marca "correcto" con la misma firma?
+function incEsOK(ents, clave, firma){
+  return !!(ents && ents.length) && ents.every(x=>{ const m = x.incOK && x.incOK[clave]; return !!(m && String(m.f)===String(firma)); });
+}
+function incMarcaDe(ents, clave){ const x = (ents||[]).find(e=>e.incOK && e.incOK[clave]); return x ? x.incOK[clave] : null; }
+function marcarAtipicos(lista, laborId){
   const vals = lista.map(o=>o.mesas).sort((a,b)=>a-b);
   const n = vals.length;
   const med = !n ? 0 : (n%2 ? vals[(n-1)/2] : (vals[n/2-1]+vals[n/2])/2);
   lista.forEach(o=>{
-    const f = [];
+    let f = [];
     if(o.ents.length>1) f.push('Posible duplicado');
     if(o.mesas > LIMITES.mesasPorLabor) f.push(`Sobre ${LIMITES.mesasPorLabor} mesas`);
     else if(n>=ATIP_MIN_N && med>0 && o.mesas > ATIP_ALTO*med) f.push('Muy alto');
     if(n>=ATIP_MIN_N && med>=4 && o.mesas < ATIP_BAJO*med) f.push('Muy bajo');
+    // v84 · Lo revisado y marcado como correcto deja de contar como "para revisar"
+    o.flagsOK = []; o.flagsAll = f;
+    if(laborId!==undefined){
+      o.flagsOK = f.filter(x=>incEsOK(o.ents, incClaveAtip(x, laborId), incFirmaAtip(x, o)));
+      f = f.filter(x=>!o.flagsOK.includes(x));
+    }
     o.flags = f; o.med = med;
   });
   lista.sort((a,b)=> b.mesas-a.mesas || a.fecha.localeCompare(b.fecha));
@@ -11314,6 +11332,15 @@ function eficVerDias(pid, sub, lab){
   const l = LABORES.find(x=>String(x.id)===String(lab));
   const nAt = g.lista.filter(o=>o.flags.length).length;
   const extra = { dias:{ pid, sub, lab } };
+  infState.incDias = { pid, sub, lab };   // v84
+  // v84 · Cada señal pendiente se puede marcar como correcta desde aquí
+  infState.incLista = { p: [], r: [] };
+  const btnOKDia = o=>{
+    if(!o.flags.length || !o.ents.every(x=>puedeCorregirInf(x.pid))) return '';
+    const ks = o.flags.map(f=>{ infState.incLista.p.push({ clave:incClaveAtip(f, lab), firma:incFirmaAtip(f, o), _ents:o.ents,
+      trabajador:o.nombre, fecha:o.fecha, detalle:`${lab}. ${l?l.d:''}: ${f} (${o.mesas} mesas)` }); return infState.incLista.p.length-1; });
+    return `<button class="inf-dl" title="Revisado: el dato está bien" style="margin-left:2px;border-color:#16A34A;color:#15803D" onclick="incMarcarOKVarios([${ks.join(',')}])">✅</button>`;
+  };
   const sel = infState.effDiasSolo ? g.lista.filter(o=>o.flags.length) : g.lista;
   document.getElementById('modalContent').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
@@ -11326,13 +11353,13 @@ function eficVerDias(pid, sub, lab){
       <thead><tr><th>Fecha</th><th>Trabajador</th><th class="num">Mesas</th><th class="num">Horas</th><th></th></tr></thead>
       <tbody>${sel.map(o=>`<tr${o.flags.length?' style="background:#FFF7ED"':''}>
         <td style="white-space:nowrap">${fDMY(o.fecha).slice(0,5)}<div style="font-size:9px;color:var(--muted)">${['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][new Date(o.fecha+'T12:00:00').getDay()]}</div></td>
-        <td>${escH(o.nombre)}<div>${atipChips(o.flags)}</div>${o.ents.length>1?`<div style="font-size:9.5px;color:var(--muted)">${o.ents.map((x,i)=>`${i+1}: ${x.mesas} m, ${x.horas} h`).join(' · ')}</div>`:''}${o.ents.some(x=>x.otras.length)?`<div style="font-size:9.5px;color:var(--muted)">Otras labores ese día: ${escH([...new Set(o.ents.flatMap(x=>x.otras))].join(', '))}</div>`:''}</td>
+        <td>${escH(o.nombre)}<div>${atipChips(o.flags)}${(o.flagsOK||[]).length?`<span style="display:inline-block;font-size:9.5px;font-weight:700;color:#15803D;background:#DCFCE7;border-radius:5px;padding:1px 5px;margin:1px 2px 0 0">✅ Revisado: ${escH(o.flagsOK.join(', '))}</span>`:''}</div>${o.ents.length>1?`<div style="font-size:9.5px;color:var(--muted)">${o.ents.map((x,i)=>`${i+1}: ${x.mesas} m, ${x.horas} h`).join(' · ')}</div>`:''}${o.ents.some(x=>x.otras.length)?`<div style="font-size:9.5px;color:var(--muted)">Otras labores ese día: ${escH([...new Set(o.ents.flatMap(x=>x.otras))].join(', '))}</div>`:''}</td>
         <td class="num"><b>${o.mesas}</b></td>
         <td class="num">${(Math.round(o.horas*10)/10).toLocaleString('es-CL')}</td>
-        <td style="text-align:right">${infBtnsEnt(o.ents, extra)}</td>
+        <td style="text-align:right">${infBtnsEnt(o.ents, extra)}${btnOKDia(o)}</td>
       </tr>`).join('') || `<tr><td colspan="5" class="inf-empty">✅ Nada que revisar</td></tr>`}</tbody>
     </table></div>
-    <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-top:6px">Se marca para revisar: <b>posible duplicado</b> (la misma labor en 2 o más entradas del trabajador ese día; la cifra es la suma), <b>sobre ${LIMITES.mesasPorLabor} mesas</b>, <b>muy alto</b> (más del doble de la mediana) y <b>muy bajo</b> (menos de un cuarto de la mediana). ✏️ abre la entrada en Registro para corregirla; al guardar vuelves aquí.</div>`;
+    <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-top:6px">Se marca para revisar: <b>posible duplicado</b> (la misma labor en 2 o más entradas del trabajador ese día; la cifra es la suma), <b>sobre ${LIMITES.mesasPorLabor} mesas</b>, <b>muy alto</b> (más del doble de la mediana) y <b>muy bajo</b> (menos de un cuarto de la mediana). ✏️ abre la entrada en Registro para corregirla; al guardar vuelves aquí. <b>✅</b> marca el día como revisado y correcto: deja de contar como "para revisar".</div>`;
   document.getElementById('overlay').classList.add('open');
 }
 
@@ -11601,9 +11628,9 @@ function calcInconsistencias(){
     const l = LABORES.find(x=>x.id===g.laborId);
     const labNom = l ? `${g.laborId}. ${l.d}` : `Labor ${g.laborId}`;
     g.lista.forEach(o=>{
-      if(!o.flags.length) return;
-      o.flags.forEach(f=>{
-        issues.push({ fecha:o.fecha, trabajador:o.nombre, subjefe:g.subjefe,
+      if(!o.flagsAll.length) return;
+      o.flagsAll.forEach(f=>{
+        issues.push({ clave: incClaveAtip(f, g.laborId), firma: incFirmaAtip(f, o), _ents: o.ents, fecha:o.fecha, trabajador:o.nombre, subjefe:g.subjefe,
           predio: PREDIOS[g.predioId] ? PREDIOS[g.predioId].nombre : g.predioId,
           tipo: f==='Posible duplicado' ? 'Posible duplicado' : (f==='Muy bajo' ? 'Mesas muy bajas' : 'Mesas muy altas'),
           detalle: f==='Posible duplicado'
@@ -11627,14 +11654,15 @@ function calcInconsistencias(){
       trabajador: w.nombre || r.workerId,
       subjefe: w.subjefe || '—',
       predio: PREDIOS[r._predio] ? PREDIOS[r._predio].nombre : r._predio,
-      ents: [{pid:r._predio, id:r._id}]   // v67
+      ents: [{pid:r._predio, id:r._id}],   // v67
+      _ents: [{pid:r._predio, id:r._id, incOK:r.incOK||null}]   // v84
     };
     if((r.ausente || r.licencia || r.vacaciones)){
       const labs = r.labores || [];
       const totalH = labs.reduce((s,l)=>s+(l.horas||0), 0) + (r.horas||0);
       const totalM = labs.reduce((s,l)=>s+(l.mesas||0), 0) + (r.mesas||0);
       if(totalH > 0 || totalM > 0){
-        issues.push({ ...ctx, tipo:'Ausente con datos', detalle:`Marcado ${r.ausente?'ausente':r.licencia?'licencia':'vacaciones'} pero tiene ${totalH}h y ${totalM} mesas` });
+        issues.push({ ...ctx, clave:'aus', firma:totalH+':'+totalM, tipo:'Ausente con datos', detalle:`Marcado ${r.ausente?'ausente':r.licencia?'licencia':'vacaciones'} pero tiene ${totalH}h y ${totalM} mesas` });
       }
       return;
     }
@@ -11643,10 +11671,10 @@ function calcInconsistencias(){
       const lab = LABORES.find(x=>x.id===l.laborId);
       const labNombre = lab ? `${l.laborId}. ${lab.d}` : `Labor ${l.laborId||'?'}`;
       if((l.horas||0) > 0 && (l.mesas||0) === 0 && !(lab && lab.sinMesas)){
-        issues.push({ ...ctx, tipo:'Horas sin mesas', detalle:`${labNombre}: ${l.horas}h pero 0 mesas` });
+        issues.push({ ...ctx, clave:'hsm_'+l.laborId, firma:String(l.horas||0), tipo:'Horas sin mesas', detalle:`${labNombre}: ${l.horas}h pero 0 mesas` });
       }
       if((l.mesas||0) > 0 && (l.horas||0) === 0){
-        issues.push({ ...ctx, tipo:'Mesas sin horas', detalle:`${labNombre}: ${l.mesas} mesas pero 0h` });
+        issues.push({ ...ctx, clave:'msh_'+l.laborId, firma:String(l.mesas||0), tipo:'Mesas sin horas', detalle:`${labNombre}: ${l.mesas} mesas pero 0h` });
       }
     });
   });
@@ -11661,12 +11689,87 @@ function calcInconsistencias(){
         fecha:g.fecha, trabajador: g.w.nombre || g.items[0].workerId, subjefe: g.w.subjefe || '—',
         predio: PREDIOS[g.predio] ? PREDIOS[g.predio].nombre : g.predio,
         tipo:'Jornada >12h', detalle:`Total del día: ${totalH.toFixed(1)} horas`,
+        clave:'jor', firma: totalH.toFixed(1)+':'+g.items.length,
+        _ents: g.items.map(r=>({pid:r._predio, id:r._id, incOK:r.incOK||null})),
         ents: g.items.map(r=>({pid:r._predio, id:r._id}))   // v67
       });
     }
   });
   issues.sort((a,b)=> b.fecha.localeCompare(a.fecha));
-  return { issues };
+  // v84 · Separar lo que alguien ya revisó y marcó como correcto
+  const revisadas = [];
+  const pend = issues.filter(i=>{
+    if(i.clave && incEsOK(i._ents, i.clave, i.firma)){ i.marca = incMarcaDe(i._ents, i.clave); revisadas.push(i); return false; }
+    return true;
+  });
+  return { issues: pend, revisadas };
+}
+
+// v84 · Varias señales del mismo día-persona (ej. duplicado + muy alto) con una sola confirmación
+async function incMarcarOKVarios(idxs){
+  const lista = infState.incLista.p;
+  const it = idxs.map(k=>lista[k]).filter(Boolean);
+  if(!it.length) return;
+  if(it.length===1) return incMarcarOK('p', idxs[0], false);
+  const nota0 = prompt(`Marcar como CORRECTO:\n${it[0].trabajador} · ${fDMY(it[0].fecha)}\n${it.map(x=>x.detalle).join('\n')}\n\nNota opcional:`, '');
+  if(nota0===null) return;
+  loading(true,'Guardando…');
+  try{
+    const marca = { por: currentUser.uid, porNombre: (currentProfile&&currentProfile.nombre) || currentUser.email, en: Date.now(), nota: nota0.trim().slice(0,200) };
+    const b = db.batch(); const upd = {};
+    it.forEach(i=> i._ents.forEach(x=>{ const k = x.pid+'|'+x.id; (upd[k] = upd[k] || { x, d:{} }).d['incOK.'+i.clave] = { ...marca, f:String(i.firma) }; }));
+    Object.values(upd).forEach(u=> b.update(colRegistros(u.x.pid).doc(u.x.id), u.d));
+    await b.commit();
+    (infState.data.registros||[]).forEach(r=>{
+      const u = upd[r._predio+'|'+r._id]; if(!u) return;
+      const m = { ...(r.incOK||{}) };
+      Object.entries(u.d).forEach(([k,v])=> m[k.slice(6)] = v);
+      r.incOK = m;
+    });
+    toast('✅ Marcado como correcto');
+  }catch(e){ loading(false); toast('Error: '+e.message); return; }
+  loading(false);
+  const d = infState.incDias; if(d) eficVerDias(d.pid, d.sub, d.lab);
+  switchInfTab(infState.tab||'eficiencia');
+}
+// v84 · Marcar una señal como revisada y correcta (o quitar la marca).
+// La marca queda en cada entrada: incOK.<clave> = { f:firma, por, porNombre, en, nota }
+async function incMarcarOK(lista, idx, quitar){
+  const i = (infState.incLista && infState.incLista[lista] || [])[idx];
+  if(!i || !i.clave){ toast('No se encontró el caso'); return; }
+  const ents = i._ents || [];
+  if(!ents.length || !ents.every(x=>puedeCorregirInf(x.pid))){ toast('Sin permiso para revisar registros de ese predio'); return; }
+  let nota = '';
+  if(quitar){
+    if(!confirm('¿Quitar la marca de "correcto"? El caso vuelve a la lista para revisar.')) return;
+  } else {
+    nota = prompt(`Marcar como CORRECTO:\n${i.trabajador} · ${fDMY(i.fecha)}\n${String(i.detalle).replace(/<[^>]+>/g,'')}\n\nNota opcional (por qué está bien, ej. "trabajó 2 turnos"):`, '');
+    if(nota===null) return;
+    nota = nota.trim().slice(0,200);
+  }
+  loading(true, quitar ? 'Quitando marca…' : 'Guardando…');
+  try{
+    const FV = firebase.firestore.FieldValue;
+    const marca = { f:String(i.firma), por: currentUser.uid,
+      porNombre: (currentProfile&&currentProfile.nombre) || currentUser.email, en: Date.now(), nota };
+    const b = db.batch();
+    ents.forEach(x=> b.update(colRegistros(x.pid).doc(x.id), { ['incOK.'+i.clave]: quitar ? FV.delete() : marca }));
+    await b.commit();
+    // Actualiza la copia local para no tener que recargar todo el informe
+    const ids = new Set(ents.map(x=>x.pid+'|'+x.id));
+    (infState.data.registros||[]).forEach(r=>{
+      if(!ids.has(r._predio+'|'+r._id)) return;
+      const m = { ...(r.incOK||{}) };
+      if(quitar) delete m[i.clave]; else m[i.clave] = marca;
+      r.incOK = m;
+    });
+    toast(quitar ? '↩️ Marca quitada' : '✅ Marcado como correcto');
+  }catch(e){ loading(false); toast('Error: '+e.message); return; }
+  loading(false);
+  if(document.getElementById('overlay').classList.contains('open') && infState.incDias){
+    const d = infState.incDias; eficVerDias(d.pid, d.sub, d.lab);
+  }
+  switchInfTab(infState.tab||'inconsist');
 }
 
 // ─────────────────────────────────────────────
@@ -12559,39 +12662,57 @@ function renderInfDashboard(){
 // INFORME 4: Inconsistencias detectadas
 // ─────────────────────────────────────────────
 function renderInfInconsistencias(){
-  const { issues:todas } = calcInconsistencias();
+  const { issues:todas, revisadas:todasRev } = calcInconsistencias();
   // v67 · Filtro por tipo
   const tipos = [...new Set(todas.map(i=>i.tipo))].sort((a,b)=>a.localeCompare(b,'es'));
   let tSel = infState.incTipo || '';
   if(tSel && !tipos.includes(tSel)) tSel = '';
   const issues = tSel ? todas.filter(i=>i.tipo===tSel) : todas;
+  const revisadas = tSel ? todasRev.filter(i=>i.tipo===tSel) : todasRev;
+  infState.incLista = { p: issues, r: revisadas };   // v84
+  const btnOK = (i, k, lista)=> (i.clave && (i._ents||[]).length && i._ents.every(x=>puedeCorregirInf(x.pid)))
+    ? `<button class="inf-dl" title="${lista==='r'?'Quitar la marca de correcto':'Revisado: el dato está bien'}" style="margin-left:2px;${lista==='r'?'':'border-color:#16A34A;color:#15803D'}" onclick="incMarcarOK('${lista}',${k},${lista==='r'})">${lista==='r'?'↩️':'✅ Correcto'}</button>` : '';
 
   let html = `<div class="inf-card">
     <div class="inf-hdr"><div class="inf-card-title">⚠️ Inconsistencias detectadas</div>${infDlBtnsHTML('inconsist')}</div>
     <p style="font-size:11px;color:var(--muted);line-height:1.5;margin-bottom:8px">Casos que conviene revisar con los subjefes. No son errores en los datos, solo señales que ameritan verificación.</p>
     <div class="inf-summary">
-      <div class="inf-pill"><div class="inf-pill-label">Casos</div><div class="inf-pill-value">${issues.length}${tSel?` de ${todas.length}`:''}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Para revisar</div><div class="inf-pill-value">${issues.length}${tSel?` de ${todas.length}`:''}</div></div>
+      <div class="inf-pill"><div class="inf-pill-label">Revisados OK</div><div class="inf-pill-value" style="color:var(--green)">${revisadas.length}</div></div>
     </div>
     ${tipos.length?`<div class="form-row"><label>Tipo</label><select onchange="infState.incTipo=this.value;switchInfTab('inconsist')">
       <option value="">Todos (${todas.length})</option>
       ${tipos.map(t=>`<option value="${escH(t)}" ${t===tSel?'selected':''}>${escH(t)} (${todas.filter(i=>i.tipo===t).length})</option>`).join('')}
     </select></div>`:''}
-    <p style="font-size:10.5px;color:var(--muted);line-height:1.5;margin:-2px 0 8px">✏️ abre la entrada en Registro para corregirla y al guardar vuelves aquí. 🗑️ aparece cuando hay más de una entrada: sirve para borrar un registro repetido.</p>`;
+    <p style="font-size:10.5px;color:var(--muted);line-height:1.5;margin:-2px 0 8px">✏️ abre la entrada en Registro para corregirla y al guardar vuelves aquí. 🗑️ aparece cuando hay más de una entrada: sirve para borrar un registro repetido. <b>✅ Correcto</b>: se revisó y el dato está bien; sale de la lista y queda anotado quién lo revisó. Si después se cambian las mesas u horas de esa entrada, vuelve a aparecer.</p>`;
   if(!issues.length){
-    html += `<div class="inf-empty">✅ No se detectaron inconsistencias en el período.</div></div>`;
-    document.getElementById('infContent').innerHTML = html;
-    return;
-  }
+    html += `<div class="inf-empty">✅ ${revisadas.length?'No quedan casos por revisar en el período.':'No se detectaron inconsistencias en el período.'}</div>`;
+  } else {
   html += `<table class="inf-table">
     <thead><tr><th>Fecha</th><th>Trabajador</th><th>Tipo</th><th>Detalle</th><th></th></tr></thead>
-    <tbody>${issues.map(i=>`<tr class="inc-row">
+    <tbody>${issues.map((i,k)=>`<tr class="inc-row">
       <td>${fDMY(i.fecha)}</td>
       <td>${escH(i.trabajador)}<div style="font-size:9px;color:var(--muted)">${escH(i.subjefe)} · ${i.predio}</div></td>
       <td><b>${i.tipo}</b></td>
       <td>${i.detalle}</td>
-      <td style="text-align:right">${infBtnsEnt(i.ents||[])}</td>
+      <td style="text-align:right">${infBtnsEnt(i.ents||[])}${btnOK(i,k,'p')}</td>
     </tr>`).join('')}</tbody>
-  </table></div>`;
+  </table>`;
+  }
+  if(revisadas.length){
+    html += `<label style="display:flex;gap:6px;align-items:center;text-transform:none;font-weight:400;margin:10px 0 6px;font-size:12px"><input type="checkbox" ${infState.incVerRev?'checked':''} onchange="infState.incVerRev=this.checked;switchInfTab('inconsist')"> Ver los marcados como correctos (${revisadas.length})</label>`;
+    if(infState.incVerRev) html += `<table class="inf-table">
+    <thead><tr><th>Fecha</th><th>Trabajador</th><th>Tipo</th><th>Detalle</th><th></th></tr></thead>
+    <tbody>${revisadas.map((i,k)=>`<tr style="background:#F0FDF4">
+      <td>${fDMY(i.fecha)}</td>
+      <td>${escH(i.trabajador)}<div style="font-size:9px;color:var(--muted)">${escH(i.subjefe)} · ${i.predio}</div></td>
+      <td><b>${i.tipo}</b></td>
+      <td>${i.detalle}<div style="font-size:9.5px;color:#15803D;margin-top:2px">✅ Correcto · ${escH(i.marca&&i.marca.porNombre||'—')}${i.marca&&i.marca.en?' · '+new Date(i.marca.en).toLocaleDateString('es-CL'):''}${i.marca&&i.marca.nota?' · “'+escH(i.marca.nota)+'”':''}</div></td>
+      <td style="text-align:right">${btnOK(i,k,'r')}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+  }
+  html += `</div>`;
   document.getElementById('infContent').innerHTML = html;
 }
 
@@ -14014,10 +14135,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v83';
+const MANUAL_VERSION='v84';
 const MANUAL_FECHA='2026-10-24';
 
 const MANUAL_CAMBIOS=[
+  {v:'v84', f:'04-11-2026', ver:()=>canViewInformes(), txt:'<b>✅ Inconsistencias: “está correcto”.</b> En Informes › ⚠️ Inconsistencias (y en 🔎 de ⚡ Eficiencia) cada caso tiene el botón <b>✅ Correcto</b> para cuando se revisó y el dato está bien. Se puede dejar una nota. El caso sale de la lista “para revisar”, de la descarga Excel/PDF y del conteo de Eficiencia y Capacidad, y queda anotado quién lo revisó y cuándo. Se ven con <b>Ver los marcados como correctos</b> y se puede quitar la marca con ↩️. Si después se cambian las mesas u horas de esa entrada, el caso vuelve a aparecer.'},
   {v:'v83', f:'24-10-2026', ver:()=>canConfigCostos(), txt:'<b>✏️ Cambiar el nombre de un contratista</b> (gerencia, Config › Contratistas › ✏️ del contratista › <b>✏️ Cambiar nombre</b>). El nombre nuevo queda en sus trabajadores, registros diarios, ciclos, programación, control del proceso y labor × módulo. Los montos y las tarifas no cambian. Antes de cambiar, la app muestra cuántos registros se tocan.'},
   {v:'v82', f:'24-10-2026', ver:()=>canAplicFoliar()||canVerGastos(), txt:'<b>🌫️ Foliar en polvo.</b> En Aplicaciones › 🍃 Foliar hay un botón <b>Polvo (kg/ha, sin agua)</b> para productos que se espolvorean al follaje (Velezensis dust, Jaka Bio Dust, Puelche dust…). Se escribe la dosis por hectárea, se marcan los módulos aplicados y la app descuenta dosis × hectáreas de los módulos, desde la misma bodega que las foliares. En "Aplicaciones registradas" aparecen con 🌫️ y se pueden filtrar aparte.'},
   {v:'v81', f:'21-10-2026', ver:()=>canVerGastos()||canBodega(), txt:'<b>Categorías unificadas.</b> En gastos de aplicaciones ya no aparecen por separado "Fertilizante" y "Fertilizantes", "Bioestimulante" y "Bioestimulantes" ni "Fitosanitario" y "Fitosanitarios": se suman en la categoría en plural. Los productos del catálogo quedaron con la categoría corregida.'},
