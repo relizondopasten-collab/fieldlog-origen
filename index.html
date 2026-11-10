@@ -4953,7 +4953,11 @@ const FERTIRRIEGO_SALES = [
   // el índice de las sales anteriores (los estanques guardados lo usan).
   {nombre:'Nitrato de potasio K acid',     alias:['K ACID','KACID','NITRATO POTASIO K ACID','N. POTASIO K ACID','N POTASIO K ACID'], sinAprox:true},
   {nombre:'Nitrato de potasio Prohidric',  alias:['PROHIDRIC','NITRATO POTASIO PROHIDRIC','N. POTASIO PROHIDRIC','N POTASIO PROHIDRIC'], sinAprox:true},
-  {nombre:'Ultrasol Pro P',                alias:['ULTRASOL PRO P','ULTRASOL PROP','PRO P'], sinAprox:true}
+  {nombre:'Ultrasol Pro P',                alias:['ULTRASOL PRO P','ULTRASOL PROP','PRO P'], sinAprox:true},
+  // v86 · Cloruro de calcio (pedido de Rafael, 10-11-2026). Al final para no
+  // mover índices. sinAprox: sin búsqueda por parecido, para que no tome otro
+  // producto de calcio (p. ej. un "CALCIO" suelto); si no calza, lo elige bodega.
+  {nombre:'Cloruro de calcio',             alias:['CLORURO CALCIO','CLORURO DE CALCIO','CL. CALCIO','CL CALCIO','CACL2'], sinAprox:true}
 ];
 
 // Todos los productos del catálogo que corresponden a una sal (por nombre o alias).
@@ -14152,10 +14156,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v85';
-const MANUAL_FECHA='2026-11-09';
+const MANUAL_VERSION='v86';
+const MANUAL_FECHA='2026-11-10';
 
 const MANUAL_CAMBIOS=[
+  {v:'v86', f:'10-11-2026', ver:()=>canAplicRiego()||canBodega()||canVerGastos(), txt:'<b>🧪 Cloruro de calcio en el estanque de fertirriego.</b> Se agregó a la lista de fertilizantes del estanque, al final. Descuenta del mismo recinto que las demás sales (Caseta de Riego en El Tránsito y Paradero 12; Bodega Principal en La Constancia). Si bajo la sal aparece “sin producto en bodega”, hay que elegir a mano el producto del catálogo o cargarlo en Bodega.'},
   {v:'v85', f:'09-11-2026', ver:()=>canAplicFoliar()||canBodega()||canVerGastos(), txt:'<b>🧴 Bodegas Pesticidas y Foliares en El Tránsito y Paradero 12.</b> Guardan los pesticidas, fertilizantes y bioestimulantes foliares de cada campo; Luciano los despacha desde Origen y el responsable confirma la recepción (El Tránsito: Claudio Flores; Paradero 12: Jorge Guajardo y Mario Durand). Las foliares y desinfecciones en polvo de esos campos con fecha <b>desde el 16-11-2026</b> descuentan de su bodega; las de fechas anteriores siguen saliendo de La Constancia. Al cambiar la fecha en el formulario, la bodega de descuento se actualiza.'},
   {v:'v84', f:'04-11-2026', ver:()=>canViewInformes(), txt:'<b>✅ Inconsistencias: “está correcto”.</b> En Informes › ⚠️ Inconsistencias (y en 🔎 de ⚡ Eficiencia) cada caso tiene el botón <b>✅ Correcto</b> para cuando se revisó y el dato está bien. Se puede dejar una nota. El caso sale de la lista “para revisar”, de la descarga Excel/PDF y del conteo de Eficiencia y Capacidad, y queda anotado quién lo revisó y cuándo. Se ven con <b>Ver los marcados como correctos</b> y se puede quitar la marca con ↩️. Si después se cambian las mesas u horas de esa entrada, el caso vuelve a aparecer.'},
   {v:'v83', f:'24-10-2026', ver:()=>canConfigCostos(), txt:'<b>✏️ Cambiar el nombre de un contratista</b> (gerencia, Config › Contratistas › ✏️ del contratista › <b>✏️ Cambiar nombre</b>). El nombre nuevo queda en sus trabajadores, registros diarios, ciclos, programación, control del proceso y labor × módulo. Los montos y las tarifas no cambian. Antes de cambiar, la app muestra cuántos registros se tocan.'},
@@ -14497,7 +14502,7 @@ const MANUAL_SECCIONES=[
     'Abajo, en <b>Conciliación</b>, compara lo que recibió cada recinto (compras, despachos confirmados y ajustes, menos las devoluciones al proveedor) con lo que se usó en aplicaciones. Ajusta el rango de fechas, porque la entrega y el uso no tienen por qué caer el mismo mes.'
   ],
   tips:[
-    '<b>De dónde sale cada aplicación:</b> las desinfecciones foliares de los tres campos salen de <b>Pesticidas y Bioestimulantes</b> (La Constancia). En El Tránsito y Paradero 12, fertirriego, ácidos y vía riego salen de la <b>Caseta de Riego del campo</b>. En <b>La Constancia</b> la Caseta no lleva stock: fertirriego, ácidos y fertilizantes vía riego (nitratos, sulfatos, cloruro de potasio, fosfatos, Ultrasol, ácidos y KSC) salen de <b>Bodega Principal</b>; lo demás vía riego (bioestimulantes como Spurt) sale de <b>Pesticidas y Bioestimulantes</b>. Se descuenta solo lo aplicado: si sobra producto, vuelve a su bodega sin registrar nada. De la <b>Bodega de Proveedores</b> no sale ninguna aplicación: primero hay que despachar el producto a un recinto del campo.',
+    '<b>De dónde sale cada aplicación:</b> las desinfecciones foliares de los tres campos salen de <b>Pesticidas y Bioestimulantes</b> (La Constancia). En El Tránsito y Paradero 12, fertirriego, ácidos y vía riego salen de la <b>Caseta de Riego del campo</b>. En <b>La Constancia</b> la Caseta no lleva stock: fertirriego, ácidos y fertilizantes vía riego (nitratos, sulfatos, cloruros de potasio y de calcio, fosfatos, Ultrasol, ácidos y KSC) salen de <b>Bodega Principal</b>; lo demás vía riego (bioestimulantes como Spurt) sale de <b>Pesticidas y Bioestimulantes</b>. Se descuenta solo lo aplicado: si sobra producto, vuelve a su bodega sin registrar nada. De la <b>Bodega de Proveedores</b> no sale ninguna aplicación: primero hay que despachar el producto a un recinto del campo.',
     '<b>Envíos a la Caseta de Riego de La Constancia:</b> Nicolás (o bodega) aprieta <b>🚚 Enviar a caseta</b> en la tarjeta <b>🚰 Caseta de Riego</b> de Bodega, elige el producto, la cantidad y la fecha. El encargado de la caseta ve el aviso en esa misma tarjeta y aprieta <b>✅ Recibido</b>, anotando cuánto llegó. Si no coincide con lo enviado, queda marcado con la diferencia para que bodega lo revise. El envío no mueve stock (sigue en Bodega Principal hasta que se aplica).',
     'Una diferencia grande en conciliación casi siempre es una aplicación sin registrar, un despacho sin confirmar o una aplicación registrada en el predio equivocado.',
     'Mientras queden saldos en las <b>bodegas antiguas</b> (columnas en naranjo), gerencia ve el botón <b>🔀 Pasar a recintos</b>. Ahí revisa producto por producto a qué recinto pasa cada saldo y los traslada. Se hace una sola vez.',
