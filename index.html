@@ -2897,14 +2897,16 @@ function bodegaFoliarSugerida(){
   });
   return todoEnPredio ? pid : BODEGA_FITO;
 }
-// v44 · Ya no se sugiere: las desinfecciones de los tres campos salen siempre
-// de Bodega Pesticidas (La Constancia), porque las dosifica Víctor González.
-function bodegaFoliarActiva(){ return RECINTO_FOLIAR; }
+// v44 · Ya no se sugiere: las desinfecciones salen de Bodega Pesticidas (La Constancia).
+// v85 · Desde FECHA_FOLIAR_CAMPO, ET y P12 descuentan de su propia bodega foliar.
+function bodegaFoliarActiva(){ return recintoFoliar(aplFol&&aplFol.predioId, aplFol&&aplFol.fecha); }
 function folSetBodega(v){ aplFol.bodega=v; renderFoliarForm(); }
+// v85 · Al cambiar la fecha puede cambiar la bodega (corte del 16-11-2026).
+function folRefrescarBodega(){ const el=document.getElementById('folBodegaBox'); if(el) el.innerHTML=folBodegaHTML(); }
 
 function folBodegaHTML(){
   if(!aplFol.predioId || !(aplFol.receta||[]).length) return '';
-  const sel=RECINTO_FOLIAR;
+  const sel=bodegaFoliarActiva();   // v85
   const detalle=(aplFol.receta||[]).filter(r=>r.productoId).map(r=>{
     const p=productosCache.find(x=>x.id===r.productoId);
     const st=stockEn(p, sel);
@@ -3014,7 +3016,7 @@ function renderFoliarForm(){
 
   box.innerHTML=`
     <div style="display:flex;gap:6px;flex-wrap:wrap">
-      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value;aplActualizarHist()"></div>
+      <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Fecha</label><input type="date" id="aplFolFecha" value="${aplFol.fecha}" onchange="aplFol.fecha=this.value;aplActualizarHist();folRefrescarBodega()"></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Predio</label><select onchange="aplFolSetCampo('predioId',this.value)"${aplEdit?' disabled':''}>${predOpts(aplFol.predioId)}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">Cultivo</label><select onchange="aplFolSetCampo('cultivo',this.value)">${cultOpts}</select></div>
       <div style="flex:1;min-width:110px"><label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">${epocaLabelCampo(aplFol.cultivo)}</label><select onchange="aplFolSetCampo('epoca',this.value)">${epocaOptsHTML(aplFol.cultivo, aplFol.epoca)}</select></div>
@@ -3028,7 +3030,7 @@ function renderFoliarForm(){
     <textarea id="folTxt" placeholder="${folEsPolvo()?'Ej: Velezensis dust 20 kg + Puelche dust 15 kg':'Ej: Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + acido citrico 30 g'}" oninput="folSetTxt(this.value)" style="width:100%;min-height:64px;font-size:13px;padding:8px;border:1px solid var(--sand);border-radius:8px;resize:vertical;box-sizing:border-box">${escH(aplFol.recetaTxt)}</textarea>
     <button class="btn btn-sm" onclick="folInterpretar()" style="background:var(--dark);color:#fff;margin:6px 0">🔎 Interpretar receta</button>
     ${recetaH}
-    ${folBodegaHTML()}
+    <div id="folBodegaBox">${folBodegaHTML()}</div>
     <div class="sec-div">${folEsPolvo()?'Módulos aplicados':'Mojamiento gastado por módulo (L)'}</div>
     ${destH}
     <div id="folConsumo"></div>
@@ -3974,7 +3976,8 @@ const BODEGA_NOMBRES = {constancia:'Bodega La Constancia', transito:'Bodega El T
 // planilla; ahí se suman al recinto elegido y desaparecen.
 //
 // De dónde descuenta cada aplicación:
-//   foliar (los tres campos) → Bodega Pesticidas de La Constancia
+//   foliar (los tres campos) → Bodega Pesticidas de La Constancia; v85: desde
+//                              FECHA_FOLIAR_CAMPO, ET y P12 → su Bodega Pesticidas y Foliares
 //   fertirriego y ácidos     → Caseta de Riego del campo
 //   vía riego                → Caseta de Riego del campo; en La Constancia,
 //                              Caseta solo para los fertilizantes de la lista
@@ -4002,7 +4005,12 @@ const RECINTOS={
   et_packing:    {predio:'transito',   nombre:'Bodega Packing',         resp:['Claudio Flores','Gabriela Escobar']},
   et_caseta:     {predio:'transito',   nombre:'Caseta de Riego',        resp:['Manuel Méndez']},
   p12_caseta:    {predio:'paradero',   nombre:'Caseta de Riego',        resp:['Paulo Gallarce']},
-  p12_bodega:    {predio:'paradero',   nombre:'Bodega Paradero 12',     resp:['Gabriela Escobar']}
+  p12_bodega:    {predio:'paradero',   nombre:'Bodega Paradero 12',     resp:['Gabriela Escobar']},
+  // v85 · Pesticidas, fertilizantes y bioestimulantes foliares de cada campo.
+  // Luciano los despacha desde Origen. Desde FECHA_FOLIAR_CAMPO las foliares
+  // (líquidas y en polvo) de ET y P12 descuentan de aquí.
+  et_foliar:     {predio:'transito',   nombre:'Bodega Pesticidas y Foliares', resp:['Claudio Flores']},
+  p12_foliar:    {predio:'paradero',   nombre:'Bodega Pesticidas y Foliares', resp:['Jorge Guajardo','Mario Durand']}
 };
 // v61 · Los recintos retirados no se ofrecen para comprar, despachar ni
 // aplicar; siguen en RECINTO_TODOS para el histórico y la conciliación.
@@ -4010,6 +4018,15 @@ const RECINTO_TODOS=Object.keys(RECINTOS);
 const RECINTO_ORDER=RECINTO_TODOS.filter(k=>!RECINTOS[k].retirado);
 function recintoVigente(k){ const r=RECINTOS[k]; return (r&&(r.fusionadoEn||r.stockA)) || k; }
 const RECINTO_FOLIAR='lc_pesticidas';
+// v85 · Bodega foliar de cada campo. Hasta el día anterior a FECHA_FOLIAR_CAMPO
+// las foliares de ET y P12 siguen saliendo de La Constancia (se registran con
+// hasta una semana de atraso); desde esa fecha, de la bodega de su campo.
+const FECHA_FOLIAR_CAMPO='2026-11-16';
+const RECINTO_FOLIAR_CAMPO={transito:'et_foliar', paradero:'p12_foliar'};
+function recintoFoliar(pid, fecha){
+  const k=RECINTO_FOLIAR_CAMPO[pid];
+  return (k && fecha && fecha>=FECHA_FOLIAR_CAMPO) ? k : RECINTO_FOLIAR;
+}
 const BODEGAS_LEGADO=['constancia','transito','paradero'];
 const CORTO_PREDIO={constancia:'LC', transito:'ET', paradero:'P12'};
 function esRecinto(k){ return !!RECINTOS[k]; }
@@ -4452,7 +4469,7 @@ async function guardarFoliar(){
     if(hist) desc.length=0;
     const sinDescontar = recetaData.filter(r=>!r.productoId)
       .map(r=>({nombre:r.nombre||'', cantidadCargada:r.dosis, unidad:r.unidad||'', motivo:'sin producto de bodega'}));
-    const bodDesc=bodegaFoliarActiva();   // v40 · fitosanitarios desde La Constancia, salvo despacho
+    const bodDesc=bodegaFoliarActiva();   // v85 · LC, o la bodega foliar del campo desde FECHA_FOLIAR_CAMPO
     const faltan = faltantesStock(desc, bodDesc);
     const datos = {
       tipo:'foliar', fecha:aplFol.fecha, predioId:aplFol.predioId, cultivo:aplFol.cultivo, epoca:aplFol.epoca||'', bodegaDescuento:bodDesc,
@@ -10425,7 +10442,7 @@ function openUserEdit(uid){
         <input type="checkbox" id="euFoliar"${u.puedeFoliar?' checked':''} style="width:16px;height:16px;accent-color:var(--dark);cursor:pointer">
         🍃 Puede registrar desinfecciones foliares
       </label>
-      <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">Habilita la pestaña Foliar en Aplicaciones, en los predios que tenga a cargo, sin cambiarle el rol. Los fitosanitarios se descuentan siempre de Bodega Pesticidas (La Constancia).</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5">Habilita la pestaña Foliar en Aplicaciones, en los predios que tenga a cargo, sin cambiarle el rol. Los fitosanitarios se descuentan de Bodega Pesticidas (La Constancia) y, desde el 16-11-2026, en El Tránsito y Paradero 12 de su Bodega Pesticidas y Foliares.</div>
     </div>
     <!-- v44 · Recintos de bodega a su cargo y permiso de compras -->
     <div class="form-row"><label>📦 Recintos de bodega a su cargo</label>
@@ -14135,10 +14152,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v84';
-const MANUAL_FECHA='2026-10-24';
+const MANUAL_VERSION='v85';
+const MANUAL_FECHA='2026-11-09';
 
 const MANUAL_CAMBIOS=[
+  {v:'v85', f:'09-11-2026', ver:()=>canAplicFoliar()||canBodega()||canVerGastos(), txt:'<b>🧴 Bodegas Pesticidas y Foliares en El Tránsito y Paradero 12.</b> Guardan los pesticidas, fertilizantes y bioestimulantes foliares de cada campo; Luciano los despacha desde Origen y el responsable confirma la recepción (El Tránsito: Claudio Flores; Paradero 12: Jorge Guajardo y Mario Durand). Las foliares y desinfecciones en polvo de esos campos con fecha <b>desde el 16-11-2026</b> descuentan de su bodega; las de fechas anteriores siguen saliendo de La Constancia. Al cambiar la fecha en el formulario, la bodega de descuento se actualiza.'},
   {v:'v84', f:'04-11-2026', ver:()=>canViewInformes(), txt:'<b>✅ Inconsistencias: “está correcto”.</b> En Informes › ⚠️ Inconsistencias (y en 🔎 de ⚡ Eficiencia) cada caso tiene el botón <b>✅ Correcto</b> para cuando se revisó y el dato está bien. Se puede dejar una nota. El caso sale de la lista “para revisar”, de la descarga Excel/PDF y del conteo de Eficiencia y Capacidad, y queda anotado quién lo revisó y cuándo. Se ven con <b>Ver los marcados como correctos</b> y se puede quitar la marca con ↩️. Si después se cambian las mesas u horas de esa entrada, el caso vuelve a aparecer.'},
   {v:'v83', f:'24-10-2026', ver:()=>canConfigCostos(), txt:'<b>✏️ Cambiar el nombre de un contratista</b> (gerencia, Config › Contratistas › ✏️ del contratista › <b>✏️ Cambiar nombre</b>). El nombre nuevo queda en sus trabajadores, registros diarios, ciclos, programación, control del proceso y labor × módulo. Los montos y las tarifas no cambian. Antes de cambiar, la app muestra cuántos registros se tocan.'},
   {v:'v82', f:'24-10-2026', ver:()=>canAplicFoliar()||canVerGastos(), txt:'<b>🌫️ Foliar en polvo.</b> En Aplicaciones › 🍃 Foliar hay un botón <b>Polvo (kg/ha, sin agua)</b> para productos que se espolvorean al follaje (Velezensis dust, Jaka Bio Dust, Puelche dust…). Se escribe la dosis por hectárea, se marcan los módulos aplicados y la app descuenta dosis × hectáreas de los módulos, desde la misma bodega que las foliares. En "Aplicaciones registradas" aparecen con 🌫️ y se pueden filtrar aparte.'},
@@ -14368,7 +14386,7 @@ const MANUAL_SECCIONES=[
   intro:'Registro de las desinfecciones foliares. Lo que registres acá descuenta stock de la bodega.',
   pasos:[
     'En Aplicaciones, entra a la pestaña <b>🍃 Foliar</b>.',
-    'Después de interpretar la receta aparece <b>"Descuenta de Bodega Pesticidas y Bioestimulantes · La Constancia"</b>: de ahí salen las desinfecciones de los tres campos, porque ahí se dosifican. Abajo se ve el stock de cada producto, y en rojo el que no tiene.',
+    'Después de interpretar la receta aparece <b>"Descuenta de …"</b> con la bodega de la que sale. En <b>La Constancia</b> es Bodega Pesticidas y Bioestimulantes. En <b>El Tránsito</b> y <b>Paradero 12</b>, las aplicaciones con fecha <b>desde el 16-11-2026</b> salen de la <b>Bodega Pesticidas y Foliares</b> de su campo (a cargo de Claudio Flores en El Tránsito; Jorge Guajardo y Mario Durand en Paradero 12); las de fechas anteriores siguen saliendo de La Constancia. Abajo se ve el stock de cada producto, y en rojo el que no tiene.',
     'Pon la <b>Fecha</b>, el <b>Predio</b>, el <b>Cultivo</b> y la <b>Época</b>. Si el cultivo es <b>pimentón</b>, en vez de época se elige el <b>mes de plantación</b>. Al elegir el predio, la época se llena sola con la del <b>ciclo abierto</b>; si el predio tiene varios ciclos abiertos de distinta época, o ninguno, hay que elegirla a mano. <b>Sin época no se puede guardar</b>: es lo que hace que la aplicación entre en su temporada en el informe de gasto.',
     'Escribe la <b>receta tal como la anotas en terreno</b>, con dosis por 100 L de agua. Ejemplo: <i>Sunfire 40 cc + Luna experience 100 cc + Barrier 200 cc + ácido cítrico 30 g</i>.',
     'La app trata de reconocer cada producto en la bodega. El que quede en amarillo con "no reconocí", elígelo a mano de la lista.',
@@ -14463,7 +14481,7 @@ const MANUAL_SECCIONES=[
   id:'bodega', ico:'📦', tit:'Bodega — recintos, despachos y conciliación', ver:()=>canBodega(),
   intro:'Stock por recinto, precios, compras, despachos y comparación entre lo entregado y lo usado. La planilla está pensada para el computador; confirmar despachos se puede hacer desde el teléfono.',
   pasos:[
-    'Cada campo tiene sus <b>recintos</b>. <b>La Constancia:</b> Bodega Principal (Nicolás Flores), Pesticidas y Bioestimulantes (Víctor González y Nicolás Flores), Caseta de Riego (Gabriel Contreras, José Cordero y Carlos Vergara; <b>sin stock</b>, solo confirma envíos) y Bodega de Proveedores (Luciano Pinto). <b>El Tránsito:</b> Bodega Packing (Claudio Flores y Gabriela Escobar) y Caseta de Riego (Manuel Méndez). <b>Paradero 12:</b> Caseta de Riego (Paulo Gallarce) y Bodega Paradero 12 (Gabriela Escobar).',
+    'Cada campo tiene sus <b>recintos</b>. <b>La Constancia:</b> Bodega Principal (Nicolás Flores), Pesticidas y Bioestimulantes (Víctor González y Nicolás Flores), Caseta de Riego (Gabriel Contreras, José Cordero y Carlos Vergara; <b>sin stock</b>, solo confirma envíos) y Bodega de Proveedores (Luciano Pinto). <b>El Tránsito:</b> Bodega Packing (Claudio Flores y Gabriela Escobar), Bodega Pesticidas y Foliares (Claudio Flores) y Caseta de Riego (Manuel Méndez). <b>Paradero 12:</b> Caseta de Riego (Paulo Gallarce), Bodega Paradero 12 (Gabriela Escobar) y Bodega Pesticidas y Foliares (Jorge Guajardo y Mario Durand).',
     'La planilla tiene <b>una columna por recinto</b>, agrupadas por campo (LC, ET, P12). Busca el producto con el <b>🔍 buscador</b>.',
     '<b>Comprar</b> (quien tenga 🛒, hoy Luciano): 📦 del producto → Registrar compra → elige el <b>recinto que recibe</b>. Lo que se compra por volumen y queda guardado en el proveedor va a <b>Bodega de Proveedores</b>.',
     '<b>Despachar</b>: 📦 del producto → Despacho → desde uno de tus recintos hacia otro. Sale al tiro del origen y queda <b>pendiente</b> hasta que el responsable del recinto que recibe lo confirma.',
