@@ -520,6 +520,7 @@ body.vista-escritorio .modal-content{max-width:700px}
       <button class="nb" id="btnInformes" style="display:none" onclick="showScr('informes',this)">Informes</button>
       <button class="nb" id="btnExperiencia" style="display:none" onclick="showScr('experiencia',this)">Experiencia previa</button>
       <button class="nb" id="btnAplic" style="display:none" onclick="showScr('aplic',this)">Aplicaciones</button>
+      <button class="nb" id="btnRiego" style="display:none" onclick="showScr('riego',this)">Riego</button>
       <button class="nb" id="btnGastos" style="display:none" onclick="showScr('gastos',this)">Gastos</button>
       <button class="nb" id="btnBodega" style="display:none" onclick="showScr('planilla',this)">Bodega</button>
       <button class="nb" id="btnConfig" onclick="showScr('config',this)">Config</button>
@@ -636,6 +637,12 @@ body.vista-escritorio .modal-content{max-width:700px}
       <p style="font-size:12px;color:var(--muted);line-height:1.5">Abre un ciclo al comenzar una temporada, ciérralo cuando termina. Entre ciclos puede haber días sin cultivo.</p>
     </div>
     <div id="ciclosContent"></div>
+  </div>
+
+  <!-- v87 · PROGRAMACIÓN DE RIEGO -->
+  <div id="screen-riego" class="screen">
+    <div class="sp" style="height:10px"></div>
+    <div id="riegoContent"></div>
   </div>
 
   <!-- CONTROL (v52) -->
@@ -1714,6 +1721,7 @@ function canVerPantalla(name){
   if(name==='informes')return canViewInformes();
   if(name==='experiencia')return puedeVerExperiencia();   // v55
   if(name==='control')return canVerControl();   // v52
+  if(name==='riego')return canVerRiegoProg();   // v87
   if(name==='aplic')return canVerAplic();
   if(name==='gastos')return canVerGastos();
   if(name==='planilla'||name==='bodega')return canBodega();
@@ -7502,6 +7510,7 @@ function applyRoleUI(){
   show('btnInformes', canViewInformes());
   show('btnExperiencia', puedeVerExperiencia());   // v55
   show('btnAplic',    canVerAplic());
+  show('btnRiego',    canVerRiegoProg());   // v87
   show('btnGastos',   canVerGastos());
   show('btnBodega',   canBodega());
   // Config: secciones restringidas
@@ -14156,10 +14165,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v86';
-const MANUAL_FECHA='2026-11-10';
+const MANUAL_VERSION='v87';
+const MANUAL_FECHA='2026-11-11';
 
 const MANUAL_CAMBIOS=[
+  {v:'v87', f:'11-11-2026', ver:()=>canVerRiegoProg(), txt:'<b>💧 Programación de riego.</b> Botón nuevo <b>Riego</b>: muestra todos los sectores de riego del predio y, para cada día de la semana, los pulsos con hora de inicio, minutos y litros por metro de cinta (hasta 4 pulsos por día). Calcula los L/planta del día y de la semana (L/m × 11.000 m de cinta ÷ 30.000 ejes por ha, editable) y los m³ del sector. Se clasifica y filtra por época, cultivo y sector, y se baja a Excel. La editan gerencia, jefatura y el encargado de riego; los subjefes la consultan.'},
   {v:'v86', f:'10-11-2026', ver:()=>canAplicRiego()||canBodega()||canVerGastos(), txt:'<b>🧪 Cloruro de calcio en el estanque de fertirriego.</b> Se agregó a la lista de fertilizantes del estanque, al final. Descuenta del mismo recinto que las demás sales (Caseta de Riego en El Tránsito y Paradero 12; Bodega Principal en La Constancia). Si bajo la sal aparece “sin producto en bodega”, hay que elegir a mano el producto del catálogo o cargarlo en Bodega.'},
   {v:'v85', f:'09-11-2026', ver:()=>canAplicFoliar()||canBodega()||canVerGastos(), txt:'<b>🧴 Bodegas Pesticidas y Foliares en El Tránsito y Paradero 12.</b> Guardan los pesticidas, fertilizantes y bioestimulantes foliares de cada campo; Luciano los despacha desde Origen y el responsable confirma la recepción (El Tránsito: Claudio Flores; Paradero 12: Jorge Guajardo y Mario Durand). Las foliares y desinfecciones en polvo de esos campos con fecha <b>desde el 16-11-2026</b> descuentan de su bodega; las de fechas anteriores siguen saliendo de La Constancia. Al cambiar la fecha en el formulario, la bodega de descuento se actualiza.'},
   {v:'v84', f:'04-11-2026', ver:()=>canViewInformes(), txt:'<b>✅ Inconsistencias: “está correcto”.</b> En Informes › ⚠️ Inconsistencias (y en 🔎 de ⚡ Eficiencia) cada caso tiene el botón <b>✅ Correcto</b> para cuando se revisó y el dato está bien. Se puede dejar una nota. El caso sale de la lista “para revisar”, de la descarga Excel/PDF y del conteo de Eficiencia y Capacidad, y queda anotado quién lo revisó y cuándo. Se ven con <b>Ver los marcados como correctos</b> y se puede quitar la marca con ↩️. Si después se cambian las mesas u horas de esa entrada, el caso vuelve a aparecer.'},
@@ -14439,6 +14449,26 @@ const MANUAL_SECCIONES=[
   ]
 },
 {
+  id:'riego-prog', ico:'💧', tit:'Programación de riego', ver:()=>canVerRiegoProg(),
+  intro:'El horario de riego de la semana para cada sector: cuántos pulsos, a qué hora, cuántos minutos y cuántos litros por metro de cinta. Con eso la app calcula los litros por planta.',
+  pasos:[
+    'Toca <b>Riego</b>. Elige el predio y la semana con ‹ › o el calendario (cualquier día lleva a su lunes).',
+    'Revisa arriba los <b>m de cinta por ha</b> y los <b>ejes por ha</b> (por defecto 11.000 y 30.000). Con ellos: <b>L/planta = L/m de cinta × 11.000 ÷ 30.000</b>.',
+    'En <b>✏️ Programar por sector</b> abre un sector y elige el <b>cultivo</b> y la <b>época</b> (en pimentón, el mes de plantación).',
+    'Opcional: el <b>caudal de la cinta</b> en L/h por metro. Si lo anotas, al escribir los minutos de un pulso se calculan los L/m, y al revés.',
+    'En cada día toca <b>+ pulso</b> y anota la hora de inicio, los minutos y los L/m. Se pueden dar hasta 4 pulsos por día. Si el programa se repite, arma el lunes y usa <b>↘ Repetir el lunes toda la semana</b>.',
+    'Si varios sectores llevan el mismo programa, usa <b>📑 Copiar este programa a otros sectores</b>.',
+    'Toca <b>💾 Guardar semana</b>. Mientras no guardes, aparece “● Cambios sin guardar”.',
+    'El <b>📋 Resumen de la semana</b> muestra todo ordenado por época, cultivo y sector: cada pulso (hora · minutos · L/m), el total del día en L/m y L/planta, y el total de la semana con m³ del sector.'
+  ],
+  tips:[
+    'Una semana nueva trae sola el cultivo, la época y el caudal de la última semana guardada, pero no los pulsos. Para repetir también los pulsos usa <b>📋 Copiar semana anterior</b>.',
+    'Los m³ salen de los metros lineales del sector (Config › Sectores de riego). Si un sector no tiene ML, dice “sin ML”.',
+    'Si dos pulsos del mismo día se topan en el horario, aparece ⚠️.',
+    '📥 Excel baja el resumen por sector y una hoja con cada pulso.'
+  ]
+},
+{
   id:'gastos', ico:'💰', tit:'Informe de gasto en aplicaciones', ver:()=>canVerGastos(),
   intro:'Cuánto producto y cuánta plata se usó en foliares, fertirriego y vía riego.',
   pasos:[
@@ -14543,7 +14573,7 @@ const MANUAL_SECCIONES=[
     '<b>Jefe de predio:</b> registra y corrige en sus predios y ve todos los informes. No entra a bodega ni a usuarios.',
     '<b>Subjefe:</b> trabaja en un solo predio y ve únicamente a sus propios trabajadores.',
     '<b>Encargado de bodega:</b> planilla de bodega de todos los recintos: catálogo, precios, stock, despachos y conciliación. No registra aplicaciones. Confirma lo que llega a sus recintos.',
-    '<b>Encargado de riego:</b> registra fertirriego, vía riego y ácidos de sus predios. Si es responsable de la Caseta de Riego, además ve Bodega y confirma lo que le despachan (en El Tránsito y Paradero 12 también ajusta el stock de su caseta). En La Constancia confirma los <b>envíos a la caseta</b> anotando cuánto llegó.',
+    '<b>Encargado de riego:</b> registra fertirriego, vía riego y ácidos de sus predios, y arma la programación de riego (también gerencia y jefatura; los subjefes solo la consultan). Si es responsable de la Caseta de Riego, además ve Bodega y confirma lo que le despachan (en El Tránsito y Paradero 12 también ajusta el stock de su caseta). En La Constancia confirma los <b>envíos a la caseta</b> anotando cuánto llegó.',
     '<b>Permisos extra</b>, aparte del rol: <b>📦 recintos a cargo</b> (despachar, recibir y ajustar en esos recintos), <b>🛒 compras</b> (registrar compras a cualquier recinto), <b>🍃 desinfecciones</b> y <b>💲 valores y labores de contratistas</b> de sus predios.',
     '<b>Jefe de desinfecciones:</b> registra solo aplicaciones foliares de sus predios.',
     '<b>Informes de gasto:</b> solo el informe de gasto de los predios asignados, sin acceso a campo, aplicaciones ni bodega.',
@@ -14647,12 +14677,446 @@ function initManual(){
   renderManual();
 }
 
+// ══════════════════════════════════════════════
+// v87 · PROGRAMACIÓN DE RIEGO POR SECTOR
+// /riegoProg/{predio}/semanas/{lunesIso}:
+//   { appV, predioId, semana, factor:{mHa, ejesHa},
+//     sectores:{ nombre:{ cultivo, epoca, caudal, dias:{ fechaIso:[{hora,min,lm}] } } },
+//     updatedAt, updatedBy, updatedByNombre }
+// lm = litros por metro de cinta del pulso. caudal = L/h por metro de cinta
+// (opcional): si está, minutos y L/m se calculan uno desde el otro.
+// L/planta = L/m × (m de cinta por ha ÷ ejes por ha); por defecto 11.000 / 30.000.
+// m³ del sector = L/m × metros lineales del sector (Config › Sectores) ÷ 1000.
+// ══════════════════════════════════════════════
+const RIEGO_APPV=87;
+const RIEGO_MAX_PULSOS=4;
+const RIEGO_FACTOR_DEF={mHa:11000, ejesHa:30000};
+let rgS={pid:null, lunes:null, doc:null, dirty:false, abierto:{}, fCult:'', fEp:'', prefill:'', cargando:false};
+
+function canVerRiegoProg(){ return ['admin','jefe','subjefe','riego'].includes(userRole()); }
+function canEditRiegoProg(pid){ return ['admin','jefe','riego'].includes(userRole()) && userPredios().includes(pid); }
+
+function rgLunesDe(iso){
+  const d=new Date(iso+'T12:00:00'), dow=d.getDay();
+  d.setDate(d.getDate()-(dow===0?6:dow-1));
+  return d.toISOString().slice(0,10);
+}
+function rgSumarDias(iso,n){ const d=new Date(iso+'T12:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function rgDias(){ return Array.from({length:7},(_,i)=>rgSumarDias(rgS.lunes,i)); }
+function rgFmtFecha(iso){ return iso.slice(8,10)+'-'+iso.slice(5,7); }
+function rgFactor(){ const f=(rgS.doc&&rgS.doc.factor)||{}; return {mHa:num(f.mHa)||RIEGO_FACTOR_DEF.mHa, ejesHa:num(f.ejesHa)||RIEGO_FACTOR_DEF.ejesHa}; }
+function rgLpl(lm){ const f=rgFactor(); return lm*f.mHa/f.ejesHa; }
+function rgML(sector){ const t=terrenoCache[rgS.pid]||{}, ml=t.sectoresML||{}; const v=num(ml[sector]); return v>0?v:null; }
+function rgHa(sector){ const v=haSector(rgS.pid, sector); return v>0?v:null; }
+function rgDocVacio(){ return {appV:RIEGO_APPV, predioId:rgS.pid, semana:rgS.lunes, factor:Object.assign({},RIEGO_FACTOR_DEF), sectores:{}}; }
+function rgSec(n){
+  const S=rgS.doc.sectores;
+  if(!S[n]) S[n]={cultivo:'', epoca:'', caudal:null, dias:{}};
+  if(!S[n].dias) S[n].dias={};
+  return S[n];
+}
+function rgPulsos(n,iso){ const s=rgSec(n); if(!Array.isArray(s.dias[iso])) s.dias[iso]=[]; return s.dias[iso]; }
+// Sectores del predio (Config › Sectores) + los que solo estén en el documento.
+function rgListaSectores(){
+  const base=sectoresDePredio(rgS.pid);
+  const extra=Object.keys((rgS.doc&&rgS.doc.sectores)||{}).filter(n=>!base.includes(n));
+  return base.concat(extra.sort());
+}
+function rgCultNom(id){
+  if(!id) return '';
+  const c=(cultivosCache||[]).find(x=>x.id===id||x.nombre===id);
+  return c ? (c.nombre||c.id) : (CNAMES[id]||id);
+}
+function rgEpNom(ep){ return ep ? (TNAMES[ep]||ep) : ''; }
+function rgCultivosLista(){
+  return cultivosCache.length ? cultivosCache.map(c=>({id:c.id, nombre:c.nombre||c.id}))
+    : [{id:'tomate',nombre:'Tomate'},{id:'especialidades',nombre:'Especialidades'},{id:'pimenton',nombre:'Pimentón'}];
+}
+function rgTotDia(n,iso){
+  const P=((rgS.doc.sectores[n]||{}).dias||{})[iso]||[];
+  let lm=0, min=0, k=0;
+  P.forEach(p=>{ if(num(p.min)>0||num(p.lm)>0){ lm+=num(p.lm); min+=num(p.min); k++; } });
+  return {lm, min, k};
+}
+function rgTotSemana(n){
+  let lm=0, min=0, k=0, dias=0;
+  rgDias().forEach(iso=>{ const t=rgTotDia(n,iso); lm+=t.lm; min+=t.min; k+=t.k; if(t.k) dias++; });
+  return {lm, min, k, dias};
+}
+// Pulsos del mismo día que se topan en el horario.
+function rgTopes(n,iso){
+  const P=(((rgS.doc.sectores[n]||{}).dias||{})[iso]||[]).filter(p=>/^\d\d:\d\d$/.test(p.hora||'')&&num(p.min)>0)
+    .map(p=>{ const [h,m]=p.hora.split(':').map(Number); return {ini:h*60+m, fin:h*60+m+num(p.min)}; })
+    .sort((a,b)=>a.ini-b.ini);
+  for(let i=1;i<P.length;i++) if(P[i].ini<P[i-1].fin) return true;
+  return false;
+}
+
+async function initRiego(){
+  const preds=userPredios();
+  if(!rgS.pid || !preds.includes(rgS.pid)) rgS.pid=preds.includes(activePred)?activePred:preds[0];
+  if(!rgS.lunes) rgS.lunes=rgLunesDe(todayIso);
+  await rgCargar();
+}
+async function rgCargar(){
+  const box=document.getElementById('riegoContent'); if(!box) return;
+  if(!rgS.pid){ box.innerHTML='<div class="card">Sin predios asignados.</div>'; return; }
+  rgS.cargando=true; rgS.prefill=''; rgS.dirty=false;
+  box.innerHTML='<div class="card" style="color:var(--muted);font-size:12px">Cargando programación de riego…</div>';
+  try{
+    const col=db.collection('riegoProg').doc(rgS.pid).collection('semanas');
+    const snap=await col.doc(rgS.lunes).get();
+    if(snap.exists){
+      rgS.doc=Object.assign(rgDocVacio(), snap.data()||{});
+      if(!rgS.doc.sectores) rgS.doc.sectores={};
+    }else{
+      rgS.doc=rgDocVacio();
+      // Semana nueva: se arrastra la configuración (cultivo, época, caudal, factor)
+      // de la última semana guardada, sin los pulsos.
+      const prev=await col.where(firebase.firestore.FieldPath.documentId(),'<',rgS.lunes)
+        .orderBy(firebase.firestore.FieldPath.documentId(),'desc').limit(1).get();
+      if(!prev.empty){
+        const d=prev.docs[0].data()||{};
+        if(d.factor) rgS.doc.factor=Object.assign({},d.factor);
+        Object.entries(d.sectores||{}).forEach(([n,s])=>{
+          rgS.doc.sectores[n]={cultivo:s.cultivo||'', epoca:s.epoca||'', caudal:s.caudal!=null?s.caudal:null, dias:{}};
+        });
+        rgS.prefill=prev.docs[0].id;
+      }
+    }
+  }catch(e){
+    rgS.doc=rgDocVacio();
+    toast('No se pudo leer la programación de riego: '+e.message);
+  }
+  rgS.cargando=false;
+  renderRiego();
+}
+function rgConfirmarSalir(){ return !rgS.dirty || confirm('Hay cambios sin guardar en la programación de riego. ¿Descartarlos?'); }
+function rgCambiarSemana(delta){ if(!rgConfirmarSalir()) return; rgS.lunes=rgSumarDias(rgS.lunes,7*delta); return rgCargar(); }
+function rgIrSemana(iso){ if(!iso) return; if(!rgConfirmarSalir()){ renderRiego(); return; } rgS.lunes=rgLunesDe(iso); rgCargar(); }
+function rgCambiarPredio(pid){ if(!rgConfirmarSalir()){ renderRiego(); return; } rgS.pid=pid; rgS.abierto={}; rgCargar(); }
+function rgMarcar(){ rgS.dirty=true; const b=document.getElementById('rgDirty'); if(b) b.style.display=''; }
+
+function renderRiego(){
+  const box=document.getElementById('riegoContent'); if(!box||!rgS.doc) return;
+  const pid=rgS.pid, edita=canEditRiegoProg(pid), F=rgFactor(), dias=rgDias();
+  const lista=rgListaSectores();
+  const preds=userPredios();
+  const epocasUsadas=[...new Set(lista.map(n=>(rgS.doc.sectores[n]||{}).epoca).filter(Boolean))].sort((a,b)=>ordenEpoca(a)-ordenEpoca(b));
+  const cultUsados=[...new Set(lista.map(n=>(rgS.doc.sectores[n]||{}).cultivo).filter(Boolean))];
+  const mostrar=lista.filter(n=>{ const s=rgS.doc.sectores[n]||{};
+    return (!rgS.fCult||s.cultivo===rgS.fCult) && (!rgS.fEp||s.epoca===rgS.fEp); });
+  // Orden de clasificación: época › cultivo › sector
+  const ordSec=n=>lista.indexOf(n);
+  mostrar.sort((a,b)=>{ const A=rgS.doc.sectores[a]||{}, B=rgS.doc.sectores[b]||{};
+    const ea=A.epoca?ordenEpoca(A.epoca):999, eb=B.epoca?ordenEpoca(B.epoca):999;
+    if(ea!==eb) return ea-eb;
+    const ca=rgCultNom(A.cultivo)||'~', cb=rgCultNom(B.cultivo)||'~';
+    if(ca!==cb) return ca.localeCompare(cb);
+    return ordSec(a)-ordSec(b); });
+  const fin=rgSumarDias(rgS.lunes,6);
+  const esActual=rgS.lunes===rgLunesDe(todayIso);
+  const upd=rgS.doc.updatedAt?`Guardado por ${escH(rgS.doc.updatedByNombre||'—')} el ${new Date(rgS.doc.updatedAt).toLocaleString('es-CL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}`:'Semana sin guardar todavía';
+
+  let h=`<div class="card">
+    <div class="card-title">💧 Programación de riego</div>
+    <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:8px">Horario de riego de cada sector para la semana: pulsos por día con hora de inicio, minutos y litros por metro de cinta. Se clasifica por época, cultivo y sector.</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end">
+      <div class="form-row" style="flex:1;min-width:140px;margin:0"><label>Predio</label>
+        <select onchange="rgCambiarPredio(this.value)">${preds.map(k=>`<option value="${k}"${k===pid?' selected':''}>${escH(PREDIOS[k].nombre)}</option>`).join('')}</select></div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <button class="btn btn-secondary btn-sm" onclick="rgCambiarSemana(-1)">‹</button>
+        <input type="date" value="${rgS.lunes}" onchange="rgIrSemana(this.value)" style="width:140px">
+        <button class="btn btn-secondary btn-sm" onclick="rgCambiarSemana(1)">›</button>
+        ${esActual?'':`<button class="btn btn-secondary btn-sm" onclick="if(rgConfirmarSalir()){rgS.lunes=rgLunesDe(todayIso);rgCargar();}">Hoy</button>`}
+      </div>
+    </div>
+    <div style="font-size:12px;margin-top:6px"><b>Semana del ${rgFmtFecha(rgS.lunes)} al ${rgFmtFecha(fin)}-${fin.slice(0,4)}</b>${esActual?' · <span style="color:var(--green)">semana actual</span>':''}</div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${upd}</div>
+    ${rgS.prefill?`<div style="font-size:11px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:6px 8px;margin-top:6px">Cultivo, época y caudal traídos de la semana del ${rgFmtFecha(rgS.prefill)}. Los pulsos están vacíos: usa <b>Copiar semana anterior</b> si el programa se repite.</div>`:''}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:flex-end">
+      <div class="form-row" style="margin:0;flex:1;min-width:110px"><label>m de cinta / ha</label>
+        <input type="text" inputmode="decimal" value="${F.mHa}" ${edita?'':'disabled'} onchange="rgS.doc.factor=Object.assign({},rgFactor(),{mHa:num(this.value)||RIEGO_FACTOR_DEF.mHa});rgMarcar();renderRiego()"></div>
+      <div class="form-row" style="margin:0;flex:1;min-width:110px"><label>Ejes (plantas) / ha</label>
+        <input type="text" inputmode="decimal" value="${F.ejesHa}" ${edita?'':'disabled'} onchange="rgS.doc.factor=Object.assign({},rgFactor(),{ejesHa:num(this.value)||RIEGO_FACTOR_DEF.ejesHa});rgMarcar();renderRiego()"></div>
+      <div style="font-size:11px;color:var(--muted);flex:2;min-width:180px;padding-bottom:6px">L/planta = L/m de cinta × ${fmtNum(F.mHa,0)} ÷ ${fmtNum(F.ejesHa,0)} = L/m × <b>${fmtNum(F.mHa/F.ejesHa,3)}</b></div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+      ${edita?`<button class="btn btn-primary btn-sm" onclick="rgGuardar()">💾 Guardar semana</button>
+      <button class="btn btn-secondary btn-sm" onclick="rgCopiarSemanaAnterior()">📋 Copiar semana anterior</button>`:''}
+      <button class="btn btn-secondary btn-sm" onclick="rgExportExcel()">📥 Excel</button>
+      <span id="rgDirty" style="display:${rgS.dirty?'':'none'};font-size:11px;color:#B45309;align-self:center;font-weight:600">● Cambios sin guardar</span>
+    </div>
+    ${edita?'':'<div style="font-size:11px;color:var(--muted);margin-top:6px">Solo lectura: la programación la editan gerencia, jefatura y el encargado de riego.</div>'}
+  </div>`;
+
+  if(!lista.length){
+    h+=`<div class="card" style="font-size:12px;color:var(--muted)">Este predio no tiene sectores de riego cargados. Gerencia los agrega en Config › 🗺️ Sectores de riego.</div>`;
+    box.innerHTML=h; return;
+  }
+
+  // Filtros
+  h+=`<div class="card" style="padding:10px 14px">
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <div class="form-row" style="margin:0;flex:1;min-width:130px"><label>Época</label>
+        <select onchange="rgS.fEp=this.value;renderRiego()"><option value="">Todas</option>${epocasUsadas.map(e=>`<option value="${e}"${e===rgS.fEp?' selected':''}>${escH(rgEpNom(e))}</option>`).join('')}</select></div>
+      <div class="form-row" style="margin:0;flex:1;min-width:130px"><label>Cultivo</label>
+        <select onchange="rgS.fCult=this.value;renderRiego()"><option value="">Todos</option>${cultUsados.map(c=>`<option value="${escH(c)}"${c===rgS.fCult?' selected':''}>${escH(rgCultNom(c))}</option>`).join('')}</select></div>
+    </div>
+  </div>`;
+
+  // Tabla resumen de la semana
+  h+=`<div class="card" style="padding:10px 8px"><div class="card-title" style="padding:0 6px">📋 Resumen de la semana</div>
+    <div style="overflow:auto;max-height:70vh">
+    <table style="border-collapse:collapse;font-size:11px;min-width:980px;width:100%">
+      <thead><tr style="background:var(--cream);position:sticky;top:0">
+        <th style="padding:4px;text-align:left">Época</th><th style="padding:4px;text-align:left">Cultivo</th><th style="padding:4px;text-align:left">Sector</th><th style="padding:4px">ha</th>
+        ${dias.map((d,i)=>`<th style="padding:4px;min-width:105px${d===todayIso?';background:#E8F5EC':''}">${DIAS_CORTO[i]} ${rgFmtFecha(d)}</th>`).join('')}
+        <th style="padding:4px;min-width:90px">Semana</th></tr></thead><tbody>`;
+  let tM3=0, tHa=0;
+  mostrar.forEach(n=>{
+    const s=rgS.doc.sectores[n]||{}, ha=rgHa(n), ml=rgML(n), tw=rgTotSemana(n);
+    if(ha) tHa+=ha;
+    const m3=ml!=null?tw.lm*ml/1000:null; if(m3!=null) tM3+=m3;
+    h+=`<tr style="border-bottom:1px solid var(--sand);vertical-align:top">
+      <td style="padding:4px">${s.epoca?`${TICONS[s.epoca]||''} ${escH(rgEpNom(s.epoca))}`:'<span style="color:#B45309">—</span>'}</td>
+      <td style="padding:4px">${escH(rgCultNom(s.cultivo))||'<span style="color:#B45309">—</span>'}</td>
+      <td style="padding:4px;font-weight:700;white-space:nowrap"><a href="javascript:void 0" onclick="rgAbrir('${escH(n).replace(/'/g,"\\'")}')" style="color:var(--green)">${escH(n)}</a></td>
+      <td style="padding:4px;text-align:right">${ha!=null?fmtNum(ha,2):'—'}</td>
+      ${dias.map(d=>{
+        const P=((s.dias||{})[d]||[]).filter(p=>num(p.min)>0||num(p.lm)>0);
+        if(!P.length) return `<td style="padding:4px;color:#ccc;text-align:center${d===todayIso?';background:#F4FBF6':''}">—</td>`;
+        const t=rgTotDia(n,d), tope=rgTopes(n,d);
+        return `<td style="padding:4px;line-height:1.35${d===todayIso?';background:#F4FBF6':''}">
+          ${P.slice().sort((a,b)=>(a.hora||'99').localeCompare(b.hora||'99')).map(p=>`<div style="white-space:nowrap">${escH(p.hora||'--:--')} · ${fmtNum(num(p.min),0)}′ · ${fmtNum(num(p.lm),2)}</div>`).join('')}
+          <div style="border-top:1px dotted var(--sand);margin-top:2px;font-weight:700;white-space:nowrap">${fmtNum(t.lm,2)} L/m · ${fmtNum(rgLpl(t.lm),2)} L/pl</div>
+          ${tope?'<div style="color:#B91C1C">⚠️ pulsos se topan</div>':''}</td>`;
+      }).join('')}
+      <td style="padding:4px;line-height:1.35;background:var(--cream)">
+        <div><b>${fmtNum(rgLpl(tw.lm),2)}</b> L/pl</div><div>${fmtNum(tw.lm,2)} L/m</div>
+        <div>${m3!=null?fmtNum(m3,1)+' m³':'<span style="color:var(--muted)">sin ML</span>'}</div>
+        <div style="color:var(--muted)">${tw.k} pulsos · ${fmtNum(tw.min,0)}′</div></td>
+    </tr>`;
+  });
+  h+=`</tbody><tfoot><tr style="background:var(--cream);font-weight:700"><td colspan="3" style="padding:4px">Total ${mostrar.length} sectores</td><td style="padding:4px;text-align:right">${fmtNum(tHa,2)}</td><td colspan="7" style="padding:4px;font-weight:400;color:var(--muted);font-size:10.5px">Cada pulso: hora · minutos · L/m de cinta. Toca un sector para editarlo.</td><td style="padding:4px">${fmtNum(tM3,1)} m³</td></tr></tfoot></table></div></div>`;
+
+  // Edición por sector
+  h+=`<div class="card" style="padding:10px 14px"><div class="card-title">✏️ ${edita?'Programar por sector':'Detalle por sector'}</div>`;
+  mostrar.forEach(n=>{ h+=rgSectorHTML(n, edita, lista); });
+  h+=`</div>`;
+  box.innerHTML=h;
+}
+
+function rgIdx(n){ return rgListaSectores().indexOf(n); }
+function rgAbrir(n){
+  rgS.abierto[n]=true; renderRiego();
+  const el=document.getElementById('rgSec'+rgIdx(n)); if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function rgSectorHTML(n, edita, lista){
+  const i=rgIdx(n), s=rgS.doc.sectores[n]||{cultivo:'',epoca:'',caudal:null,dias:{}};
+  const ha=rgHa(n), ml=rgML(n), tw=rgTotSemana(n), ab=!!rgS.abierto[n];
+  const q=num(s.caudal);
+  const cab=`<div onclick="rgS.abierto['${escH(n).replace(/'/g,"\\'")}']=${!ab};renderRiego()" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:6px">
+      <div><b>${ab?'▾':'▸'} Sector ${escH(n)}</b> <span style="font-size:11px;color:var(--muted)">${ha!=null?fmtNum(ha,2)+' ha':''}${ml!=null?' · '+fmtNum(ml,0)+' ML':''}</span><br>
+      <span style="font-size:11px">${s.epoca?escH(rgEpNom(s.epoca)):'<span style="color:#B45309">sin época</span>'} · ${s.cultivo?escH(rgCultNom(s.cultivo)):'<span style="color:#B45309">sin cultivo</span>'}</span></div>
+      <div style="font-size:11px;text-align:right;white-space:nowrap">${fmtNum(rgLpl(tw.lm),2)} L/pl sem.<br><span style="color:var(--muted)">${tw.k} pulsos</span></div></div>`;
+  if(!ab) return `<div id="rgSec${i}" style="border:1.5px solid var(--sand);border-radius:10px;padding:8px 10px;margin-bottom:6px">${cab}</div>`;
+  const dis=edita?'':'disabled';
+  const nq=escH(n).replace(/'/g,"\\'");
+  let h=`<div id="rgSec${i}" style="border:1.5px solid var(--green-l);border-radius:10px;padding:8px 10px;margin-bottom:8px">${cab}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+      <div class="form-row" style="margin:0;flex:1;min-width:120px"><label>Cultivo</label>
+        <select ${dis} onchange="rgSetCultivo('${nq}',this.value)"><option value="">—</option>${rgCultivosLista().map(c=>`<option value="${escH(c.id)}"${c.id===s.cultivo?' selected':''}>${escH(c.nombre)}</option>`).join('')}</select></div>
+      <div class="form-row" style="margin:0;flex:1;min-width:140px"><label>${s.cultivo&&esCultivoPim(s.cultivo)?'Mes de plantación':'Época'}</label>
+        <select ${dis} onchange="rgSec('${nq}').epoca=this.value;rgMarcar();renderRiego()">${epocaOptsHTML(s.cultivo, s.epoca)}</select></div>
+      <div class="form-row" style="margin:0;flex:1;min-width:120px"><label>Caudal cinta (L/h·m)</label>
+        <input type="text" inputmode="decimal" ${dis} placeholder="opcional" value="${s.caudal!=null&&s.caudal!==''?escH(String(s.caudal)):''}" onchange="rgSec('${nq}').caudal=(num(this.value)>0?num(this.value):null);rgMarcar();renderRiego()"></div>
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin:4px 0 6px">${q>0?`Con ${fmtNum(q,2)} L/h por metro: al escribir los minutos se calculan los L/m, y al revés.`:'Si anotas el caudal de la cinta, los minutos y los L/m se calculan uno desde el otro.'}</div>`;
+  rgDias().forEach((d,k)=>{
+    const P=((s.dias||{})[d])||[];
+    const t=rgTotDia(n,d);
+    h+=`<div style="border-top:1px solid var(--sand);padding:6px 0${d===todayIso?';background:#F4FBF6':''}">
+      <div style="display:flex;justify-content:space-between;font-size:12px"><b>${DIAS[k]} ${rgFmtFecha(d)}</b>
+        <span id="rgTot${i}_${k}" style="font-size:11px">${rgTotTxt(t, rgTopes(n,d))}</span></div>`;
+    P.forEach((p,j)=>{
+      h+=`<div style="display:flex;gap:4px;align-items:center;margin-top:4px;font-size:11px">
+        <span style="width:16px;color:var(--muted)">${j+1}</span>
+        <input type="time" ${dis} value="${escH(p.hora||'')}" style="width:88px" onchange="rgPulsos('${nq}','${d}')[${j}].hora=this.value;rgMarcar();rgTotRefresh('${nq}',${k})">
+        <input type="text" inputmode="decimal" ${dis} id="rgMin${i}_${k}_${j}" value="${p.min!=null&&p.min!==''?escH(String(p.min)):''}" placeholder="min" style="width:56px;text-align:right" oninput="rgEditPulso('${nq}',${k},${j},'min',this.value)"><span>′</span>
+        <input type="text" inputmode="decimal" ${dis} id="rgLm${i}_${k}_${j}" value="${p.lm!=null&&p.lm!==''?escH(String(p.lm)):''}" placeholder="L/m" style="width:60px;text-align:right" oninput="rgEditPulso('${nq}',${k},${j},'lm',this.value)"><span>L/m</span>
+        ${edita?`<button class="plan-del" onclick="rgPulsos('${nq}','${d}').splice(${j},1);rgMarcar();renderRiego()">✕</button>`:''}
+      </div>`;
+    });
+    if(edita) h+=`<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">
+      ${P.length<RIEGO_MAX_PULSOS?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark);padding:3px 8px;font-size:10.5px" onclick="rgAgregarPulso('${nq}','${d}')">+ pulso</button>`:''}
+      ${k===0&&P.length?`<button class="btn btn-sm" style="background:var(--sand);color:var(--dark);padding:3px 8px;font-size:10.5px" onclick="rgLunesATodos('${nq}')">↘ Repetir el lunes toda la semana</button>`:''}
+    </div>`;
+    h+=`</div>`;
+  });
+  if(edita){
+    const otros=lista.filter(x=>x!==n);
+    if(otros.length) h+=`<details style="margin-top:6px"><summary style="font-size:11.5px;cursor:pointer;color:var(--dark)">📑 Copiar este programa a otros sectores</summary>
+      <div style="font-size:10.5px;color:var(--muted);margin:4px 0">Copia los pulsos de los 7 días (y cultivo, época y caudal si los marcas abajo). Reemplaza lo que tengan esos sectores esta semana.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11.5px">${otros.map((x,j)=>`<label style="display:flex;gap:3px;align-items:center"><input type="checkbox" class="rgCopiaChk${i}" value="${escH(x)}">${escH(x)}</label>`).join('')}</div>
+      <label style="font-size:11px;display:flex;gap:4px;align-items:center;margin-top:4px"><input type="checkbox" id="rgCopiaCfg${i}" checked> también cultivo, época y caudal</label>
+      <button class="btn btn-sm" style="background:var(--dark);color:#fff;margin-top:4px" onclick="rgCopiarA('${nq}',${i})">Copiar</button>
+    </details>`;
+  }
+  h+=`</div>`;
+  return h;
+}
+function rgTotTxt(t, tope){
+  if(!t.k) return '<span style="color:#ccc">sin riego</span>';
+  return `${t.k} pulso${t.k>1?'s':''} · ${fmtNum(t.min,0)}′ · <b>${fmtNum(t.lm,2)} L/m · ${fmtNum(rgLpl(t.lm),2)} L/pl</b>${tope?' <span style="color:#B91C1C">⚠️ se topan</span>':''}`;
+}
+function rgTotRefresh(n,k){
+  const el=document.getElementById('rgTot'+rgIdx(n)+'_'+k); if(!el) return;
+  const d=rgDias()[k]; el.innerHTML=rgTotTxt(rgTotDia(n,d), rgTopes(n,d));
+}
+function rgSetCultivo(n,v){
+  const s=rgSec(n); s.cultivo=v;
+  if(!epocaCompatible(s.epoca, v)) s.epoca='';
+  rgMarcar(); renderRiego();
+}
+function rgAgregarPulso(n,iso){
+  const P=rgPulsos(n,iso);
+  if(P.length>=RIEGO_MAX_PULSOS) return;
+  // Sugerencia: repite minutos y L/m del pulso anterior.
+  const ant=P[P.length-1];
+  P.push({hora:'', min:ant?ant.min:'', lm:ant?ant.lm:''});
+  rgMarcar(); renderRiego();
+}
+// Al escribir minutos o L/m: si el sector tiene caudal de cinta, se calcula el otro.
+function rgEditPulso(n,k,j,campo,val){
+  const d=rgDias()[k], p=rgPulsos(n,d)[j]; if(!p) return;
+  const i=rgIdx(n), q=num(rgSec(n).caudal);
+  p[campo]=val===''?'':num(val);
+  if(q>0 && val!==''){
+    if(campo==='min'){ p.lm=Math.round(num(val)*q/60*1000)/1000; const el=document.getElementById(`rgLm${i}_${k}_${j}`); if(el) el.value=String(p.lm).replace('.',','); }
+    else { p.min=Math.round(num(val)/q*60); const el=document.getElementById(`rgMin${i}_${k}_${j}`); if(el) el.value=String(p.min); }
+  }
+  rgMarcar(); rgTotRefresh(n,k);
+}
+function rgLunesATodos(n){
+  const D=rgDias(), base=rgPulsos(n,D[0]);
+  const conDatos=D.slice(1).some(d=>(rgSec(n).dias[d]||[]).length);
+  if(conDatos && !confirm('Los demás días de este sector ya tienen pulsos. ¿Reemplazarlos por los del lunes?')) return;
+  D.slice(1).forEach(d=>{ rgSec(n).dias[d]=base.map(p=>Object.assign({},p)); });
+  rgMarcar(); renderRiego();
+}
+function rgCopiarA(n,i){
+  const dest=[...document.querySelectorAll('.rgCopiaChk'+i)].filter(c=>c.checked).map(c=>c.value);
+  if(!dest.length){ toast('Marca al menos un sector'); return; }
+  const cfg=document.getElementById('rgCopiaCfg'+i), src=rgSec(n);
+  dest.forEach(x=>{
+    const t=rgSec(x);
+    t.dias={}; Object.entries(src.dias||{}).forEach(([d,P])=>{ t.dias[d]=(P||[]).map(p=>Object.assign({},p)); });
+    if(cfg&&cfg.checked){ t.cultivo=src.cultivo; t.epoca=src.epoca; t.caudal=src.caudal; }
+  });
+  rgMarcar(); renderRiego(); toast('Programa copiado a '+dest.length+' sector'+(dest.length>1?'es':''));
+}
+async function rgCopiarSemanaAnterior(){
+  const ant=rgSumarDias(rgS.lunes,-7);
+  try{
+    const snap=await db.collection('riegoProg').doc(rgS.pid).collection('semanas').doc(ant).get();
+    if(!snap.exists){ toast('La semana del '+rgFmtFecha(ant)+' no tiene programación guardada'); return; }
+    const hayPulsos=Object.values(rgS.doc.sectores||{}).some(s=>Object.values(s.dias||{}).some(P=>(P||[]).length));
+    if(hayPulsos && !confirm('Esta semana ya tiene pulsos. ¿Reemplazar todo por la programación de la semana anterior?')) return;
+    const d=snap.data()||{};
+    rgS.doc.factor=Object.assign({},RIEGO_FACTOR_DEF,d.factor||{});
+    rgS.doc.sectores={};
+    Object.entries(d.sectores||{}).forEach(([n,s])=>{
+      const dias={};
+      Object.entries(s.dias||{}).forEach(([f,P])=>{ dias[rgSumarDias(f,7)]=(P||[]).map(p=>Object.assign({},p)); });
+      rgS.doc.sectores[n]={cultivo:s.cultivo||'', epoca:s.epoca||'', caudal:s.caudal!=null?s.caudal:null, dias};
+    });
+    rgS.prefill=''; rgMarcar(); renderRiego(); toast('Copiada la semana del '+rgFmtFecha(ant)+'. Revisa y guarda.');
+  }catch(e){ toast('No se pudo leer la semana anterior: '+e.message); }
+}
+async function rgGuardar(){
+  const pid=rgS.pid;
+  if(!canEditRiegoProg(pid)){ toast('Sin permiso para editar la programación de riego'); return; }
+  const dias=rgDias(), sectores={}, errores=[];
+  Object.entries(rgS.doc.sectores||{}).forEach(([n,s])=>{
+    const out={cultivo:s.cultivo||'', epoca:s.epoca||'', caudal:num(s.caudal)>0?num(s.caudal):null, dias:{}};
+    dias.forEach(d=>{
+      const P=((s.dias||{})[d]||[])
+        .filter(p=>p && (p.hora || num(p.min)>0 || num(p.lm)>0))
+        .map(p=>({hora:p.hora||'', min:num(p.min), lm:num(p.lm)}))
+        .sort((a,b)=>(a.hora||'99').localeCompare(b.hora||'99'));
+      P.forEach(p=>{ if(!p.hora) errores.push(`Sector ${n}, ${rgFmtFecha(d)}: falta la hora de un pulso`);
+        if(!(p.min>0)) errores.push(`Sector ${n}, ${rgFmtFecha(d)}: un pulso sin minutos`); });
+      if(P.length) out.dias[d]=P;
+    });
+    if(out.cultivo||out.epoca||out.caudal||Object.keys(out.dias).length){
+      if(Object.keys(out.dias).length && !out.cultivo) errores.push(`Sector ${n}: falta el cultivo`);
+      if(Object.keys(out.dias).length && !out.epoca) errores.push(`Sector ${n}: falta ${esCultivoPim(out.cultivo)?'el mes de plantación':'la época'}`);
+      sectores[n]=out;
+    }
+  });
+  if(errores.length){
+    alert('Antes de guardar, corrige:\n\n• '+errores.slice(0,12).join('\n• ')+(errores.length>12?`\n… y ${errores.length-12} más`:''));
+    return;
+  }
+  const doc={appV:RIEGO_APPV, predioId:pid, semana:rgS.lunes, factor:rgFactor(), sectores,
+    updatedAt:Date.now(), updatedBy:currentUser.uid, updatedByNombre:(currentProfile&&currentProfile.nombre)||currentUser.email};
+  try{
+    loading(true,'Guardando programación de riego…');
+    await db.collection('riegoProg').doc(pid).collection('semanas').doc(rgS.lunes).set(doc);
+    loading(false);
+    rgS.doc=Object.assign({}, doc, {sectores:JSON.parse(JSON.stringify(sectores))});
+    rgS.dirty=false; rgS.prefill='';
+    renderRiego(); toast('Programación de riego guardada ✓');
+  }catch(e){
+    loading(false);
+    toast('No se pudo guardar: '+e.message);
+  }
+}
+function rgExportExcel(){
+  if(typeof XLSX==='undefined'){ toast('No cargó la librería de Excel'); return; }
+  const dias=rgDias(), lista=rgListaSectores(), F=rgFactor();
+  const det=[], res=[];
+  const orden=lista.slice().sort((a,b)=>{ const A=rgS.doc.sectores[a]||{}, B=rgS.doc.sectores[b]||{};
+    const ea=A.epoca?ordenEpoca(A.epoca):999, eb=B.epoca?ordenEpoca(B.epoca):999;
+    if(ea!==eb) return ea-eb; const c=(rgCultNom(A.cultivo)||'~').localeCompare(rgCultNom(B.cultivo)||'~'); return c||lista.indexOf(a)-lista.indexOf(b); });
+  orden.forEach(n=>{
+    const s=rgS.doc.sectores[n]||{}, ha=rgHa(n), ml=rgML(n);
+    const fila={'Época':rgEpNom(s.epoca), 'Cultivo':rgCultNom(s.cultivo), 'Sector':n, 'ha':ha, 'ML':ml};
+    dias.forEach((d,k)=>{
+      const t=rgTotDia(n,d);
+      fila[DIAS_CORTO[k]+' '+rgFmtFecha(d)+' L/planta']=t.k?Math.round(rgLpl(t.lm)*1000)/1000:null;
+      (((s.dias||{})[d])||[]).filter(p=>num(p.min)>0||num(p.lm)>0)
+        .slice().sort((a,b)=>(a.hora||'').localeCompare(b.hora||''))
+        .forEach((p,j)=>det.push({'Época':rgEpNom(s.epoca), 'Cultivo':rgCultNom(s.cultivo), 'Sector':n, 'ha':ha,
+          'Fecha':d.split('-').reverse().join('-'), 'Día':DIAS[k], 'Pulso':j+1, 'Hora inicio':p.hora||'', 'Minutos':num(p.min),
+          'L/m cinta':num(p.lm), 'L/planta':Math.round(rgLpl(num(p.lm))*1000)/1000,
+          'm³ sector':ml!=null?Math.round(num(p.lm)*ml)/1000:null}));
+    });
+    const tw=rgTotSemana(n);
+    fila['Semana L/m']=Math.round(tw.lm*1000)/1000; fila['Semana L/planta']=Math.round(rgLpl(tw.lm)*1000)/1000;
+    fila['Semana m³']=ml!=null?Math.round(tw.lm*ml)/1000:null; fila['Pulsos']=tw.k; fila['Minutos']=tw.min;
+    res.push(fila);
+  });
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(res), 'Resumen semana');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(det.length?det:[{'Sin pulsos':''}]), 'Pulsos');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+    {'Dato':'Predio','Valor':PREDIOS[rgS.pid].nombre},
+    {'Dato':'Semana (lunes)','Valor':rgS.lunes},
+    {'Dato':'m de cinta por ha','Valor':F.mHa},
+    {'Dato':'Ejes por ha','Valor':F.ejesHa},
+    {'Dato':'L/planta = L/m ×','Valor':Math.round(F.mHa/F.ejesHa*10000)/10000}
+  ]), 'Parámetros');
+  XLSX.writeFile(wb, `riego_${rgS.pid}_${rgS.lunes}.xlsx`);
+}
+
 function showScr(name,btn){
   if(!canVerPantalla(name)){toast('Sin permiso para esta sección');return}
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
   document.getElementById('screen-'+name).classList.add('active');
-  document.body.classList.toggle('wide', name==='planilla');
+  document.body.classList.toggle('wide', name==='planilla'||name==='riego');
   if(btn)btn.classList.add('active');
   renderCtx();
   if(name==='avance')  renderAvance();
@@ -14668,6 +15132,7 @@ function showScr(name,btn){
   if(name==='gastos')  initGastos();
   if(name==='manual')  initManual();
   if(name==='control') initControl();   // v52
+  if(name==='riego')   initRiego();     // v87
 }
 
 // ══════════════════════════════════════════════
