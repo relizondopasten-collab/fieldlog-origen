@@ -14169,7 +14169,7 @@ const MANUAL_VERSION='v87';
 const MANUAL_FECHA='2026-11-11';
 
 const MANUAL_CAMBIOS=[
-  {v:'v87', f:'11-11-2026', ver:()=>canVerRiegoProg(), txt:'<b>💧 Programación de riego.</b> Botón nuevo <b>Riego</b>: muestra todos los sectores de riego del predio y, para cada día de la semana, los pulsos con hora de inicio, minutos y litros por metro de cinta (hasta 4 pulsos por día). Calcula los L/planta del día y de la semana (L/m × 11.000 m de cinta ÷ 30.000 ejes por ha, editable) y los m³ del sector. Se clasifica y filtra por época, cultivo y sector, y se baja a Excel. La editan gerencia, jefatura y el encargado de riego; los subjefes la consultan.'},
+  {v:'v87', f:'11-11-2026', ver:()=>canVerRiegoProg(), txt:'<b>💧 Programación de riego.</b> Botón nuevo <b>Riego</b>: muestra todos los sectores de riego del predio y, para cada día de la semana, los pulsos con hora de inicio, minutos y litros por metro de cinta (hasta 4 pulsos por día). Calcula los L/planta y los m³/ha del día y de la semana con los metros de cinta por ha de cada sector (ML ÷ ha de Config › Sectores) y 30.000 ejes por ha (editable), y los m³ del sector. Se clasifica y filtra por época, cultivo y sector, y se baja a Excel. La editan gerencia, jefatura y el encargado de riego; los subjefes la consultan.'},
   {v:'v86', f:'10-11-2026', ver:()=>canAplicRiego()||canBodega()||canVerGastos(), txt:'<b>🧪 Cloruro de calcio en el estanque de fertirriego.</b> Se agregó a la lista de fertilizantes del estanque, al final. Descuenta del mismo recinto que las demás sales (Caseta de Riego en El Tránsito y Paradero 12; Bodega Principal en La Constancia). Si bajo la sal aparece “sin producto en bodega”, hay que elegir a mano el producto del catálogo o cargarlo en Bodega.'},
   {v:'v85', f:'09-11-2026', ver:()=>canAplicFoliar()||canBodega()||canVerGastos(), txt:'<b>🧴 Bodegas Pesticidas y Foliares en El Tránsito y Paradero 12.</b> Guardan los pesticidas, fertilizantes y bioestimulantes foliares de cada campo; Luciano los despacha desde Origen y el responsable confirma la recepción (El Tránsito: Claudio Flores; Paradero 12: Jorge Guajardo y Mario Durand). Las foliares y desinfecciones en polvo de esos campos con fecha <b>desde el 16-11-2026</b> descuentan de su bodega; las de fechas anteriores siguen saliendo de La Constancia. Al cambiar la fecha en el formulario, la bodega de descuento se actualiza.'},
   {v:'v84', f:'04-11-2026', ver:()=>canViewInformes(), txt:'<b>✅ Inconsistencias: “está correcto”.</b> En Informes › ⚠️ Inconsistencias (y en 🔎 de ⚡ Eficiencia) cada caso tiene el botón <b>✅ Correcto</b> para cuando se revisó y el dato está bien. Se puede dejar una nota. El caso sale de la lista “para revisar”, de la descarga Excel/PDF y del conteo de Eficiencia y Capacidad, y queda anotado quién lo revisó y cuándo. Se ven con <b>Ver los marcados como correctos</b> y se puede quitar la marca con ↩️. Si después se cambian las mesas u horas de esa entrada, el caso vuelve a aparecer.'},
@@ -14453,7 +14453,7 @@ const MANUAL_SECCIONES=[
   intro:'El horario de riego de la semana para cada sector: cuántos pulsos, a qué hora, cuántos minutos y cuántos litros por metro de cinta. Con eso la app calcula los litros por planta.',
   pasos:[
     'Toca <b>Riego</b>. Elige el predio y la semana con ‹ › o el calendario (cualquier día lleva a su lunes).',
-    'Revisa arriba los <b>m de cinta por ha</b> y los <b>ejes por ha</b> (por defecto 11.000 y 30.000). Con ellos: <b>L/planta = L/m de cinta × 11.000 ÷ 30.000</b>.',
+    'Los <b>metros de cinta por ha</b> salen de cada sector: metros lineales ÷ ha (Config › Sectores de riego). Con eso: <b>L/planta = L/m × m cinta/ha ÷ ejes/ha</b> (30.000 ejes por defecto, editable arriba) y <b>m³/ha = L/m × m cinta/ha ÷ 1000</b>. Si un sector no tiene ML o ha, usa el valor por defecto del predio (Paradero 12: 10.000; La Constancia: 11.111) y lo marca con *.',
     'En <b>✏️ Programar por sector</b> abre un sector y elige el <b>cultivo</b> y la <b>época</b> (en pimentón, el mes de plantación).',
     'Opcional: el <b>caudal de la cinta</b> en L/h por metro. Si lo anotas, al escribir los minutos de un pulso se calculan los L/m, y al revés.',
     'En cada día toca <b>+ pulso</b> y anota la hora de inicio, los minutos y los L/m. Se pueden dar hasta 4 pulsos por día. Si el programa se repite, arma el lunes y usa <b>↘ Repetir el lunes toda la semana</b>.',
@@ -14463,7 +14463,7 @@ const MANUAL_SECCIONES=[
   ],
   tips:[
     'Una semana nueva trae sola el cultivo, la época y el caudal de la última semana guardada, pero no los pulsos. Para repetir también los pulsos usa <b>📋 Copiar semana anterior</b>.',
-    'Los m³ salen de los metros lineales del sector (Config › Sectores de riego). Si un sector no tiene ML, dice “sin ML”.',
+    'Los m³ del sector son L/m × metros lineales ÷ 1000. Conviene que todos los sectores tengan ML y ha cargados, sobre todo en El Tránsito, donde los metros de cinta por ha cambian de un sector a otro.',
     'Si dos pulsos del mismo día se topan en el horario, aparece ⚠️.',
     '📥 Excel baja el resumen por sector y una hoja con cada pulso.'
   ]
@@ -14691,6 +14691,9 @@ function initManual(){
 const RIEGO_APPV=87;
 const RIEGO_MAX_PULSOS=4;
 const RIEGO_FACTOR_DEF={mHa:11000, ejesHa:30000};
+// Metros de cinta por ha si el sector no tiene ML y ha cargados (Config › Sectores).
+// Lo normal es calcularlo por sector: ML ÷ ha. El Tránsito varía por sector.
+const RIEGO_MHA_PREDIO={paradero:10000, constancia:11111};
 let rgS={pid:null, lunes:null, doc:null, dirty:false, abierto:{}, fCult:'', fEp:'', prefill:'', cargando:false};
 
 function canVerRiegoProg(){ return ['admin','jefe','subjefe','riego'].includes(userRole()); }
@@ -14704,11 +14707,21 @@ function rgLunesDe(iso){
 function rgSumarDias(iso,n){ const d=new Date(iso+'T12:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
 function rgDias(){ return Array.from({length:7},(_,i)=>rgSumarDias(rgS.lunes,i)); }
 function rgFmtFecha(iso){ return iso.slice(8,10)+'-'+iso.slice(5,7); }
-function rgFactor(){ const f=(rgS.doc&&rgS.doc.factor)||{}; return {mHa:num(f.mHa)||RIEGO_FACTOR_DEF.mHa, ejesHa:num(f.ejesHa)||RIEGO_FACTOR_DEF.ejesHa}; }
-function rgLpl(lm){ const f=rgFactor(); return lm*f.mHa/f.ejesHa; }
+function rgFactor(){ const f=(rgS.doc&&rgS.doc.factor)||{}; return {mHa:num(f.mHa)||RIEGO_MHA_PREDIO[rgS.pid]||RIEGO_FACTOR_DEF.mHa, ejesHa:num(f.ejesHa)||RIEGO_FACTOR_DEF.ejesHa}; }
+// m de cinta por ha del sector: ML ÷ ha si están; si no, el valor por defecto del predio.
+function rgMHaInfo(n){ const ml=n!=null?rgML(n):null, ha=n!=null?rgHa(n):null;
+  if(ml&&ha) return {v:ml/ha, src:'sector'};
+  return {v:rgFactor().mHa, src:'defecto'}; }
+function rgMHa(n){ return rgMHaInfo(n).v; }
+// L/planta = L/m × m de cinta/ha ÷ ejes/ha
+function rgLpl(lm,n){ return lm*rgMHa(n)/rgFactor().ejesHa; }
+// m³/ha = L/m × m de cinta/ha ÷ 1000
+function rgM3ha(lm,n){ return lm*rgMHa(n)/1000; }
+// m³ del sector = L/m × ML ÷ 1000 (o m³/ha × ha si no hay ML)
+function rgM3sec(lm,n){ const ml=rgML(n), ha=rgHa(n); if(ml) return lm*ml/1000; if(ha) return rgM3ha(lm,n)*ha; return null; }
 function rgML(sector){ const t=terrenoCache[rgS.pid]||{}, ml=t.sectoresML||{}; const v=num(ml[sector]); return v>0?v:null; }
 function rgHa(sector){ const v=haSector(rgS.pid, sector); return v>0?v:null; }
-function rgDocVacio(){ return {appV:RIEGO_APPV, predioId:rgS.pid, semana:rgS.lunes, factor:Object.assign({},RIEGO_FACTOR_DEF), sectores:{}}; }
+function rgDocVacio(){ return {appV:RIEGO_APPV, predioId:rgS.pid, semana:rgS.lunes, factor:{mHa:RIEGO_MHA_PREDIO[rgS.pid]||RIEGO_FACTOR_DEF.mHa, ejesHa:RIEGO_FACTOR_DEF.ejesHa}, sectores:{}}; }
 function rgSec(n){
   const S=rgS.doc.sectores;
   if(!S[n]) S[n]={cultivo:'', epoca:'', caudal:null, dias:{}};
@@ -14835,11 +14848,11 @@ function renderRiego(){
     <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${upd}</div>
     ${rgS.prefill?`<div style="font-size:11px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:6px 8px;margin-top:6px">Cultivo, época y caudal traídos de la semana del ${rgFmtFecha(rgS.prefill)}. Los pulsos están vacíos: usa <b>Copiar semana anterior</b> si el programa se repite.</div>`:''}
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:flex-end">
-      <div class="form-row" style="margin:0;flex:1;min-width:110px"><label>m de cinta / ha</label>
-        <input type="text" inputmode="decimal" value="${F.mHa}" ${edita?'':'disabled'} onchange="rgS.doc.factor=Object.assign({},rgFactor(),{mHa:num(this.value)||RIEGO_FACTOR_DEF.mHa});rgMarcar();renderRiego()"></div>
+      <div class="form-row" style="margin:0;flex:1;min-width:110px"><label>m cinta/ha (si el sector no tiene ML)</label>
+        <input type="text" inputmode="decimal" value="${F.mHa}" ${edita?'':'disabled'} onchange="rgS.doc.factor=Object.assign({},rgFactor(),{mHa:num(this.value)||RIEGO_MHA_PREDIO[rgS.pid]||RIEGO_FACTOR_DEF.mHa});rgMarcar();renderRiego()"></div>
       <div class="form-row" style="margin:0;flex:1;min-width:110px"><label>Ejes (plantas) / ha</label>
         <input type="text" inputmode="decimal" value="${F.ejesHa}" ${edita?'':'disabled'} onchange="rgS.doc.factor=Object.assign({},rgFactor(),{ejesHa:num(this.value)||RIEGO_FACTOR_DEF.ejesHa});rgMarcar();renderRiego()"></div>
-      <div style="font-size:11px;color:var(--muted);flex:2;min-width:180px;padding-bottom:6px">L/planta = L/m de cinta × ${fmtNum(F.mHa,0)} ÷ ${fmtNum(F.ejesHa,0)} = L/m × <b>${fmtNum(F.mHa/F.ejesHa,3)}</b></div>
+      <div style="font-size:11px;color:var(--muted);flex:2;min-width:180px;padding-bottom:6px">Por sector: m de cinta/ha = ML ÷ ha (Config › Sectores).<br><b>L/planta</b> = L/m × m cinta/ha ÷ ${fmtNum(F.ejesHa,0)} ejes · <b>m³/ha</b> = L/m × m cinta/ha ÷ 1000</div>
     </div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
       ${edita?`<button class="btn btn-primary btn-sm" onclick="rgGuardar()">💾 Guardar semana</button>
@@ -14870,35 +14883,38 @@ function renderRiego(){
     <div style="overflow:auto;max-height:70vh">
     <table style="border-collapse:collapse;font-size:11px;min-width:980px;width:100%">
       <thead><tr style="background:var(--cream);position:sticky;top:0">
-        <th style="padding:4px;text-align:left">Época</th><th style="padding:4px;text-align:left">Cultivo</th><th style="padding:4px;text-align:left">Sector</th><th style="padding:4px">ha</th>
+        <th style="padding:4px;text-align:left">Época</th><th style="padding:4px;text-align:left">Cultivo</th><th style="padding:4px;text-align:left">Sector</th><th style="padding:4px">ha</th><th style="padding:4px">m cinta/ha</th>
         ${dias.map((d,i)=>`<th style="padding:4px;min-width:105px${d===todayIso?';background:#E8F5EC':''}">${DIAS_CORTO[i]} ${rgFmtFecha(d)}</th>`).join('')}
         <th style="padding:4px;min-width:90px">Semana</th></tr></thead><tbody>`;
   let tM3=0, tHa=0;
   mostrar.forEach(n=>{
     const s=rgS.doc.sectores[n]||{}, ha=rgHa(n), ml=rgML(n), tw=rgTotSemana(n);
     if(ha) tHa+=ha;
-    const m3=ml!=null?tw.lm*ml/1000:null; if(m3!=null) tM3+=m3;
+    const m3=rgM3sec(tw.lm,n); if(m3!=null) tM3+=m3;
     h+=`<tr style="border-bottom:1px solid var(--sand);vertical-align:top">
       <td style="padding:4px">${s.epoca?`${TICONS[s.epoca]||''} ${escH(rgEpNom(s.epoca))}`:'<span style="color:#B45309">—</span>'}</td>
       <td style="padding:4px">${escH(rgCultNom(s.cultivo))||'<span style="color:#B45309">—</span>'}</td>
       <td style="padding:4px;font-weight:700;white-space:nowrap"><a href="javascript:void 0" onclick="rgAbrir('${escH(n).replace(/'/g,"\\'")}')" style="color:var(--green)">${escH(n)}</a></td>
       <td style="padding:4px;text-align:right">${ha!=null?fmtNum(ha,2):'—'}</td>
+      <td style="padding:4px;text-align:right${rgMHaInfo(n).src==='sector'?'':';color:#B45309'}" title="${rgMHaInfo(n).src==='sector'?'ML ÷ ha del sector':'Sin ML o ha del sector: valor por defecto del predio'}">${fmtNum(rgMHa(n),0)}${rgMHaInfo(n).src==='sector'?'':'*'}</td>
       ${dias.map(d=>{
         const P=((s.dias||{})[d]||[]).filter(p=>num(p.min)>0||num(p.lm)>0);
         if(!P.length) return `<td style="padding:4px;color:#ccc;text-align:center${d===todayIso?';background:#F4FBF6':''}">—</td>`;
         const t=rgTotDia(n,d), tope=rgTopes(n,d);
         return `<td style="padding:4px;line-height:1.35${d===todayIso?';background:#F4FBF6':''}">
           ${P.slice().sort((a,b)=>(a.hora||'99').localeCompare(b.hora||'99')).map(p=>`<div style="white-space:nowrap">${escH(p.hora||'--:--')} · ${fmtNum(num(p.min),0)}′ · ${fmtNum(num(p.lm),2)}</div>`).join('')}
-          <div style="border-top:1px dotted var(--sand);margin-top:2px;font-weight:700;white-space:nowrap">${fmtNum(t.lm,2)} L/m · ${fmtNum(rgLpl(t.lm),2)} L/pl</div>
+          <div style="border-top:1px dotted var(--sand);margin-top:2px;font-weight:700;white-space:nowrap">${fmtNum(t.lm,2)} L/m · ${fmtNum(rgLpl(t.lm,n),2)} L/pl</div>
+          <div style="white-space:nowrap">${fmtNum(rgM3ha(t.lm,n),1)} m³/ha</div>
           ${tope?'<div style="color:#B91C1C">⚠️ pulsos se topan</div>':''}</td>`;
       }).join('')}
       <td style="padding:4px;line-height:1.35;background:var(--cream)">
-        <div><b>${fmtNum(rgLpl(tw.lm),2)}</b> L/pl</div><div>${fmtNum(tw.lm,2)} L/m</div>
-        <div>${m3!=null?fmtNum(m3,1)+' m³':'<span style="color:var(--muted)">sin ML</span>'}</div>
+        <div><b>${fmtNum(rgLpl(tw.lm,n),2)}</b> L/pl</div><div>${fmtNum(tw.lm,2)} L/m</div>
+        <div><b>${fmtNum(rgM3ha(tw.lm,n),1)}</b> m³/ha</div>
+        <div>${m3!=null?fmtNum(m3,1)+' m³ sector':'<span style="color:var(--muted)">sin ha</span>'}</div>
         <div style="color:var(--muted)">${tw.k} pulsos · ${fmtNum(tw.min,0)}′</div></td>
     </tr>`;
   });
-  h+=`</tbody><tfoot><tr style="background:var(--cream);font-weight:700"><td colspan="3" style="padding:4px">Total ${mostrar.length} sectores</td><td style="padding:4px;text-align:right">${fmtNum(tHa,2)}</td><td colspan="7" style="padding:4px;font-weight:400;color:var(--muted);font-size:10.5px">Cada pulso: hora · minutos · L/m de cinta. Toca un sector para editarlo.</td><td style="padding:4px">${fmtNum(tM3,1)} m³</td></tr></tfoot></table></div></div>`;
+  h+=`</tbody><tfoot><tr style="background:var(--cream);font-weight:700"><td colspan="3" style="padding:4px">Total ${mostrar.length} sectores</td><td style="padding:4px;text-align:right">${fmtNum(tHa,2)}</td><td></td><td colspan="7" style="padding:4px;font-weight:400;color:var(--muted);font-size:10.5px">Cada pulso: hora · minutos · L/m de cinta. * = m cinta/ha por defecto (el sector no tiene ML o ha). Toca un sector para editarlo.</td><td style="padding:4px">${fmtNum(tM3,1)} m³</td></tr></tfoot></table></div></div>`;
 
   // Edición por sector
   h+=`<div class="card" style="padding:10px 14px"><div class="card-title">✏️ ${edita?'Programar por sector':'Detalle por sector'}</div>`;
@@ -14917,9 +14933,9 @@ function rgSectorHTML(n, edita, lista){
   const ha=rgHa(n), ml=rgML(n), tw=rgTotSemana(n), ab=!!rgS.abierto[n];
   const q=num(s.caudal);
   const cab=`<div onclick="rgS.abierto['${escH(n).replace(/'/g,"\\'")}']=${!ab};renderRiego()" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:6px">
-      <div><b>${ab?'▾':'▸'} Sector ${escH(n)}</b> <span style="font-size:11px;color:var(--muted)">${ha!=null?fmtNum(ha,2)+' ha':''}${ml!=null?' · '+fmtNum(ml,0)+' ML':''}</span><br>
+      <div><b>${ab?'▾':'▸'} Sector ${escH(n)}</b> <span style="font-size:11px;color:var(--muted)">${ha!=null?fmtNum(ha,2)+' ha':''}${ml!=null?' · '+fmtNum(ml,0)+' ML':''} · ${fmtNum(rgMHa(n),0)} m cinta/ha${rgMHaInfo(n).src==='sector'?'':' (por defecto)'}</span><br>
       <span style="font-size:11px">${s.epoca?escH(rgEpNom(s.epoca)):'<span style="color:#B45309">sin época</span>'} · ${s.cultivo?escH(rgCultNom(s.cultivo)):'<span style="color:#B45309">sin cultivo</span>'}</span></div>
-      <div style="font-size:11px;text-align:right;white-space:nowrap">${fmtNum(rgLpl(tw.lm),2)} L/pl sem.<br><span style="color:var(--muted)">${tw.k} pulsos</span></div></div>`;
+      <div style="font-size:11px;text-align:right;white-space:nowrap">${fmtNum(rgLpl(tw.lm,n),2)} L/pl · ${fmtNum(rgM3ha(tw.lm,n),1)} m³/ha sem.<br><span style="color:var(--muted)">${tw.k} pulsos</span></div></div>`;
   if(!ab) return `<div id="rgSec${i}" style="border:1.5px solid var(--sand);border-radius:10px;padding:8px 10px;margin-bottom:6px">${cab}</div>`;
   const dis=edita?'':'disabled';
   const nq=escH(n).replace(/'/g,"\\'");
@@ -14938,7 +14954,7 @@ function rgSectorHTML(n, edita, lista){
     const t=rgTotDia(n,d);
     h+=`<div style="border-top:1px solid var(--sand);padding:6px 0${d===todayIso?';background:#F4FBF6':''}">
       <div style="display:flex;justify-content:space-between;font-size:12px"><b>${DIAS[k]} ${rgFmtFecha(d)}</b>
-        <span id="rgTot${i}_${k}" style="font-size:11px">${rgTotTxt(t, rgTopes(n,d))}</span></div>`;
+        <span id="rgTot${i}_${k}" style="font-size:11px">${rgTotTxt(t, rgTopes(n,d), n)}</span></div>`;
     P.forEach((p,j)=>{
       h+=`<div style="display:flex;gap:4px;align-items:center;margin-top:4px;font-size:11px">
         <span style="width:16px;color:var(--muted)">${j+1}</span>
@@ -14966,13 +14982,13 @@ function rgSectorHTML(n, edita, lista){
   h+=`</div>`;
   return h;
 }
-function rgTotTxt(t, tope){
+function rgTotTxt(t, tope, n){
   if(!t.k) return '<span style="color:#ccc">sin riego</span>';
-  return `${t.k} pulso${t.k>1?'s':''} · ${fmtNum(t.min,0)}′ · <b>${fmtNum(t.lm,2)} L/m · ${fmtNum(rgLpl(t.lm),2)} L/pl</b>${tope?' <span style="color:#B91C1C">⚠️ se topan</span>':''}`;
+  return `${t.k} pulso${t.k>1?'s':''} · ${fmtNum(t.min,0)}′ · <b>${fmtNum(t.lm,2)} L/m · ${fmtNum(rgLpl(t.lm,n),2)} L/pl · ${fmtNum(rgM3ha(t.lm,n),1)} m³/ha</b>${tope?' <span style="color:#B91C1C">⚠️ se topan</span>':''}`;
 }
 function rgTotRefresh(n,k){
   const el=document.getElementById('rgTot'+rgIdx(n)+'_'+k); if(!el) return;
-  const d=rgDias()[k]; el.innerHTML=rgTotTxt(rgTotDia(n,d), rgTopes(n,d));
+  const d=rgDias()[k]; el.innerHTML=rgTotTxt(rgTotDia(n,d), rgTopes(n,d), n);
 }
 function rgSetCultivo(n,v){
   const s=rgSec(n); s.cultivo=v;
@@ -15024,7 +15040,7 @@ async function rgCopiarSemanaAnterior(){
     const hayPulsos=Object.values(rgS.doc.sectores||{}).some(s=>Object.values(s.dias||{}).some(P=>(P||[]).length));
     if(hayPulsos && !confirm('Esta semana ya tiene pulsos. ¿Reemplazar todo por la programación de la semana anterior?')) return;
     const d=snap.data()||{};
-    rgS.doc.factor=Object.assign({},RIEGO_FACTOR_DEF,d.factor||{});
+    rgS.doc.factor=Object.assign({mHa:RIEGO_MHA_PREDIO[rgS.pid]||RIEGO_FACTOR_DEF.mHa, ejesHa:RIEGO_FACTOR_DEF.ejesHa},d.factor||{});
     rgS.doc.sectores={};
     Object.entries(d.sectores||{}).forEach(([n,s])=>{
       const dias={};
@@ -15082,20 +15098,23 @@ function rgExportExcel(){
     if(ea!==eb) return ea-eb; const c=(rgCultNom(A.cultivo)||'~').localeCompare(rgCultNom(B.cultivo)||'~'); return c||lista.indexOf(a)-lista.indexOf(b); });
   orden.forEach(n=>{
     const s=rgS.doc.sectores[n]||{}, ha=rgHa(n), ml=rgML(n);
-    const fila={'Época':rgEpNom(s.epoca), 'Cultivo':rgCultNom(s.cultivo), 'Sector':n, 'ha':ha, 'ML':ml};
+    const fila={'Época':rgEpNom(s.epoca), 'Cultivo':rgCultNom(s.cultivo), 'Sector':n, 'ha':ha, 'ML':ml, 'm cinta/ha':Math.round(rgMHa(n)), 'Origen m/ha':rgMHaInfo(n).src==='sector'?'ML ÷ ha':'por defecto'};
     dias.forEach((d,k)=>{
       const t=rgTotDia(n,d);
-      fila[DIAS_CORTO[k]+' '+rgFmtFecha(d)+' L/planta']=t.k?Math.round(rgLpl(t.lm)*1000)/1000:null;
+      fila[DIAS_CORTO[k]+' '+rgFmtFecha(d)+' L/planta']=t.k?Math.round(rgLpl(t.lm,n)*1000)/1000:null;
+      fila[DIAS_CORTO[k]+' '+rgFmtFecha(d)+' m³/ha']=t.k?Math.round(rgM3ha(t.lm,n)*100)/100:null;
       (((s.dias||{})[d])||[]).filter(p=>num(p.min)>0||num(p.lm)>0)
         .slice().sort((a,b)=>(a.hora||'').localeCompare(b.hora||''))
         .forEach((p,j)=>det.push({'Época':rgEpNom(s.epoca), 'Cultivo':rgCultNom(s.cultivo), 'Sector':n, 'ha':ha,
           'Fecha':d.split('-').reverse().join('-'), 'Día':DIAS[k], 'Pulso':j+1, 'Hora inicio':p.hora||'', 'Minutos':num(p.min),
-          'L/m cinta':num(p.lm), 'L/planta':Math.round(rgLpl(num(p.lm))*1000)/1000,
-          'm³ sector':ml!=null?Math.round(num(p.lm)*ml)/1000:null}));
+          'L/m cinta':num(p.lm), 'L/planta':Math.round(rgLpl(num(p.lm),n)*1000)/1000,
+          'm³/ha':Math.round(rgM3ha(num(p.lm),n)*100)/100,
+          'm³ sector':rgM3sec(num(p.lm),n)!=null?Math.round(rgM3sec(num(p.lm),n)*1000)/1000:null}));
     });
     const tw=rgTotSemana(n);
-    fila['Semana L/m']=Math.round(tw.lm*1000)/1000; fila['Semana L/planta']=Math.round(rgLpl(tw.lm)*1000)/1000;
-    fila['Semana m³']=ml!=null?Math.round(tw.lm*ml)/1000:null; fila['Pulsos']=tw.k; fila['Minutos']=tw.min;
+    fila['Semana L/m']=Math.round(tw.lm*1000)/1000; fila['Semana L/planta']=Math.round(rgLpl(tw.lm,n)*1000)/1000;
+    fila['Semana m³/ha']=Math.round(rgM3ha(tw.lm,n)*100)/100;
+    fila['Semana m³ sector']=rgM3sec(tw.lm,n)!=null?Math.round(rgM3sec(tw.lm,n)*1000)/1000:null; fila['Pulsos']=tw.k; fila['Minutos']=tw.min;
     res.push(fila);
   });
   const wb=XLSX.utils.book_new();
@@ -15104,9 +15123,10 @@ function rgExportExcel(){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
     {'Dato':'Predio','Valor':PREDIOS[rgS.pid].nombre},
     {'Dato':'Semana (lunes)','Valor':rgS.lunes},
-    {'Dato':'m de cinta por ha','Valor':F.mHa},
+    {'Dato':'m de cinta por ha (solo sectores sin ML o ha)','Valor':F.mHa},
     {'Dato':'Ejes por ha','Valor':F.ejesHa},
-    {'Dato':'L/planta = L/m ×','Valor':Math.round(F.mHa/F.ejesHa*10000)/10000}
+    {'Dato':'L/planta','Valor':'L/m × (ML ÷ ha del sector) ÷ ejes por ha'},
+    {'Dato':'m³/ha','Valor':'L/m × (ML ÷ ha del sector) ÷ 1000'}
   ]), 'Parámetros');
   XLSX.writeFile(wb, `riego_${rgS.pid}_${rgS.lunes}.xlsx`);
 }
