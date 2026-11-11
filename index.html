@@ -14172,7 +14172,7 @@ const MANUAL_VERSION='v87';
 const MANUAL_FECHA='2026-11-11';
 
 const MANUAL_CAMBIOS=[
-  {v:'v87', f:'11-11-2026', ver:()=>canVerRiegoProg(), txt:'<b>💧 Programación de riego.</b> Botón nuevo <b>Riego</b>, con <b>📝 Registro del día</b> (día, época y cultivo; por pulso: hora de inicio, ☑ sectores que riegan y minutos; calcula hora de término, m³ por sector, m³/ha y L/eje) y vista <b>Semana</b>, que muestra todos los sectores de riego del predio y, para cada día de la semana, los pulsos con hora de inicio, minutos y litros por metro de cinta (hasta 4 pulsos por día). Calcula los L/planta y los m³/ha del día y de la semana con los metros de cinta por ha de cada sector (ML ÷ ha de Config › Sectores) y 30.000 ejes por ha (editable), y los m³ del sector. La época y el cultivo de cada sector salen de Ciclos (por los módulos que riega); el resumen queda agrupado por época y cultivo y se baja a Excel. La editan gerencia, jefatura y el encargado de riego; los subjefes la consultan.'},
+  {v:'v87', f:'11-11-2026', ver:()=>canVerRiegoProg(), txt:'<b>💧 Programación de riego.</b> Botón nuevo <b>Riego</b>, con <b>📝 Registro del día</b> (día, época y cultivo; por pulso: hora de inicio, ☑ sectores que riegan y minutos; calcula hora de término, m³ por sector, m³/ha y L/eje; botón para enviar el resumen del día a gerencia por WhatsApp o correo) y vista <b>Semana</b>, que muestra todos los sectores de riego del predio y, para cada día de la semana, los pulsos con hora de inicio, minutos y litros por metro de cinta (hasta 4 pulsos por día). Calcula los L/planta y los m³/ha del día y de la semana con los metros de cinta por ha de cada sector (ML ÷ ha de Config › Sectores) y 30.000 ejes por ha (editable), y los m³ del sector. La época y el cultivo de cada sector salen de Ciclos (por los módulos que riega); el resumen queda agrupado por época y cultivo y se baja a Excel. La editan gerencia, jefatura y el encargado de riego; los subjefes la consultan.'},
   {v:'v86', f:'10-11-2026', ver:()=>canAplicRiego()||canBodega()||canVerGastos(), txt:'<b>🧪 Cloruro de calcio en el estanque de fertirriego.</b> Se agregó a la lista de fertilizantes del estanque, al final. Descuenta del mismo recinto que las demás sales (Caseta de Riego en El Tránsito y Paradero 12; Bodega Principal en La Constancia). Si bajo la sal aparece “sin producto en bodega”, hay que elegir a mano el producto del catálogo o cargarlo en Bodega.'},
   {v:'v85', f:'09-11-2026', ver:()=>canAplicFoliar()||canBodega()||canVerGastos(), txt:'<b>🧴 Bodegas Pesticidas y Foliares en El Tránsito y Paradero 12.</b> Guardan los pesticidas, fertilizantes y bioestimulantes foliares de cada campo; Luciano los despacha desde Origen y el responsable confirma la recepción (El Tránsito: Claudio Flores; Paradero 12: Jorge Guajardo y Mario Durand). Las foliares y desinfecciones en polvo de esos campos con fecha <b>desde el 16-11-2026</b> descuentan de su bodega; las de fechas anteriores siguen saliendo de La Constancia. Al cambiar la fecha en el formulario, la bodega de descuento se actualiza.'},
   {v:'v84', f:'04-11-2026', ver:()=>canViewInformes(), txt:'<b>✅ Inconsistencias: “está correcto”.</b> En Informes › ⚠️ Inconsistencias (y en 🔎 de ⚡ Eficiencia) cada caso tiene el botón <b>✅ Correcto</b> para cuando se revisó y el dato está bien. Se puede dejar una nota. El caso sale de la lista “para revisar”, de la descarga Excel/PDF y del conteo de Eficiencia y Capacidad, y queda anotado quién lo revisó y cuándo. Se ven con <b>Ver los marcados como correctos</b> y se puede quitar la marca con ↩️. Si después se cambian las mesas u horas de esa entrada, el caso vuelve a aparecer.'},
@@ -14457,6 +14457,7 @@ const MANUAL_SECCIONES=[
   pasos:[
     'Toca <b>Riego</b>. Elige el predio y la semana con ‹ › o el calendario (cualquier día lleva a su lunes).',
     '<b>📝 Registro del día</b> (lo más rápido): elige el día, la <b>época</b> y el <b>cultivo</b>. En el <b>Pulso 1</b> anota la hora de inicio, marca ☑ los sectores que riegan y escribe los minutos de cada uno (o usa "Min. a todos"). La app pone la hora de inicio y término de cada sector (uno tras otro, o todos a la vez si lo eliges), la <b>hora de término</b> del pulso y, con el caudal de la cinta, el volumen: <b>m³ del sector, m³/ha y L/eje</b>. Si hay 2º o 3º pulso, toca <b>+ Agregar pulso</b>. Abajo sale el total del día por sector. Toca 💾 Guardar.',
+    'Para avisar a gerencia toca <b>📤 Enviar a gerencia por WhatsApp</b> (o ✉️ Por correo): se abre WhatsApp o el correo con el resumen del riego de todo el día del predio (cada pulso con hora de inicio y término, sectores, minutos, m³, m³/ha y L/eje, más el total por sector). Si hay cambios sin guardar, primero los guarda. Solo falta tocar enviar. El número y el correo de destino los fija gerencia una vez en "⚙️ Destino del reporte".',
     'El <b>caudal de la cinta</b> (L/h por metro) se anota una vez arriba para todo el predio; si un sector tiene otra cinta, se cambia en ese sector en la vista Semana.',
     'Los <b>metros de cinta por ha</b> salen de cada sector: metros lineales ÷ ha (Config › Sectores de riego). Con eso: <b>L/planta = L/m × m cinta/ha ÷ ejes/ha</b> (30.000 ejes por defecto, editable arriba) y <b>m³/ha = L/m × m cinta/ha ÷ 1000</b>. Si un sector no tiene ML o ha, usa el valor por defecto del predio (Paradero 12: 10.000; La Constancia: 11.111) y lo marca con *.',
     'La <b>época y el cultivo</b> de cada sector salen solos de <b>Ciclos</b>: la app cruza los módulos que riega el sector con los módulos de los ciclos abiertos esa semana. Los módulos del sector se toman de Config › Sectores de riego (columna <b>Módulos</b>) o, si está vacía, del nombre ("1A-3" = módulos 1A y 3). El resumen queda agrupado por época y cultivo.',
@@ -14834,6 +14835,7 @@ async function initRiego(){
   const preds=userPredios();
   if(!rgS.pid || !preds.includes(rgS.pid)) rgS.pid=preds.includes(activePred)?activePred:preds[0];
   if(!rgS.lunes) rgS.lunes=rgLunesDe(todayIso);
+  rgCargarReporteCfg();
   await rgCargar();
 }
 async function rgCargar(){
@@ -15019,6 +15021,101 @@ function renderRiego(){
 // Cabecera de cada pulso: doc.turnos[fecha][grupo] = [{inicio, modo}] (máx. 3).
 // Cada pulso de sector guarda pulso:1|2|3 para saber a qué turno pertenece.
 // ══════════════════════════════════════════════
+// ══════════════════════════════════════════════
+// v87 · REPORTE DEL RIEGO DEL DÍA A GERENCIA (WhatsApp o correo, con un toque)
+// El destino se guarda en /config/reporteRiego {whatsapp, correo} (lo edita
+// gerencia desde Riego; lo leen los usuarios con sesión). No va en el código
+// porque el repositorio es público.
+// ══════════════════════════════════════════════
+let rgReporteCfg=null;
+async function rgCargarReporteCfg(){
+  if(rgReporteCfg) return rgReporteCfg;
+  try{ const d=await db.collection('config').doc('reporteRiego').get(); rgReporteCfg=d.exists?(d.data()||{}):{}; }
+  catch(e){ rgReporteCfg={}; }
+  return rgReporteCfg;
+}
+function rgReporteTexto(iso){
+  const G=rgGrupos(), k=rgDias().indexOf(iso);
+  const L=[];
+  L.push(`💧 *Riego ${PREDIOS[rgS.pid].nombre}*`);
+  L.push(`${DIAS[k]||''} ${iso.split('-').reverse().join('-')}`);
+  L.push(`Registró: ${(currentProfile&&currentProfile.nombre)||(currentUser&&currentUser.email)||'—'}`);
+  let tm3=0, tha=0, alguno=false;
+  G.forEach(g=>{
+    const conRiego=g.sectores.filter(n=>rgTotDia(n,iso).k);
+    if(!conRiego.length) return;
+    alguno=true;
+    L.push(''); L.push(`*${rgGrupoNom(g).trim()}*`);
+    const T=((rgS.doc.turnos||{})[iso]||{})[g.key]||[];
+    for(let j=0;j<RIEGO_MAX_TURNOS;j++){
+      const sec=g.sectores.map(n=>({n,p:rgPulsoDe(n,iso,j)})).filter(x=>x.p&&num(x.p.min)>0);
+      if(!sec.length) continue;
+      const t=T[j]||{}, ini=t.inicio||sec.map(x=>x.p.hora).filter(Boolean).sort()[0]||'--:--';
+      L.push(`*Pulso ${j+1}:* ${ini} – ${rgTerminoTurno(iso,g.key,j)||'--:--'}${t.modo==='sim'?' (todos a la vez)':''}`);
+      sec.forEach(({n,p})=>{
+        const lm=num(p.lm), m3=rgM3sec(lm,n);
+        const fin=p.hora?rgMin2HM(rgHM2min(p.hora)+num(p.min)):'';
+        L.push(`• Sector ${n}: ${p.hora||''}${fin?'–'+fin:''} · ${fmtNum(num(p.min),0)} min`+(lm>0?` · ${m3!=null?fmtNum(m3,2)+' m³ · ':''}${fmtNum(rgM3ha(lm,n),2)} m³/ha · ${fmtNum(rgLpl(lm,n),3)} L/eje`:' · sin caudal'));
+      });
+    }
+    L.push('_Total del día por sector:_');
+    conRiego.forEach(n=>{
+      const t=rgTotDia(n,iso), m3=rgM3sec(t.lm,n);
+      if(m3!=null) tm3+=m3; tha+=rgHa(n)||0;
+      L.push(`• Sector ${n}: ${t.k} pulso${t.k>1?'s':''} · ${fmtNum(t.min,0)} min · ${m3!=null?fmtNum(m3,2)+' m³ · ':''}${fmtNum(rgM3ha(t.lm,n),2)} m³/ha · *${fmtNum(rgLpl(t.lm,n),3)} L/eje*`);
+    });
+  });
+  if(!alguno){ L.push(''); L.push('Sin riego registrado este día.'); }
+  else { L.push(''); L.push(`*Total predio:* ${fmtNum(tm3,1)} m³ en ${fmtNum(tha,2)} ha${tha>0?` (${fmtNum(tm3/tha,2)} m³/ha)`:''}`); }
+  return L.join('\n');
+}
+async function rgEnviarReporte(canal){
+  const iso=rgDiaSel();
+  if(rgS.dirty){
+    if(!canEditRiegoProg(rgS.pid)){ toast('Hay cambios sin guardar'); return; }
+    if(!confirm('Hay cambios sin guardar. ¿Guardar y enviar?')) return;
+    await rgGuardar();
+    if(rgS.dirty) return;   // no se pudo guardar
+  }
+  const cfg=await rgCargarReporteCfg();
+  const txt=rgReporteTexto(iso);
+  let url;
+  if(canal==='wa'){
+    const tel=String(cfg.whatsapp||'').replace(/\D/g,'');
+    url=(tel?`https://wa.me/${tel}`:'https://wa.me/')+'?text='+encodeURIComponent(txt);
+    if(!tel) toast('Sin número de gerencia guardado: elige el contacto en WhatsApp');
+  }else{
+    const para=cfg.correo||'gerencia@agricolaorigen.cl';
+    const asunto=`Riego ${PREDIOS[rgS.pid].nombre} · ${iso.split('-').reverse().join('-')}`;
+    url=`mailto:${encodeURIComponent(para).replace('%40','@')}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(txt.replace(/\*/g,'').replace(/_/g,''))}`;
+  }
+  const w=window.open(url,'_blank'); if(!w) location.href=url;
+}
+async function rgGuardarReporteCfg(){
+  if(!canConfigCostos()){ toast('Solo gerencia'); return; }
+  const whatsapp=(document.getElementById('rgCfgWa').value||'').replace(/[^\d+]/g,'');
+  const correo=(document.getElementById('rgCfgMail').value||'').trim();
+  if(correo && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(correo)){ toast('Correo no válido'); return; }
+  try{
+    await db.collection('config').doc('reporteRiego').set({whatsapp, correo, updatedAt:Date.now()});
+    rgReporteCfg={whatsapp, correo}; toast('Destino del reporte guardado ✓'); renderRiego();
+  }catch(e){ toast('No se pudo guardar: '+e.message); }
+}
+function rgReporteHTML(){
+  const c=rgReporteCfg||{};
+  let h=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
+      <button class="btn btn-sm" style="background:#25D366;color:#fff;font-weight:700" onclick="rgEnviarReporte('wa')">📤 Enviar a gerencia por WhatsApp</button>
+      <button class="btn btn-sm" style="background:var(--dark);color:#fff" onclick="rgEnviarReporte('mail')">✉️ Por correo</button>
+    </div>
+    <div style="font-size:10.5px;color:var(--muted);margin-top:4px">Envía el riego de todo el día del predio (todas las épocas y cultivos). Se abre WhatsApp o el correo con el texto listo: solo falta tocar enviar.</div>`;
+  if(canConfigCostos()) h+=`<details style="margin-top:6px"><summary style="font-size:11px;cursor:pointer;color:var(--muted)">⚙️ Destino del reporte (solo gerencia)</summary>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;align-items:flex-end">
+        <div class="form-row" style="margin:0;flex:1;min-width:140px"><label>WhatsApp (con código país)</label><input type="tel" id="rgCfgWa" value="${escH(c.whatsapp||'')}" placeholder="+569…"></div>
+        <div class="form-row" style="margin:0;flex:1;min-width:160px"><label>Correo</label><input type="email" id="rgCfgMail" value="${escH(c.correo||'gerencia@agricolaorigen.cl')}"></div>
+        <button class="btn btn-sm" style="background:var(--dark);color:#fff" onclick="rgGuardarReporteCfg()">Guardar</button>
+      </div></details>`;
+  return h;
+}
 const RIEGO_MAX_TURNOS=3;
 function rgCaudal(n){ const s=(rgS.doc.sectores||{})[n]||{}; return num(s.caudal)||rgFactor().caudal||0; }
 function rgHM2min(h){ const m=/^(\d{1,2}):(\d{2})$/.exec(h||''); return m?Number(m[1])*60+Number(m[2]):null; }
@@ -15164,6 +15261,7 @@ function rgDiaHTML(edita){
   });
   h+=`</tbody><tfoot><tr style="font-weight:700;background:var(--cream)"><td style="padding:4px" colspan="4">Total</td><td style="padding:4px;text-align:right">${fmtNum(tm3,2)}</td><td style="padding:4px;text-align:right">${tha>0?fmtNum(tm3/tha,2):'—'}</td><td></td></tr></tfoot></table></div>
     ${edita?`<button class="btn btn-primary" style="margin-top:10px" onclick="rgGuardar()">💾 Guardar</button>`:''}
+    ${rgReporteHTML()}
   </div>`;
   return h;
 }
