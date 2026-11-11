@@ -15078,6 +15078,12 @@ function rgTerminoTurno(iso,gk,j){
   if(!mins.length) return null;
   return rgMin2HM(ini + (t.modo==='sim' ? Math.max(...mins) : mins.reduce((a,b)=>a+b,0)));
 }
+function rgFilaTxt(n,p){
+  if(!p) return '';
+  if(!(num(p.min)>0)) return '<span style="color:#B45309">☑ marcado · escribe los minutos</span>';
+  const fin=p.hora?rgMin2HM(rgHM2min(p.hora)+num(p.min)):'--:--';
+  return `<span style="font-family:'DM Mono',monospace">${escH(p.hora||'--:--')}–${fin}</span> · ${rgCalcTxt(n,num(p.lm))}`;
+}
 function rgCalcTxt(n,lm){
   if(!(lm>0)) return `<span style="color:#B45309">falta caudal de cinta</span>`;
   const m3=rgM3sec(lm,n);
@@ -15131,14 +15137,14 @@ function rgDiaHTML(edita){
       </div>
       <div style="margin-top:8px">`;
     g.sectores.forEach((n,i)=>{
-      const p=rgPulsoDe(n,iso,j), on=!!(p&&num(p.min)>0);
-      const fin=on&&p.hora?rgMin2HM(rgHM2min(p.hora)+num(p.min)):'';
+      const p=rgPulsoDe(n,iso,j), on=!!p, conMin=on&&num(p.min)>0;   // marcado = existe el pulso, aunque falten los minutos
+      const fin=conMin&&p.hora?rgMin2HM(rgHM2min(p.hora)+num(p.min)):'';
       h+=`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--sand);padding:6px 0;${on?'':'opacity:.65'}">
         <label style="display:flex;gap:6px;align-items:center;min-width:120px;font-weight:700;font-size:12.5px">
           <input type="checkbox" ${dis} ${on?'checked':''} style="width:20px;height:20px" onchange="rgMarcarSector('${iso}','${nq(g.key)}',${j},'${nq(n)}',this.checked)">
           Sector ${escH(n)} <span style="font-weight:400;color:var(--muted);font-size:10.5px">${rgHa(n)!=null?fmtNum(rgHa(n),2)+' ha':''}</span></label>
-        <div style="display:flex;align-items:center;gap:3px"><input type="text" inputmode="numeric" ${dis} value="${on?escH(String(p.min)):''}" placeholder="min" style="width:56px;text-align:right" oninput="rgMinSector('${iso}','${nq(g.key)}',${j},'${nq(n)}',this.value)" onchange="renderRiego()"><span style="font-size:11px">min</span></div>
-        <div id="rgDR_${j}_${i}" style="font-size:11px;flex:1;min-width:200px">${on?`<span style="font-family:'DM Mono',monospace">${escH(p.hora||'--:--')}–${fin||'--:--'}</span> · ${rgCalcTxt(n,num(p.lm))}`:''}</div>
+        <div style="display:flex;align-items:center;gap:3px"><input type="text" inputmode="numeric" ${dis} value="${on&&p.min!==''&&p.min!=null?escH(String(p.min)):''}" placeholder="min" style="width:56px;text-align:right${on&&!conMin?';border-color:#F59E0B;background:#FFFBEB':''}" oninput="rgMinSector('${iso}','${nq(g.key)}',${j},'${nq(n)}',this.value)" onchange="renderRiego()"><span style="font-size:11px">min</span></div>
+        <div id="rgDR_${j}_${i}" style="font-size:11px;flex:1;min-width:200px">${rgFilaTxt(n,p)}</div>
       </div>`;
     });
     h+=`</div>
@@ -15190,7 +15196,6 @@ function rgMarcarSector(iso,gk,j,n,on){
       const def=num((document.getElementById('rgMinTodos_'+j)||{}).value)||(ant?num(ant.min):0);
       p={pulso:j+1, hora:'', min:def||'', lm:''}; P.push(p);
     }
-    if(!(num(p.min)>0)) p.min=num(p.min)||'';
   }else if(p){
     P.splice(P.indexOf(p),1);
   }
@@ -15220,7 +15225,7 @@ function rgPintarTurno(iso,gk,j){
     const el=document.getElementById(`rgDR_${j}_${i}`), p=rgPulsoDe(n,iso,j);
     const on=!!(p&&num(p.min)>0);
     if(on){ nT++; const m=rgM3sec(num(p.lm),n); if(m!=null&&num(p.lm)>0) m3T+=m; haT+=rgHa(n)||0; }
-    if(el) el.innerHTML=on?`<span style="font-family:'DM Mono',monospace">${escH(p.hora||'--:--')}–${p.hora?rgMin2HM(rgHM2min(p.hora)+num(p.min)):'--:--'}</span> · ${rgCalcTxt(n,num(p.lm))}`:'';
+    if(el) el.innerHTML=rgFilaTxt(n,p);
   });
   const t=document.getElementById('rgDT_'+j); if(t) t.textContent=rgTerminoTurno(iso,gk,j)||'--:--';
   const tt=document.getElementById('rgDTot_'+j);
@@ -15385,6 +15390,7 @@ async function rgGuardar(){
     const out={cultivo:ce.cultivo||'', epoca:ce.epoca||'', fuente:ce.src||'', caudal:num(s.caudal)>0?num(s.caudal):null, dias:{}};
     if(s.manual) out.manual=true;
     dias.forEach(d=>{
+      ((s.dias||{})[d]||[]).forEach(p=>{ if(p && p.pulso && !(num(p.min)>0)) errores.push(`Sector ${n}, ${rgFmtFecha(d)}, pulso ${p.pulso}: está marcado pero sin minutos`); });
       const P=((s.dias||{})[d]||[])
         .filter(p=>p && (p.hora || num(p.min)>0 || num(p.lm)>0))
         .map(p=>Object.assign({hora:p.hora||'', min:num(p.min), lm:num(p.lm)}, p.pulso?{pulso:p.pulso}:{}))
