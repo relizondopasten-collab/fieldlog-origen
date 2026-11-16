@@ -1706,12 +1706,18 @@ function canManageWorkers(){return isAdmin()}
 function canBorrarDatos(){return isSuperAdmin()}
 
 // Subjefes autorizados a ver informes (además de admin y jefe)
-const SUBJEFES_CON_INFORMES=['Mario Durand','Jorge Guajardo','Claudio Flores'];
+// v88 · + Sara, José y Roxana (subjefes de La Constancia). La comparación no
+// distingue mayúsculas ni tildes ("José" = "Jose").
+const SUBJEFES_CON_INFORMES=['Mario Durand','Jorge Guajardo','Claudio Flores','Sara','José','Roxana'];
+function normNombreSj(t){return String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase();}
 
 function canViewInformes(){
   if(!currentProfile)return false;
   if(isAdmin()||isJefe())return true;
-  if(isSubjefe()&&SUBJEFES_CON_INFORMES.includes(currentProfile.subjefe))return true;
+  if(isSubjefe()){
+    const sj=normNombreSj(currentProfile.subjefe);
+    if(sj && SUBJEFES_CON_INFORMES.some(n=>normNombreSj(n)===sj))return true;
+  }
   return false;
 }
 
@@ -14168,10 +14174,11 @@ function ctrlPlantacionTxt(c){
 // Cada sección tiene ver:() — la misma función de permisos que usa la app —
 // para que cada usuario vea solo el manual de lo que puede hacer.
 
-const MANUAL_VERSION='v87';
+const MANUAL_VERSION='v88';
 const MANUAL_FECHA='2026-11-11';
 
 const MANUAL_CAMBIOS=[
+  {v:'v88', f:'16-11-2026', ver:()=>canViewInformes(), txt:'<b>📊 Informes para los subjefes de La Constancia.</b> Sara, José y Roxana ahora ven el botón <b>Informes</b> (incluido <b>⚠️ Inconsistencias</b>) con los datos de todo La Constancia, igual que los subjefes de El Tránsito y Paradero 12.'},
   {v:'v87', f:'11-11-2026', ver:()=>canVerRiegoProg(), txt:'<b>💧 Programación de riego.</b> Botón nuevo <b>Riego</b>, con <b>📝 Registro del día</b> (día, época y cultivo; por pulso: hora de inicio, ☑ sectores que riegan y minutos; calcula hora de término, m³ por sector, m³/ha y L/eje; botón para enviar el resumen del día a gerencia por WhatsApp o correo) y vista <b>Semana</b>, que muestra todos los sectores de riego del predio y, para cada día de la semana, los pulsos con hora de inicio, minutos y litros por metro de cinta (hasta 4 pulsos por día). Calcula los L/planta y los m³/ha del día y de la semana con los metros de cinta por ha de cada sector (ML ÷ ha de Config › Sectores) y 30.000 ejes por ha (editable), y los m³ del sector. La época y el cultivo de cada sector salen de Ciclos (por los módulos que riega); el resumen queda agrupado por época y cultivo y se baja a Excel. La editan gerencia, jefatura y el encargado de riego; los subjefes la consultan.'},
   {v:'v86', f:'10-11-2026', ver:()=>canAplicRiego()||canBodega()||canVerGastos(), txt:'<b>🧪 Cloruro de calcio en el estanque de fertirriego.</b> Se agregó a la lista de fertilizantes del estanque, al final. Descuenta del mismo recinto que las demás sales (Caseta de Riego en El Tránsito y Paradero 12; Bodega Principal en La Constancia). Si bajo la sal aparece “sin producto en bodega”, hay que elegir a mano el producto del catálogo o cargarlo en Bodega.'},
   {v:'v85', f:'09-11-2026', ver:()=>canAplicFoliar()||canBodega()||canVerGastos(), txt:'<b>🧴 Bodegas Pesticidas y Foliares en El Tránsito y Paradero 12.</b> Guardan los pesticidas, fertilizantes y bioestimulantes foliares de cada campo; Luciano los despacha desde Origen y el responsable confirma la recepción (El Tránsito: Claudio Flores; Paradero 12: Jorge Guajardo y Mario Durand). Las foliares y desinfecciones en polvo de esos campos con fecha <b>desde el 16-11-2026</b> descuentan de su bodega; las de fechas anteriores siguen saliendo de La Constancia. Al cambiar la fecha en el formulario, la bodega de descuento se actualiza.'},
